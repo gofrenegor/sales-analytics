@@ -39,6 +39,22 @@ def get_db_engine():
 
 engine = get_db_engine()
 
+# --- Супер-парсер дат ---
+def clean_date_col(series):
+    # Если это уже дата, возвращаем
+    if pd.api.types.is_datetime64_any_dtype(series):
+        return series
+    # Превращаем в строку
+    s = series.astype(str)
+    # Заменяем текстовые "NaT" и "nan" на пустоту
+    s = s.replace(['NaT', 'nan', 'None'], pd.NA)
+    # Отрезаем часовой пояс (+03:00)
+    s = s.str.replace(r'\+\d{2}:\d{2}', '', regex=True)
+    # Отрезаем микросекунды (.423565)
+    s = s.str.replace(r'\.\d+', '', regex=True)
+    # Парсим
+    return pd.to_datetime(s, errors='coerce')
+
 # --- Функция загрузки и очистки одного Excel ---
 def process_excel(file):
     df = pd.read_excel(file)
@@ -57,15 +73,18 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # ЧИСТКА ДАТ (более быстрая и надежная)
+    # ПРИМЕНЯЕМ СУПЕР-ПАРСЕР И СОХРАНЯЕМ ПЛОХИЕ СТРОКИ ДЛЯ ОТЛАДКИ
+    bad_examples = []
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns:
-            # Пытаемся распарсить как есть, если не выходит - приводим к строке и чистим
-            df[col] = pd.to_datetime(df[col], errors='coerce')
-            # Если остались строки с часовыми поясами
-            mask = df[col].astype(str).str.contains(r'\+\d{2}:\d{2}', na=False)
-            if mask.any():
-                df.loc[mask, col] = pd.to_datetime(df.loc[mask, col].astype(str).str.split('+').str[0], errors='coerce')
+            raw = df[col].copy()
+            df[col] = clean_date_col(df[col])
+            # Ищем, где дата не распозналась, но изначально там что-то было
+            bad_mask = df[col].isna() & raw.notna()
+            if bad_mask.any():
+                bad_examples.extend(raw[bad_mask].head(3).tolist())
+            
+    st.session_state['bad_dates_examples'] = bad_examples
             
     for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns: 
@@ -141,13 +160,9 @@ def get_lr5_investigation_data(df_curr):
     df_lr5_positive = df_lr5_clean[df_lr5_clean['diff_hours'] >= 0].copy()
     dropped_neg = len(df_lr5_clean) - len(df_lr5_positive)
     
-    def categorize_time(hours):
-        if hours < 24: return "< 24 часов"
-        elif hours < 168: return "1-7 дней"
-        elif hours < 720: return "7-30 дней"
-        else: return "> 30 дней"
-        
-    df_lr5_positive['time_category'] = df_lr5_positive['diff_hours'].apply(categorize_time)
+    bins = [-1, 24, 168, 720, float('inf')]
+    labels = ['< 24 часов', '1-7 дней', '7-30 дней', '> 30 дней']
+    df_lr5_positive['time_category'] = pd.cut(df_lr5_positive['diff_hours'], bins=bins, labels=labels)
     
     stats = {
         "total": total_lr5,
@@ -161,8 +176,8 @@ def get_lr5_investigation_data(df_curr):
 @st.cache_data(ttl=3600)
 def get_charts_data(df_curr):
     if df_curr.empty: return pd.DataFrame(), pd.DataFrame()
-    df_flows = df_curr.groupby('flow')[['loss_sum']].sum().reset_index()
-    df_lr = df_curr.groupby('reason')[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
+    df_flows = df_curr.groupby('flow', observed=True)[['loss_sum']].sum().reset_index()
+    df_lr = df_curr.groupby('reason', observed=True)[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
     return df_flows, df_lr
 
 @st.cache_data(ttl=3600)
@@ -171,7 +186,7 @@ def get_dynamic_chart_data(df_curr, selected_lr="Все"):
     df_chart = df_curr.copy()
     if selected_lr != "Все": 
         df_chart = df_chart[df_chart['reason'] == selected_lr]
-    df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
+    df_daily = df_chart.groupby(df_chart['loss_date'].dt.date, observed=True)[['loss_sum']].sum().reset_index()
     df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
     return df_daily
 
@@ -366,7 +381,7 @@ with tab_charts:
 # ==========================================
 with tab_investigation:
     st.subheader("🕵️ Разбор полетов: Быстрые потери (LR 5)")
-    st.markdown("Анализ времени от **«Даты статуса перед списанием»** до **«Даты первого списания»**.")
+    st.markdown("Анализ времени от **«Даты статуса перед списанием»** до **«Дата первого списания»**.")
     
     if 'status_before_date' not in df_curr.columns:
         st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'.")
@@ -375,23 +390,29 @@ with tab_investigation:
     else:
         df_lr5, stats = get_lr5_investigation_data(df_curr)
         
-        # БЛОК ДИАГНОСТИКИ (теперь с красным предупреждением)
         with st.expander("🔍 Диагностика данных", expanded=True):
             st.markdown(f"""
             *   **Всего строк с LR 5 за этот месяц:** `{stats.get('total', 0):,}`.replace(",", " ")
-            *   **⚠️ Отброшено из-за пустой даты (нет в Excel):** `{stats.get('dropped_dates', 0):,}`.replace(",", " ")
+            *   **⚠️ Отброшено из-за пустой даты (не распознались):** `{stats.get('dropped_dates', 0):,}`.replace(",", " ")
             *   **Отброшено из-за отрицательной разницы:** `{stats.get('dropped_neg', 0):,}`.replace(",", " ")
             *   **Осталось для анализа:** `{stats.get('valid', 0):,}`.replace(",", " ")
             """)
             
             if stats.get('dropped_dates', 0) > 0:
-                st.error(f"Внимание! У {stats['dropped_dates']} строк в Excel не заполнена колонка «Дата статуса перед списанием». Сайт не может посчитать разницу, поэтому они исключены из графика.")
+                st.error(f"Внимание! У {stats['dropped_dates']} строк программа не смогла прочитать дату. Вот примеры того, как они выглядят в Excel:")
+                # Выводим примеры плохих дат
+                examples = st.session_state.get('bad_dates_examples', [])
+                if examples:
+                    for ex in examples:
+                        st.code(str(ex))
+                else:
+                    st.info("Примеры не найдены (возможно, вы не перезагрузили файл после обновления кода).")
         
         if df_lr5.empty:
             st.warning("Нет валидных данных для LR 5 с заполненными датами статуса.")
         else:
             cat_order = ["< 24 часов", "1-7 дней", "7-30 дней", "> 30 дней"]
-            df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
+            df_cat_summary = df_lr5.groupby('time_category', observed=True)[['loss_qty']].sum().reset_index()
             
             missing_cats = [c for c in cat_order if c not in df_cat_summary['time_category'].values]
             for cat in missing_cats:
