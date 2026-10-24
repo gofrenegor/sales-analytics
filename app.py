@@ -20,7 +20,6 @@ st.divider()
 
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
-if 'selected_stage' not in st.session_state: st.session_state.selected_stage = None
 if 'selected_group' not in st.session_state: st.session_state.selected_group = None
 if 'selected_block' not in st.session_state: st.session_state.selected_block = None
 
@@ -57,9 +56,7 @@ def render_cards(df_grouped, total_sum, next_view, button_key_prefix):
                 st.markdown(f"<div style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
                 
                 if st.button(f"Подробнее", key=f"btn_{button_key_prefix}_{i}", use_container_width=True):
-                    if next_view == 'stage':
-                        st.session_state.selected_stage = row['name']
-                    elif next_view == 'group':
+                    if next_view == 'group':
                         st.session_state.selected_group = row['name']
                     else:
                         st.session_state.selected_block = row['name']
@@ -135,84 +132,27 @@ elif st.session_state.view == 'flow':
         
         st.markdown("---")
         
-        if st.session_state.selected_flow == "out":
-            st.markdown("### Выберите этап логистики:")
-            df_stages = df_flow.groupby('process_stage')[['loss_sum']].sum().reset_index()
-            df_stages.columns = ['name', 'loss_sum']
-            df_stages['pct'] = (df_stages['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
-            df_stages = df_stages.sort_values('loss_sum', ascending=False)
-            render_cards(df_stages, flow_total_sum, next_view='stage', button_key_prefix='flow_stage')
-        else:
-            st.markdown("### Выберите блок для детализации:")
-            df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
-            df_blocks.columns = ['name', 'loss_sum']
-            df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
-            df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
-            render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow_block')
-
-# ==========================================
-# 2.5 ЭКРАН ЭТАПА
-# ==========================================
-elif st.session_state.view == 'stage':
-    if st.button("⬅️ Назад к этапам"):
-        st.session_state.view = 'flow'
-        st.rerun()
-        
-    stage_name = st.session_state.selected_stage
-    st.subheader(f"Этап: {stage_name}")
-    
-    df_stage = df_curr[(df_curr['flow'] == "Исходящий поток") & (df_curr['process_stage'] == stage_name)]
-    
-    if df_stage.empty:
-        st.info("Нет данных по этому этапу.")
-    else:
-        stage_total_sum = df_stage['loss_sum'].sum()
-        formatted_sum = f"{stage_total_sum:,.2f} ₽".replace(",", " ")
-        
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; margin-top: 10px; margin-bottom: 20px;">
-            <span style="font-size: 16px; font-weight: 600; margin-right: 15px;">Сумма потерь на этапе:</span>
-            <span style="background-color: rgba(0, 191, 255, 0.1); color: #00BFFF; border: 1.5px solid #00BFFF; padding: 6px 16px; border-radius: 20px; font-size: 24px; font-weight: 700; font-family: monospace;">{formatted_sum}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # НОВАЯ ЛОГИКА: Если этап "Другое" - показываем сразу ШК
-        if stage_name == "Другое":
-            st.warning("⚠️ На этом этапе собраны статусы, которые не попали в основные этапы логистики. Список ШК ниже:")
-            
-            df_other = df_stage[['barcode', 'block_name', 'status_before', 'loss_date', 'loss_qty', 'loss_sum']].copy()
-            df_other.columns = ['ШК', 'Площадка', 'Статус', 'Дата', 'Кол-во', 'Сумма (₽)']
-            df_other = df_other.sort_values('Сумма (₽)', ascending=False)
-            
-            st.dataframe(df_other, use_container_width=True, hide_index=True, height=500)
-            
-        else:
-            # Для обычных этапов оставляем деление на блоки
-            st.markdown("### Выберите блок для детализации:")
-            df_blocks = df_stage.groupby('block_group')[['loss_sum']].sum().reset_index()
-            df_blocks.columns = ['name', 'loss_sum']
-            df_blocks['pct'] = (df_blocks['loss_sum'] / stage_total_sum) * 100 if stage_total_sum > 0 else 0
-            df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
-            render_cards(df_blocks, stage_total_sum, next_view='group', button_key_prefix='stage_block')
+        # ОБНОВЛЕНИЕ: Теперь и для входящего, и для исходящего потока показываем блоки (block_group)
+        st.markdown("### Выберите блок для детализации:")
+        df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
+        df_blocks.columns = ['name', 'loss_sum']
+        df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
+        df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
+        render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow_block')
 
 # ==========================================
 # 3. ЭКРАН БЛОКА (Площадки)
 # ==========================================
 elif st.session_state.view == 'group':
-    back_view = 'stage' if st.session_state.selected_flow == "out" else 'flow'
-    
+    # ОБНОВЛЕНИЕ: Возврат всегда на экран потока, так как этапы убраны
     if st.button("⬅️ Назад"):
-        st.session_state.view = back_view
+        st.session_state.view = 'flow'
         st.rerun()
         
     group_name = st.session_state.selected_group
     st.subheader(f"Блок: {group_name}")
     
     df_group = df_curr[df_curr['block_group'] == group_name]
-    if st.session_state.selected_flow == "out" and st.session_state.selected_stage:
-        df_group = df_group[df_group['process_stage'] == st.session_state.selected_stage]
     
     if df_group.empty:
         st.info("Нет данных по этому блоку.")
