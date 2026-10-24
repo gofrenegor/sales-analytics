@@ -78,22 +78,22 @@ def get_flow_name(status_before):
         return 'Другое'
     
     inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
+    # LAM уже включен в список outbound
     outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
     if status in inbound: return 'Входящий поток'
     elif status in outbound: return 'Исходящий поток'
     else: return 'Другое'
 
-# --- ОБНОВЛЕННЫЙ СЛОВАРЬ ЭТАПОВ (LAM теперь БЕЗ ЭТАПА) ---
+# --- СЛОВАРЬ ЭТАПОВ (LAM ТЕПЕРЬ "ПРОПУСКИ СБОРКИ") ---
 STAGE_MAPPING = {
     'GWS': 'Отгрузка', 'LSS': 'Отгрузка', 'LIO': 'Отгрузка', 'LIP': 'Отгрузка', 'LPG': 'Отгрузка', 'SAP': 'Отгрузка',
     'PAP': 'Предсортировка', 'PWT': 'Предсортировка', 'SBN': 'Предсортировка', 'SAS': 'Предсортировка',
     'SMC': 'Сортировка', 'SPM': 'Сортировка', 'SPS': 'Сортировка', 'SSG': 'Сортировка', 'WLI': 'Сортировка', 
     'WLN': 'Сортировка', 'WLR': 'Сортировка', 'WLT': 'Сортировка', 'WMI': 'Сортировка', 'OPS': 'Сортировка', 
     'OSE': 'Сортировка', 'OSR': 'Сортировка', 'IKZ': 'Сортировка', 'IPG': 'Сортировка', 'ISB': 'Сортировка',
-    'LAM': 'Без этапа'  # <-- Товар уже разложен, относим его к блокам напрямую
+    'LAM': 'Пропуски сборки'
 }
-# -------------------------------------------------------------------
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -124,6 +124,7 @@ def load_data(start, end):
                 df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
                 df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
                 df['flow'] = df['status_before'].apply(get_flow_name)
+                # Назначаем этап "Пропуски сборки" для LAM
                 df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
             else:
                 df['flow'] = 'Другое'
@@ -136,6 +137,7 @@ def load_data(start, end):
                 b_name = str(row.get('block_name', '')).strip()
                 status = str(row.get('status_before', '')).strip().upper()
                 
+                # Опер площадь
                 if emp_id == '6800' or status_b_id == '6800':
                     return 'Опер площадь'
                 
@@ -143,6 +145,7 @@ def load_data(start, end):
                 if status in operka_statuses:
                     return 'Опер площадь'
                 
+                # Обычные блоки (сюда попадет LAM с его площадкой, например Рязань Тюшевское 1)
                 return BLOCK_MAPPING.get(b_name, 'Другое')
                 
             df['block_group'] = df.apply(get_block_group, axis=1)
