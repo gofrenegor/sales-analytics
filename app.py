@@ -3,41 +3,25 @@ import pandas as pd
 import plotly.express as px
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text  # Добавили text
 import calendar
 
-# --- Настройка страницы (отключаем боковую панель) ---
+# --- Настройка страницы ---
 st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide", initial_sidebar_state="collapsed")
 
-# ==========================================
-# СТИЛИ (CSS) ДЛЯ КНОПОК
-# ==========================================
+# --- CSS Стили для кнопок ---
 st.markdown("""
     <style>
-    /* Стили для входящего потока (Зеленый) */
     .st-key-btn_inbound button {
-        background-color: #2e7d32 !important;
-        color: white !important;
-        border: 1px solid #2e7d32 !important;
+        background-color: #2e7d32 !important; color: white !important; border: 1px solid #2e7d32 !important;
     }
-    .st-key-btn_inbound button:hover {
-        background-color: #1b5e20 !important;
-        border: 1px solid #1b5e20 !important;
-    }
-    
-    /* Стили для исходящего потока (Синий) */
+    .st-key-btn_inbound button:hover { background-color: #1b5e20 !important; border: 1px solid #1b5e20 !important; }
     .st-key-btn_outbound button {
-        background-color: #1565c0 !important;
-        color: white !important;
-        border: 1px solid #1565c0 !important;
+        background-color: #1565c0 !important; color: white !important; border: 1px solid #1565c0 !important;
     }
-    .st-key-btn_outbound button:hover {
-        background-color: #0d47a1 !important;
-        border: 1px solid #0d47a1 !important;
-    }
+    .st-key-btn_outbound button:hover { background-color: #0d47a1 !important; border: 1px solid #0d47a1 !important; }
     </style>
 """, unsafe_allow_html=True)
-
 
 # --- Подключение к базе данных ---
 @st.cache_resource
@@ -109,22 +93,51 @@ with col_admin:
         if uploaded_file:
             try:
                 df_new = process_excel(uploaded_file)
-                st.success(f"Прочитано: {len(df_new)} строк")
+                df_new_valid = df_new.dropna(subset=['loss_date'])
                 
-                if st.button("💾 Сохранить в базу", use_container_width=True, type="primary"):
-                    if engine is None:
-                        st.error("Нет подключения к базе.")
-                    else:
-                        try:
-                            df_to_save = df_new.dropna(subset=['loss_date'])
-                            df_to_save.to_sql('losses', engine, if_exists='append', index=False)
-                            st.success("✅ Успешно сохранено!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Ошибка сохранения: {e}")
+                if not df_new_valid.empty:
+                    min_date = df_new_valid['loss_date'].min().date()
+                    max_date = df_new_valid['loss_date'].max().date()
+                    
+                    st.info(f"В файле данные за период: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
+                    st.warning("⚠️ При сохранении старые данные за этот период будут удалены и заменены новыми!")
+                    
+                    if st.button("💾 Заменить данные за этот период", use_container_width=True, type="primary"):
+                        if engine is None:
+                            st.error("Нет подключения к базе.")
+                        else:
+                            try:
+                                # 1. Удаляем старые данные за эти даты
+                                with engine.begin() as conn:
+                                    delete_query = text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'")
+                                    conn.execute(delete_query)
+                                
+                                # 2. Вставляем новые данные
+                                df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
+                                st.success("✅ Данные успешно обновлены!")
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Ошибка сохранения: {e}")
+                else:
+                    st.error("В файле нет корректных дат.")
             except Exception as e:
                 st.error(f"Ошибка: {e}")
+                
+        st.divider()
+        st.markdown("### ⚠️ Опасная зона")
+        st.write("Удалить **ВСЕ** данные из базы данных:")
+        confirm_delete = st.checkbox("Я уверен, что хочу удалить всё")
+        if st.button("🗑️ Очистить базу", disabled=not confirm_delete, use_container_width=True):
+            if engine is not None:
+                try:
+                    with engine.begin() as conn:
+                        conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                    st.success("База данных полностью очищена!")
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Ошибка очистки: {e}")
 
 # ==========================================
 # ОСНОВНОЙ ИНТЕРФЕЙС (Даты)
@@ -205,13 +218,11 @@ with tab_analytics:
         st.subheader("Выберите поток для детализации:")
         col1, col2 = st.columns(2)
         with col1:
-            # Добавили key="btn_inbound" для стилизации
             if st.button("ВХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_inbound"):
                 st.session_state.selected_flow = "in"
                 st.session_state.view = 'flow'
                 st.rerun()
         with col2:
-            # Добавили key="btn_outbound" для стилизации
             if st.button("ИСХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_outbound"):
                 st.session_state.selected_flow = "out"
                 st.session_state.view = 'flow'
