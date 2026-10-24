@@ -44,13 +44,12 @@ def clean_date_col(series):
 def process_excel(file):
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
-    # ВАЖНО: проверяем точное совпадение колонок, как в твоем Excel
     cols_map = {
         'ШК': 'barcode', 
         'Наименование блока': 'block_name', 
         'ID блока': 'block_id',
         'ID блока перед списанием': 'status_block_id',
-        'ID сотрудника статуса перед списан': 'status_employee_id', # Колонка AB
+        'ID сотрудника статуса перед списан': 'status_employee_id',
         'Сумма списания': 'loss_sum', 
         'Кол-во лог объектов для списания': 'loss_qty',
         'Дата первого списания': 'loss_date', 
@@ -79,12 +78,24 @@ def get_flow_name(status_before):
         return 'Другое'
     
     inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
-    # Сюда входят статусы оперки: GWS, LSS, PAP, PWT, SAP, SAS, SMC, SPS
     outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
     if status in inbound: return 'Входящий поток'
     elif status in outbound: return 'Исходящий поток'
     else: return 'Другое'
+
+# --- СЛОВАРЬ ЭТАПОВ ЛОГИСТИКИ (ОТРЕДАКТИРУЙ ПРИ НЕОБХОДИМОСТИ) ---
+STAGE_MAPPING = {
+    # Отгрузка
+    'GWS': 'Отгрузка', 'LSS': 'Отгрузка', 'LIO': 'Отгрузка', 'LIP': 'Отгрузка', 'LPG': 'Отгрузка', 'SAP': 'Отгрузка',
+    # Предсортировка
+    'PAP': 'Предсортировка', 'PWT': 'Предсортировка', 'SBN': 'Предсортировка', 'SAS': 'Предсортировка',
+    # Сортировка
+    'SMC': 'Сортировка', 'SPM': 'Сортировка', 'SPS': 'Сортировка', 'SSG': 'Сортировка', 'WLI': 'Сортировка', 
+    'WLN': 'Сортировка', 'WLR': 'Сортировка', 'WLT': 'Сортировка', 'WMI': 'Сортировка', 'OPS': 'Сортировка', 
+    'OSE': 'Сортировка', 'OSR': 'Сортировка', 'IKZ': 'Сортировка', 'IPG': 'Сортировка', 'ISB': 'Сортировка'
+}
+# -------------------------------------------------------------------
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -115,8 +126,11 @@ def load_data(start, end):
                 df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
                 df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
                 df['flow'] = df['status_before'].apply(get_flow_name)
+                # НОВОЕ: Присваиваем этап логистики
+                df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
             else:
                 df['flow'] = 'Другое'
+                df['process_stage'] = 'Другое'
                 
             def get_block_group(row):
                 b_id = str(row.get('block_id', '')).strip().split('.')[0]
@@ -125,16 +139,13 @@ def load_data(start, end):
                 b_name = str(row.get('block_name', '')).strip()
                 status = str(row.get('status_before', '')).strip().upper()
                 
-                # 1. Если сотрудник = 6800, или блок перед списанием = 6800 -> Опер площадь
                 if emp_id == '6800' or status_b_id == '6800':
                     return 'Опер площадь'
                 
-                # 2. Если статус принадлежит оперке (даже если ID не 6800)
                 operka_statuses = ['GWS', 'LSS', 'PAP', 'PWT', 'SAP', 'SAS', 'SMC', 'SPS']
                 if status in operka_statuses:
                     return 'Опер площадь'
                 
-                # 3. Иначе стандартный маппинг площадок
                 return BLOCK_MAPPING.get(b_name, 'Другое')
                 
             df['block_group'] = df.apply(get_block_group, axis=1)
