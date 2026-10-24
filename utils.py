@@ -117,7 +117,7 @@ def load_data(start, end):
                 
                 # ID 6800 - это отдельный блок (показываем как "Обычный Рязань Тюшевское")
                 if b_id == '6800':
-                    return 'Обычный Рязань Тюшевское'
+                    return 'Опер площадь'
                 
                 return BLOCK_MAPPING.get(b_name, 'Другое')
                 
