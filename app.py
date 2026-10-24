@@ -39,7 +39,7 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# --- Функция загрузки и очистки Excel ---
+# --- Функция загрузки и очистки одного Excel ---
 def process_excel(file):
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
@@ -105,29 +105,44 @@ with col_admin:
         admin_tab_upload, admin_tab_info = st.tabs(["📥 Загрузка", "ℹ️ Что в базе"])
         
         with admin_tab_upload:
-            uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
-            if uploaded_file:
+            # ИЗМЕНЕНИЕ: accept_multiple_files=True позволяет выбрать сразу несколько файлов
+            uploaded_files = st.file_uploader("Excel файлы (.xlsx) - можно выбрать несколько", type=["xlsx"], accept_multiple_files=True)
+            
+            if uploaded_files:
                 try:
-                    df_new = process_excel(uploaded_file)
+                    # Собираем все файлы в один большой DataFrame
+                    all_dfs = []
+                    for file in uploaded_files:
+                        all_dfs.append(process_excel(file))
+                    
+                    df_new = pd.concat(all_dfs, ignore_index=True)
                     df_new_valid = df_new.dropna(subset=['loss_date'])
+                    
                     if not df_new_valid.empty:
                         min_date = df_new_valid['loss_date'].min().date()
                         max_date = df_new_valid['loss_date'].max().date()
-                        st.info(f"В файле: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
-                        st.warning("⚠️ Старые данные за эти даты будут заменены!")
+                        
+                        st.success(f"Успешно прочитано файлов: {len(uploaded_files)}")
+                        st.info(f"Общий период данных: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
+                        st.warning("⚠️ Старые данные за эти даты будут заменены новыми!")
+                        
                         if st.button("💾 Заменить данные", use_container_width=True, type="primary"):
                             if engine is not None:
                                 try:
                                     with engine.begin() as conn:
                                         conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                                    
                                     df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
-                                    st.success("✅ Данные обновлены!")
+                                    st.success("✅ Все данные успешно обновлены!")
                                     st.cache_data.clear()
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"Ошибка: {e}")
+                    else:
+                        st.error("В файлах нет корректных дат.")
                 except Exception as e:
-                    st.error(f"Ошибка: {e}")
+                    st.error(f"Ошибка при чтении файлов: {e}")
+            
             st.divider()
             st.markdown("### ⚠️ Опасная зона")
             if st.button("🗑️ Очистить базу", disabled=not st.checkbox("Я уверен, что хочу удалить всё"), use_container_width=True):
@@ -144,7 +159,7 @@ with col_admin:
         with admin_tab_info:
             total_rows, min_date, max_date, df_months, df_weeks = get_db_summary()
             if not total_rows:
-                st.info("База данных пока пуста.")
+                st.info("База данных пока пуста. Загрузите файлы на соседней вкладке.")
             else:
                 st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
                 if min_date and max_date: st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
@@ -295,17 +310,14 @@ with tab_investigation:
     if 'status_before_date' not in df_curr.columns:
         st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'. Пожалуйста, перезагрузите Excel-файл с этой колонкой.")
     else:
-        # Берем только LR 5 и убираем пустые даты
         df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
         df_lr5 = df_lr5.dropna(subset=['status_before_date', 'loss_date'])
         
         if df_lr5.empty:
             st.info("Нет данных с указанными датами статуса для LR 5 за выбранный период.")
         else:
-            # Считаем разницу в часах
             df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
             
-            # ВЫБОР ПОРОГА ВРЕМЕНИ
             time_options = {
                 "24 часа": 24,
                 "48 часов (2 дня)": 48,
@@ -315,7 +327,6 @@ with tab_investigation:
             selected_time_label = st.radio("Выберите максимальное время после раскладки:", list(time_options.keys()), horizontal=True)
             selected_hours = time_options[selected_time_label]
 
-            # Фильтруем (убираем отрицательные значения, чтобы исключить ошибки данных)
             df_fast_loss = df_lr5[(df_lr5['diff_hours'] <= selected_hours) & (df_lr5['diff_hours'] >= 0)]
             
             fast_qty = df_fast_loss['loss_qty'].sum()
@@ -329,7 +340,6 @@ with tab_investigation:
             st.markdown("---")
             
             if not df_fast_loss.empty:
-                # График распределения
                 df_fast_loss['hours_bucket'] = df_fast_loss['diff_hours'].astype(int)
                 df_hist = df_fast_loss.groupby('hours_bucket')[['loss_qty']].sum().reset_index()
                 
