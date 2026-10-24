@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import create_engine, text  # Добавили text
+from sqlalchemy import create_engine, text
 import calendar
 
 # --- Настройка страницы ---
@@ -76,8 +76,42 @@ def get_flow_name(reason):
     elif reason in ['26', '5']: return 'Исходящий поток'
     return 'Другое'
 
+# --- Функция для получения сводки из базы (для админки) ---
+@st.cache_data(ttl=5) # Обновляем кэш каждые 5 секунд
+def get_db_summary():
+    try:
+        with engine.connect() as conn:
+            # 1. Общее количество и диапазон дат
+            res_total = conn.execute(text("SELECT COUNT(*), MIN(loss_date), MAX(loss_date) FROM losses")).fetchone()
+            total_rows, min_date, max_date = res_total
+            
+            if total_rows == 0:
+                return None, None, None, None, None
+                
+            # 2. Сводка по месяцам
+            query_months = """
+                SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count 
+                FROM losses 
+                GROUP BY TO_CHAR(loss_date, 'YYYY-MM') 
+                ORDER BY month DESC
+            """
+            df_months = pd.read_sql(query_months, conn)
+            
+            # 3. Сводка по неделям (с понедельника)
+            query_weeks = """
+                SELECT TO_CHAR(DATE_TRUNC('week', loss_date), 'YYYY-MM-DD') AS week_start, COUNT(*) as rows_count 
+                FROM losses 
+                GROUP BY DATE_TRUNC('week', loss_date) 
+                ORDER BY week_start DESC
+            """
+            df_weeks = pd.read_sql(query_weeks, conn)
+            
+            return total_rows, min_date, max_date, df_months, df_weeks
+    except Exception as e:
+        return None, None, None, None, None
+
 # ==========================================
-# ШАПКА САЙТА И АДМИН-ПАНЕЛЬ (Правый верхний угол)
+# ШАПКА САЙТА И АДМИН-ПАНЕЛЬ
 # ==========================================
 col_title, col_admin = st.columns([8, 1])
 
@@ -87,57 +121,82 @@ with col_title:
 with col_admin:
     st.write("") 
     with st.popover("👤", use_container_width=True):
-        st.markdown("### Загрузка данных")
-        uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
+        # Делим админку на две вкладки
+        admin_tab_upload, admin_tab_info = st.tabs(["📥 Загрузка", "ℹ️ Что в базе"])
         
-        if uploaded_file:
-            try:
-                df_new = process_excel(uploaded_file)
-                df_new_valid = df_new.dropna(subset=['loss_date'])
-                
-                if not df_new_valid.empty:
-                    min_date = df_new_valid['loss_date'].min().date()
-                    max_date = df_new_valid['loss_date'].max().date()
-                    
-                    st.info(f"В файле данные за период: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
-                    st.warning("⚠️ При сохранении старые данные за этот период будут удалены и заменены новыми!")
-                    
-                    if st.button("💾 Заменить данные за этот период", use_container_width=True, type="primary"):
-                        if engine is None:
-                            st.error("Нет подключения к базе.")
-                        else:
-                            try:
-                                # 1. Удаляем старые данные за эти даты
-                                with engine.begin() as conn:
-                                    delete_query = text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'")
-                                    conn.execute(delete_query)
-                                
-                                # 2. Вставляем новые данные
-                                df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
-                                st.success("✅ Данные успешно обновлены!")
-                                st.cache_data.clear()
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Ошибка сохранения: {e}")
-                else:
-                    st.error("В файле нет корректных дат.")
-            except Exception as e:
-                st.error(f"Ошибка: {e}")
-                
-        st.divider()
-        st.markdown("### ⚠️ Опасная зона")
-        st.write("Удалить **ВСЕ** данные из базы данных:")
-        confirm_delete = st.checkbox("Я уверен, что хочу удалить всё")
-        if st.button("🗑️ Очистить базу", disabled=not confirm_delete, use_container_width=True):
-            if engine is not None:
+        # ---- ВКЛАДКА 1: ЗАГРУЗКА ----
+        with admin_tab_upload:
+            uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
+            
+            if uploaded_file:
                 try:
-                    with engine.begin() as conn:
-                        conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
-                    st.success("База данных полностью очищена!")
-                    st.cache_data.clear()
-                    st.rerun()
+                    df_new = process_excel(uploaded_file)
+                    df_new_valid = df_new.dropna(subset=['loss_date'])
+                    
+                    if not df_new_valid.empty:
+                        min_date = df_new_valid['loss_date'].min().date()
+                        max_date = df_new_valid['loss_date'].max().date()
+                        
+                        st.info(f"В файле: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
+                        st.warning("⚠️ Старые данные за эти даты будут заменены!")
+                        
+                        if st.button("💾 Заменить данные", use_container_width=True, type="primary"):
+                            if engine is None:
+                                st.error("Нет подключения к базе.")
+                            else:
+                                try:
+                                    with engine.begin() as conn:
+                                        delete_query = text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'")
+                                        conn.execute(delete_query)
+                                    
+                                    df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
+                                    st.success("✅ Данные обновлены!")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Ошибка: {e}")
+                    else:
+                        st.error("В файле нет корректных дат.")
                 except Exception as e:
-                    st.error(f"Ошибка очистки: {e}")
+                    st.error(f"Ошибка: {e}")
+                    
+            st.divider()
+            st.markdown("### ⚠️ Опасная зона")
+            confirm_delete = st.checkbox("Я уверен, что хочу удалить всё")
+            if st.button("🗑️ Очистить базу", disabled=not confirm_delete, use_container_width=True):
+                if engine is not None:
+                    try:
+                        with engine.begin() as conn:
+                            conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                        st.success("База очищена!")
+                        st.cache_data.clear()
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Ошибка: {e}")
+
+        # ---- ВКЛАДКА 2: ЧТО В БАЗЕ ----
+        with admin_tab_info:
+            total_rows, min_date, max_date, df_months, df_weeks = get_db_summary()
+            
+            if total_rows is None or total_rows == 0:
+                st.info("База данных пока пуста.")
+            else:
+                st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
+                if min_date and max_date:
+                    st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                
+                st.markdown("---")
+                st.markdown("**Загруженные месяцы:**")
+                if df_months is not None and not df_months.empty:
+                    df_months.columns = ['Месяц', 'Строк']
+                    st.dataframe(df_months, hide_index=True, use_container_width=True)
+                
+                st.markdown("**Загруженные недели (начиная с Пн):**")
+                if df_weeks is not None and not df_weeks.empty:
+                    df_weeks['week_start'] = pd.to_datetime(df_weeks['week_start']).dt.strftime('%d.%m.%Y')
+                    df_weeks.columns = ['Неделя с', 'Строк']
+                    st.dataframe(df_weeks, hide_index=True, use_container_width=True)
+
 
 # ==========================================
 # ОСНОВНОЙ ИНТЕРФЕЙС (Даты)
