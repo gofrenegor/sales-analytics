@@ -80,7 +80,6 @@ def process_excel(file):
 
 INBOUND_STATUSES = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
 OUTBOUND_STATUSES = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
-OPERKA_STATUSES = ['GWS', 'LSS', 'PAP', 'PWT', 'SAP', 'SAS', 'SMC', 'SPS']
 
 STAGE_MAPPING = {
     'GWS': 'Отгрузка', 'LSS': 'Отгрузка', 'LIO': 'Отгрузка', 'LIP': 'Отгрузка', 'LPG': 'Отгрузка', 'SAP': 'Отгрузка',
@@ -90,6 +89,9 @@ STAGE_MAPPING = {
     'OSE': 'Сортировка', 'OSR': 'Сортировка', 'IKZ': 'Сортировка', 'IPG': 'Сортировка', 'ISB': 'Сортировка',
     'LAM': 'Пропуски сборки'
 }
+
+# ОБНОВЛЕНИЕ: Берем все статусы, которые относятся к Отгрузке, Предсортировке и Сортировке
+OPERKA_STATUSES = [k for k, v in STAGE_MAPPING.items() if v in ('Отгрузка', 'Предсортировка', 'Сортировка')]
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
