@@ -65,7 +65,6 @@ def process_excel(file):
             if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
-# --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ПОТОКА ПО СТАТУСУ ---
 def get_flow_name(status_before):
     if pd.isna(status_before) or str(status_before).strip() == "" or str(status_before).strip().upper() == "NAN":
         return 'Другое'
@@ -93,7 +92,6 @@ def load_data(start, end):
                 df['status_before_date'] = pd.to_datetime(df['status_before_date'])
             df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
-            # Применяем функцию к статусу перед списанием
             if 'status_before' in df.columns:
                 df['status_before'] = df['status_before'].fillna('Не указано').astype(str).str.strip().str.upper()
                 df['flow'] = df['status_before'].apply(get_flow_name)
@@ -140,35 +138,68 @@ def render_date_selector():
         
     return start_date, end_date, prev_start_date, prev_end_date
 
+# --- Сводка по базе для админки ---
+def get_db_summary():
+    try:
+        with engine.connect() as conn:
+            res_total = conn.execute(text("SELECT COUNT(*), MIN(loss_date), MAX(loss_date) FROM losses")).fetchone()
+            total_rows, min_date, max_date = res_total
+            if total_rows == 0: return None, None, None, None
+            
+            df_months = pd.read_sql("SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count FROM losses GROUP BY TO_CHAR(loss_date, 'YYYY-MM') ORDER BY month DESC", conn)
+            return total_rows, min_date, max_date, df_months
+    except Exception:
+        return None, None, None, None
+
+# --- АДМИН-ПАНЕЛЬ ---
 def render_admin_panel():
     with st.sidebar:
-        st.header("📥 Админ-панель")
-        uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+        st.header("👤 Админ-панель")
         
-        if uploaded_files:
-            all_dfs = [process_excel(file) for file in uploaded_files]
-            df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
+        # 1. Загрузка
+        with st.expander("📥 Загрузка данных", expanded=True):
+            uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
             
-            if not df_new.empty:
-                min_date = df_new['loss_date'].min().date()
-                max_date = df_new['loss_date'].max().date()
+            if uploaded_files:
+                all_dfs = [process_excel(file) for file in uploaded_files]
+                df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
                 
-                st.success(f"Прочитано файлов: {len(uploaded_files)}")
-                st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
-                
-                if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
-                    with st.spinner("Загрузка..."):
-                        with engine.begin() as conn:
-                            conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
-                            df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
-                    st.cache_data.clear()
-                    st.success("🎉 Данные сохранены!")
-                    st.rerun()
+                if not df_new.empty:
+                    min_date = df_new['loss_date'].min().date()
+                    max_date = df_new['loss_date'].max().date()
                     
+                    st.success(f"Прочитано файлов: {len(uploaded_files)}")
+                    st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                    
+                    if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                        with st.spinner("Загрузка..."):
+                            with engine.begin() as conn:
+                                conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                                df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
+                        st.cache_data.clear()
+                        st.success("🎉 Данные сохранены!")
+                        st.rerun()
+        
+        # 2. Что в базе (ВОЗВРАЩЕНО)
+        with st.expander("ℹ️ Что в базе"):
+            total_rows, min_date, max_date, df_months = get_db_summary()
+            if not total_rows:
+                st.info("База данных пока пуста.")
+            else:
+                st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
+                if min_date and max_date:
+                    st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                st.markdown("**Загруженные месяцы:**")
+                if df_months is not None:
+                    df_months.columns = ['Месяц', 'Строк']
+                    st.dataframe(df_months, hide_index=True, use_container_width=True)
+                    
+        # 3. Очистка
         st.divider()
-        if st.button("🗑️ Очистить базу", disabled=not st.checkbox("Удалить всё"), use_container_width=True):
-            with engine.begin() as conn:
-                conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
-            st.cache_data.clear()
-            st.success("База очищена!")
-            st.rerun()
+        if st.checkbox("Я уверен, что хочу удалить всё"):
+            if st.button("🗑️ Очистить базу", use_container_width=True):
+                with engine.begin() as conn:
+                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                st.cache_data.clear()
+                st.success("База очищена!")
+                st.rerun()
