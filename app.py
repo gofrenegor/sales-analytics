@@ -57,16 +57,20 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # УЛЬТРА-НАДЕЖНАЯ ОЧИСТКА ДАТ ОТ ЧАСОВЫХ ПОЯСОВ (+03:00)
+    # УЛЬТРА-НАДЕЖНАЯ ОЧИСТКА ДАТ ОТ ЧАСОВЫХ ПОЯСОВ (убираем +03:00 и любые пробелы)
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns:
-            # Превращаем всё в строку и отрезаем "+03:00" если он есть
-            df[col] = df[col].astype(str).str.split('+').str[0]
-            # Теперь конвертируем в дату. Ошибки будут NaT.
+            df[col] = df[col].astype(str).str.replace(r'\+\d{2}:\d{2}', '', regex=True).str.strip()
             df[col] = pd.to_datetime(df[col], errors='coerce')
             
+    # ОЧИСТКА ПРИЧИН (чтобы число 5.0 не ломало поиск строки '5')
     for col in ['block_name', 'reason', 'status_before']:
-        if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
+        if col in df.columns: 
+            df[col] = df[col].fillna("Не указано").astype(str)
+            if col == 'reason':
+                # Убираем .0 в конце, если Excel сохранил число как 5.0
+                df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
+                
     return df
 
 # --- Вспомогательные функции ---
@@ -110,7 +114,7 @@ def load_data(start, end):
             df['loss_date'] = pd.to_datetime(df['loss_date'])
             if 'status_before_date' in df.columns:
                 df['status_before_date'] = pd.to_datetime(df['status_before_date'])
-            df['reason'] = df['reason'].astype(str).str.strip()
+            df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             df['flow'] = df['reason'].apply(get_flow_name)
         return df
     except Exception:
