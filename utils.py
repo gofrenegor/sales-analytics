@@ -78,6 +78,7 @@ def process_excel(file):
     return df
 
 
+# ВАШИ ТОЧНЫЕ СПИСКИ
 INBOUND_STATUSES = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
 OUTBOUND_STATUSES = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
 
@@ -90,7 +91,8 @@ STAGE_MAPPING = {
     'LAM': 'Пропуски сборки'
 }
 
-OPERKA_STATUSES = [k for k, v in STAGE_MAPPING.items() if v in ('Отгрузка', 'Предсортировка', 'Сортировка')]
+# ВОЗВРАЩАЕМ СТРОГО 8 СТАТУСОВ ДЛЯ ОПЕР ПЛОЩАДИ (как было в вашем изначальном коде)
+OPERKA_STATUSES = ['GWS', 'LSS', 'PAP', 'PWT', 'SAP', 'SAS', 'SMC', 'SPS']
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -138,11 +140,7 @@ def _next_day_str(d):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_data(start, end, _v="v3"):
-    """Загрузка и предобработка данных за период.
-    
-    Параметр _v нужен для принудительного сброса кэша при изменении логики.
-    """
+def load_data(start, end, _v="v3"):  # _v="v3" принудительно сбросит старый кэш
     start_str = _as_date_str(start)
     end_excl_str = _next_day_str(end)
 
@@ -189,13 +187,10 @@ def load_data(start, end, _v="v3"):
         else:
             is_operka_6800 = pd.Series(False, index=df.index)
 
-        # НОВАЯ ЛОГИКА: 
-        # 1. Если блок 6800 — всегда Опер площадь.
-        # 2. Если товар на конкретном блоке (mapped != 'Другое') — потери остаются на этом блоке, даже если это сортировка!
-        # 3. Если блок не определен (или 'Другое'), но статус сортировки/отгрузки — кидаем в Опер площадь.
+        is_lam = df['status_before'] == 'LAM'
         
-        is_known_block = mapped != 'Другое'
-        is_operka = is_operka_6800 | (~is_known_block & df['status_before'].isin(OPERKA_STATUSES))
+        # ТЕПЕРЬ ТОЛЬКО 8 СТАТУСОВ + 6800 ИДУТ В ОПЕР ПЛОЩАДЬ, ОСТАЛЬНЫЕ В БЛОКИ
+        is_operka = (~is_lam) & (is_operka_6800 | df['status_before'].isin(OPERKA_STATUSES))
 
         df['block_group'] = mapped.where(~is_operka, 'Опер площадь')
     else:
@@ -257,4 +252,57 @@ def get_db_summary():
                 "SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count "
                 "FROM losses GROUP BY TO_CHAR(loss_date, 'YYYY-MM') ORDER BY month DESC",
                 conn,
-           
+            )
+            return total_rows, min_date, max_date, df_months
+    except Exception:
+        return None, None, None, None
+
+
+def render_admin_panel():
+    with st.sidebar:
+        st.header("👤 Админ-панель")
+        
+        if st.button("🔄 Сбросить кэш данных", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Кэш сброшен!")
+            st.rerun()
+            
+        with st.expander("📥 Загрузка данных", expanded=True):
+            uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
+            if uploaded_files:
+                all_dfs = [process_excel(file) for file in uploaded_files]
+                df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
+                if not df_new.empty:
+                    min_date = df_new['loss_date'].min().date()
+                    max_date = df_new['loss_date'].max().date()
+                    st.success(f"Прочитано файлов: {len(uploaded_files)}")
+                    st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                    if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                        with st.spinner("Загрузка..."):
+                            with engine.begin() as conn:
+                                conn.execute(text(
+                                    "DELETE FROM losses WHERE loss_date::date >= :s AND loss_date::date <= :e"
+                                ), {"s": min_date, "e": max_date})
+                                df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
+                        st.cache_data.clear()
+                        st.success("🎉 Данные сохранены!")
+                        st.rerun()
+        with st.expander("ℹ️ Что в базе"):
+            total_rows, min_date, max_date, df_months = get_db_summary()
+            if not total_rows:
+                st.info("База данных пока пуста.")
+            else:
+                st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
+                if min_date and max_date:
+                    st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                if df_months is not None:
+                    df_months.columns = ['Месяц', 'Строк']
+                    st.dataframe(df_months, hide_index=True, use_container_width=True)
+        st.divider()
+        if st.checkbox("Я уверен, что хочу удалить всё"):
+            if st.button("🗑️ Очистить базу", use_container_width=True):
+                with engine.begin() as conn:
+                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                st.cache_data.clear()
+                st.success("База очищена!")
+                st.rerun()
