@@ -23,6 +23,26 @@ if 'selected_flow' not in st.session_state: st.session_state.selected_flow = Non
 if 'selected_block' not in st.session_state: st.session_state.selected_block = None
 
 # ==========================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГРАДИЕНТА (Зеленый -> Красный)
+# ==========================================
+def get_gradient_colors(pct):
+    # Ограничиваем значение от 0 до 100
+    pct = max(0.0, min(100.0, float(pct)))
+    
+    # Интерполяция цветов:
+    # 0% -> Зеленый (46, 125, 50)
+    # 100% -> Красный (255, 75, 75)
+    r = int(46 + (255 - 46) * (pct / 100))
+    g = int(125 + (75 - 125) * (pct / 100))
+    b = int(50 + (75 - 50) * (pct / 100))
+    
+    text_color = f"rgb({r}, {g}, {b})"
+    bg_color = f"rgba({r}, {g}, {b}, 0.15)" # Полупрозрачный фон для чипа
+    border_color = f"rgba({r}, {g}, {b}, 0.4)" # Полупрозрачная рамка
+    
+    return text_color, bg_color, border_color
+
+# ==========================================
 # 1. ГЛАВНЫЙ ЭКРАН
 # ==========================================
 if st.session_state.view == 'dashboard':
@@ -72,22 +92,6 @@ if st.session_state.view == 'dashboard':
         st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
-# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГРАДИЕНТА
-# ==========================================
-def get_gradient_color(pct):
-    # Если потерь почти нет - зеленый, если много - красный
-    # Ограничиваем pct от 0 до 100
-    pct = max(0, min(100, pct))
-    
-    # Простая интерполяция RGB
-    # Зеленый (46, 125, 50) -> Красный (255, 75, 75)
-    r = int(46 + (255 - 46) * (pct / 100))
-    g = int(125 + (75 - 125) * (pct / 100))
-    b = int(50 + (75 - 50) * (pct / 100))
-    
-    return f"rgb({r}, {g}, {b})"
-
-# ==========================================
 # 2. ЭКРАН ПОТОКА (Блоки)
 # ==========================================
 elif st.session_state.view == 'flow':
@@ -115,6 +119,7 @@ elif st.session_state.view == 'flow':
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
         
+        # Стили для рамок карточек
         st.markdown("""
         <style>
         div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
@@ -133,18 +138,16 @@ elif st.session_state.view == 'flow':
                 is_worst = (row['pct'] == max_pct)
                 color_key = "red" if is_worst else "blue"
                 
-                # Вычисляем цвет для чипа и текста
-                text_color = get_gradient_color(row['pct'])
-                # Делаем фон чуть прозрачным (добавляем альфа-канал 0.2)
-                bg_color = text_color.replace("rgb", "rgba").replace(")", ", 0.2)")
+                # Получаем цвета для чипа на основе процента потерь
+                text_color, bg_color, border_color = get_gradient_colors(row['pct'])
                 
                 with st.container(key=f"card-{color_key}-{i}", border=True):
                     st.markdown(f"**{row['block_name']}**")
                     st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
                     
-                    # Применяем динамический стиль к чипу
-                    chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color};"
-                    st.markdown(f"<div class='chip-neutral' style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
+                    # Применяем динамический стиль (без использования старого класса chip-neutral)
+                    chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {border_color}; padding: 6px 14px; border-radius: 20px; font-size: 16px; font-weight: 600; display: inline-block; margin-bottom: 10px;"
+                    st.markdown(f"<div style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
                     
                     if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
                         st.session_state.selected_block = row['block_name']
