@@ -8,11 +8,22 @@ from sqlalchemy import create_engine
 st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide")
 
 # --- Подключение к базе данных Supabase ---
+from sqlalchemy import create_engine
+
 @st.cache_resource
 def get_db_engine():
-    # Берем строку подключения из "сейфа" Streamlit
-    db_url = st.secrets["database"]["connection_string"]
-    return create_engine(db_url)
+    try:
+        db_url = st.secrets["database"]["connection_string"]
+        
+        # Если Supabase выдал строку начинающуюся с postgres://, SQLAlchemy требует postgresql://
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+            
+        # Добавляем таймаут 10 секунд. Если связи нет, он выдаст ошибку, а не будет висеть
+        return create_engine(db_url, connect_args={"connect_timeout": 10})
+    except Exception as e:
+        st.error(f"Ошибка при чтении секретов или инициализации движка: {e}")
+        return None
 
 engine = get_db_engine()
 
