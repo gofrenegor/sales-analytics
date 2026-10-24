@@ -44,11 +44,19 @@ def clean_date_col(series):
 def process_excel(file):
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
+    # ВАЖНО: проверяем точное совпадение колонок, как в твоем Excel
     cols_map = {
-        'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
-        'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
-        'Дата первого списания': 'loss_date', 'Лостризон первого списания': 'reason',        
-        'Дата статуса перед списанием': 'status_before_date', 'Статус перед списанием': 'status_before'
+        'ШК': 'barcode', 
+        'Наименование блока': 'block_name', 
+        'ID блока': 'block_id',
+        'ID блока перед списанием': 'status_block_id',
+        'ID сотрудника статуса перед списан': 'status_employee_id', # Колонка AB
+        'Сумма списания': 'loss_sum', 
+        'Кол-во лог объектов для списания': 'loss_qty',
+        'Дата первого списания': 'loss_date', 
+        'Лостризон первого списания': 'reason',        
+        'Дата статуса перед списанием': 'status_before_date', 
+        'Статус перед списанием': 'status_before'
     }
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
@@ -71,6 +79,7 @@ def get_flow_name(status_before):
         return 'Другое'
     
     inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
+    # Сюда входят статусы оперки: GWS, LSS, PAP, PWT, SAP, SAS, SMC, SPS
     outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
     if status in inbound: return 'Входящий поток'
@@ -111,11 +120,21 @@ def load_data(start, end):
                 
             def get_block_group(row):
                 b_id = str(row.get('block_id', '')).strip().split('.')[0]
+                status_b_id = str(row.get('status_block_id', '')).strip().split('.')[0]
+                emp_id = str(row.get('status_employee_id', '')).strip().split('.')[0]
                 b_name = str(row.get('block_name', '')).strip()
+                status = str(row.get('status_before', '')).strip().upper()
                 
-                if b_id == '6800':
+                # 1. Если сотрудник = 6800, или блок перед списанием = 6800 -> Опер площадь
+                if emp_id == '6800' or status_b_id == '6800':
                     return 'Опер площадь'
                 
+                # 2. Если статус принадлежит оперке (даже если ID не 6800)
+                operka_statuses = ['GWS', 'LSS', 'PAP', 'PWT', 'SAP', 'SAS', 'SMC', 'SPS']
+                if status in operka_statuses:
+                    return 'Опер площадь'
+                
+                # 3. Иначе стандартный маппинг площадок
                 return BLOCK_MAPPING.get(b_name, 'Другое')
                 
             df['block_group'] = df.apply(get_block_group, axis=1)
