@@ -70,6 +70,7 @@ def get_flow_name(status_before):
     if status == "НЕ УКАЗАНО" or status == "" or status == "NAN":
         return 'Другое'
     
+    # Сюда уже включены GWS, LSS, PAP, PWT, SAP, SAS, SMC, SPS
     inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
     outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
@@ -77,7 +78,7 @@ def get_flow_name(status_before):
     elif status in outbound: return 'Исходящий поток'
     else: return 'Другое'
 
-# --- СЛОВАРЬ МАППИНГА БЕЗ АББРЕВИАТУР (ДОБАВЛЕН 4-Й БЛОК) ---
+# --- СЛОВАРЬ МАППИНГА ---
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
     "Рязань КГТ Левый": "Рязань Тюшевское 1",
@@ -110,12 +111,12 @@ def load_data(start, end):
             else:
                 df['flow'] = 'Другое'
                 
-            # --- ЛОГИКА РАСПРЕДЕЛЕНИЯ ПО БЛОКАМ ---
+            # --- ИЗМЕНЕННАЯ ЛОГИКА РАСПРЕДЕЛЕНИЯ ПО БЛОКАМ ---
             def get_block_group(row):
                 b_id = str(row.get('block_id', '')).strip()
                 b_name = str(row.get('block_name', '')).strip()
                 
-                # ID 6800 - это отдельный блок (показываем как "Обычный Рязань Тюшевское")
+                # Если ID равен 6800, это Опер площадь
                 if b_id == '6800':
                     return 'Опер площадь'
                 
