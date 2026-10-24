@@ -97,34 +97,46 @@ elif st.session_state.view == 'flow':
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
         
-        # Стили для овальных чипов
+        # Стили для нейтральных чипов (пока без цвета) и голубой обводки карточек
         st.markdown("""
         <style>
-        .chip-red { background-color: #FFE5E5; color: #D32F2F; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; display: inline-block; margin-bottom: 10px; }
-        .chip-green { background-color: #E8F5E9; color: #2E7D32; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; display: inline-block; margin-bottom: 10px; }
+        /* Голубая обводка для контейнеров карточек */
+        div[class*="st-key-card_"] {
+            border: 1.5px solid #00BFFF !important; 
+            border-radius: 8px;
+            padding: 10px;
+        }
+        
+        /* Нейтральный чип (серый фон, черный/белый текст) */
+        .chip-neutral { 
+            background-color: #e0e0e0; 
+            color: #000000; 
+            padding: 6px 14px; 
+            border-radius: 20px; 
+            font-size: 16px; /* Увеличили шрифт */
+            font-weight: 600; 
+            display: inline-block; 
+            margin-bottom: 10px; 
+        }
         </style>
         """, unsafe_allow_html=True)
         
         cols = st.columns(4)
         for i, row in df_blocks.iterrows():
             with cols[i % 4]:
-                # Логика определения цвета (можно поменять порог 10 на 20 или 50)
-                is_red = row['pct'] > 10
-                color_class = "red" if is_red else "green"
-                chip_class = "chip-red" if is_red else "chip-green"
-                
                 # Форматируем процент
                 if row['pct'] < 0.1 and row['pct'] > 0:
                     pct_text = "< 0.1%"
                 else:
                     pct_text = f"{row['pct']:.1f}%"
                 
-                with st.container(key=f"card_{color_class}_{i}", border=True):
+                # Убрали логику цветов, теперь все карточки просто с ключом card_block
+                with st.container(key=f"card_block_{i}", border=False):
                     st.markdown(f"**{row['block_name']}**")
                     st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
                     
-                    # Вставляем чип через HTML
-                    st.markdown(f"<div class='{chip_class}'>{pct_text} от потока</div>", unsafe_allow_html=True)
+                    # Чип с увеличенным шрифтом, пока нейтрального цвета
+                    st.markdown(f"<div class='chip-neutral'>{pct_text} от потока</div>", unsafe_allow_html=True)
                     
                     if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
                         st.session_state.selected_block = row['block_name']
