@@ -63,14 +63,18 @@ def get_flow_name(reason):
     return 'Другое'
 
 # ==========================================
-# ШАПКА САЙТА И АДМИН-ПАНЕЛЬ (Верхний левый угол)
+# ШАПКА САЙТА И АДМИН-ПАНЕЛЬ (Правый верхний угол)
 # ==========================================
-# Создаем две колонки: узкую для кнопки админа и широкую для заголовка
-col_admin, col_title = st.columns([1, 8])
+# Делаем 8 частей под заголовок и 1 часть под кнопку админа (справа)
+col_title, col_admin = st.columns([8, 1])
+
+with col_title:
+    st.title("📦 Аналитика списаний")
 
 with col_admin:
-    # st.popover создает кнопку, при нажатии на которую открывается окошко
-    with st.popover("⋮ Админ-панель", use_container_width=True):
+    # Выравниваем кнопку по правому краю и убираем текст, оставляя только иконку
+    st.write("") # Небольшой отступ сверху для красоты
+    with st.popover("👤", use_container_width=True):
         st.markdown("### Загрузка данных")
         uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
         
@@ -87,15 +91,12 @@ with col_admin:
                             df_to_save = df_new.dropna(subset=['loss_date'])
                             df_to_save.to_sql('losses', engine, if_exists='append', index=False)
                             st.success("✅ Успешно сохранено!")
-                            st.cache_data.clear() # Очищаем кэш, чтобы графики обновились
-                            st.rerun() # Перезагружаем страницу
+                            st.cache_data.clear()
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Ошибка сохранения: {e}")
             except Exception as e:
                 st.error(f"Ошибка: {e}")
-
-with col_title:
-    st.title("📦 Аналитика списаний")
 
 # ==========================================
 # ОСНОВНОЙ ИНТЕРФЕЙС (Даты)
@@ -149,9 +150,8 @@ def load_data(start, end):
 df_curr = load_data(start_date, end_date)
 df_prev = load_data(prev_start_date, prev_end_date)
 
-# Если база совсем пустая
 if df_curr.empty and df_prev.empty:
-    st.warning("⚠️ В базе данных пока нет информации за этот период. Нажмите «⋮ Админ-панель» в левом верхнем углу, чтобы загрузить Excel-файл.")
+    st.warning("⚠️ В базе данных пока нет информации за этот период. Нажмите на иконку 👤 в правом верхнем углу, чтобы загрузить Excel-файл.")
     st.stop()
 
 st.divider()
