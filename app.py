@@ -72,6 +72,22 @@ if st.session_state.view == 'dashboard':
         st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГРАДИЕНТА
+# ==========================================
+def get_gradient_color(pct):
+    # Если потерь почти нет - зеленый, если много - красный
+    # Ограничиваем pct от 0 до 100
+    pct = max(0, min(100, pct))
+    
+    # Простая интерполяция RGB
+    # Зеленый (46, 125, 50) -> Красный (255, 75, 75)
+    r = int(46 + (255 - 46) * (pct / 100))
+    g = int(125 + (75 - 125) * (pct / 100))
+    b = int(50 + (75 - 50) * (pct / 100))
+    
+    return f"rgb({r}, {g}, {b})"
+
+# ==========================================
 # 2. ЭКРАН ПОТОКА (Блоки)
 # ==========================================
 elif st.session_state.view == 'flow':
@@ -94,7 +110,6 @@ elif st.session_state.view == 'flow':
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
         df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
         
-        # Находим максимальный процент
         max_pct = df_blocks['pct'].max()
         
         st.markdown("---")
@@ -102,20 +117,8 @@ elif st.session_state.view == 'flow':
         
         st.markdown("""
         <style>
-        /* Красим рамки контейнеров, у которых в ключе есть blue или red */
         div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
         div[class*="st-key-card-red-"] { border: 2px solid #FF4B4B !important; border-radius: 8px; box-shadow: 0 0 8px rgba(255, 75, 75, 0.3); }
-        
-        .chip-neutral { 
-            background-color: #e0e0e0; 
-            color: #000000; 
-            padding: 6px 14px; 
-            border-radius: 20px; 
-            font-size: 16px; 
-            font-weight: 600; 
-            display: inline-block; 
-            margin-bottom: 10px; 
-        }
         </style>
         """, unsafe_allow_html=True)
         
@@ -128,14 +131,20 @@ elif st.session_state.view == 'flow':
                     pct_text = f"{row['pct']:.1f}%"
                 
                 is_worst = (row['pct'] == max_pct)
-                # Формируем безопасный ключ для CSS
                 color_key = "red" if is_worst else "blue"
                 
-                # Включаем встроенную рамку и наш ключ
+                # Вычисляем цвет для чипа и текста
+                text_color = get_gradient_color(row['pct'])
+                # Делаем фон чуть прозрачным (добавляем альфа-канал 0.2)
+                bg_color = text_color.replace("rgb", "rgba").replace(")", ", 0.2)")
+                
                 with st.container(key=f"card-{color_key}-{i}", border=True):
                     st.markdown(f"**{row['block_name']}**")
                     st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
-                    st.markdown(f"<div class='chip-neutral'>{pct_text} от потока</div>", unsafe_allow_html=True)
+                    
+                    # Применяем динамический стиль к чипу
+                    chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {text_color};"
+                    st.markdown(f"<div class='chip-neutral' style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
                     
                     if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
                         st.session_state.selected_block = row['block_name']
