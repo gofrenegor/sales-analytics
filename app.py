@@ -1,20 +1,14 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import utils
 
-# Настройка главной страницы
 st.set_page_config(page_title="Аналитика списаний", page_icon="📦", layout="wide")
-
 utils.inject_css()
 utils.render_admin_panel()
 
 st.title("📦 Аналитика списаний")
 
-# Выбор дат
 start_date, end_date, prev_start_date, prev_end_date = utils.render_date_selector()
-
-# Загрузка данных
 df_curr = utils.load_data(start_date, end_date)
 df_prev = utils.load_data(prev_start_date, prev_end_date)
 
@@ -24,13 +18,12 @@ if df_curr.empty and df_prev.empty:
 
 st.divider()
 
-# --- Инициализация состояний для навигации ---
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
 if 'selected_block' not in st.session_state: st.session_state.selected_block = None
 
 # ==========================================
-# 1. ГЛАВНЫЙ ЭКРАН (Дашборд)
+# 1. ГЛАВНЫЙ ЭКРАН
 # ==========================================
 if st.session_state.view == 'dashboard':
     total_sum = df_curr['loss_sum'].sum()
@@ -49,12 +42,10 @@ if st.session_state.view == 'dashboard':
     st.markdown("---")
     st.subheader("Разделение по потокам:")
     
-    # Считаем суммы для каждого потока отдельно
     sum_in = df_curr[df_curr['flow'] == 'Входящий поток']['loss_sum'].sum() if not df_curr.empty else 0
     sum_out = df_curr[df_curr['flow'] == 'Исходящий поток']['loss_sum'].sum() if not df_curr.empty else 0
     sum_other = df_curr[df_curr['flow'] == 'Другое']['loss_sum'].sum() if not df_curr.empty else 0
     
-    # Делаем 3 колонки
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -72,14 +63,15 @@ if st.session_state.view == 'dashboard':
         st.metric(label="Сумма исходящего потока", value=f"{sum_out:,.2f} ₽".replace(",", " "))
         
     with col3:
-        # Для "Другого" не нужна кнопка перехода, так как мы не настраивали для него блоки
         st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
         st.metric(label="Прочие причины (Другое)", value=f"{sum_other:,.2f} ₽".replace(",", " "))
         
-    # Если есть "Другое", выводим подсказку, какие LR туда попали
     if sum_other > 0:
-        other_lrs = df_curr[df_curr['flow'] == 'Другое']['reason'].unique()
-        st.warning(f"⚠️ Внимание: В данные попали списания с причинами, которые не отнесены ко Входу или Исходу: {list(other_lrs)}")
+        # Показываем статусы, которые попали в "Другое"
+        other_statuses = df_curr[df_curr['flow'] == 'Другое']['status_before'].unique()
+        # Ограничиваем вывод до 10 штук, чтобы не сломать верстку
+        display_statuses = [str(s) for s in other_statuses[:10]]
+        st.warning(f"⚠️ В категорию «Другое» попали статусы, не отнесенные ни к Входу, ни к Исходу: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
 # 2. ЭКРАН ПОТОКА (Блоки)
@@ -122,7 +114,7 @@ elif st.session_state.view == 'flow':
                     st.rerun()
 
 # ==========================================
-# 3. ЭКРАН БЛОКА (Детализация)
+# 3. ЭКРАН БЛОКА
 # ==========================================
 elif st.session_state.view == 'block_detail':
     if st.button("⬅️ Назад к выбору блока"):
