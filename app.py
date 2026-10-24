@@ -9,6 +9,36 @@ import calendar
 # --- Настройка страницы (отключаем боковую панель) ---
 st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide", initial_sidebar_state="collapsed")
 
+# ==========================================
+# СТИЛИ (CSS) ДЛЯ КНОПОК
+# ==========================================
+st.markdown("""
+    <style>
+    /* Стили для входящего потока (Зеленый) */
+    .st-key-btn_inbound button {
+        background-color: #2e7d32 !important;
+        color: white !important;
+        border: 1px solid #2e7d32 !important;
+    }
+    .st-key-btn_inbound button:hover {
+        background-color: #1b5e20 !important;
+        border: 1px solid #1b5e20 !important;
+    }
+    
+    /* Стили для исходящего потока (Синий) */
+    .st-key-btn_outbound button {
+        background-color: #1565c0 !important;
+        color: white !important;
+        border: 1px solid #1565c0 !important;
+    }
+    .st-key-btn_outbound button:hover {
+        background-color: #0d47a1 !important;
+        border: 1px solid #0d47a1 !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+
 # --- Подключение к базе данных ---
 @st.cache_resource
 def get_db_engine():
@@ -65,15 +95,13 @@ def get_flow_name(reason):
 # ==========================================
 # ШАПКА САЙТА И АДМИН-ПАНЕЛЬ (Правый верхний угол)
 # ==========================================
-# Делаем 8 частей под заголовок и 1 часть под кнопку админа (справа)
 col_title, col_admin = st.columns([8, 1])
 
 with col_title:
     st.title("📦 Аналитика списаний")
 
 with col_admin:
-    # Выравниваем кнопку по правому краю и убираем текст, оставляя только иконку
-    st.write("") # Небольшой отступ сверху для красоты
+    st.write("") 
     with st.popover("👤", use_container_width=True):
         st.markdown("### Загрузка данных")
         uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
@@ -177,12 +205,14 @@ with tab_analytics:
         st.subheader("Выберите поток для детализации:")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("⬇️ ВХОДЯЩИЙ ПОТОК", use_container_width=True):
+            # Добавили key="btn_inbound" для стилизации
+            if st.button("ВХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_inbound"):
                 st.session_state.selected_flow = "in"
                 st.session_state.view = 'flow'
                 st.rerun()
         with col2:
-            if st.button("⬆️ ИСХОДЯЩИЙ ПОТОК", use_container_width=True):
+            # Добавили key="btn_outbound" для стилизации
+            if st.button("ИСХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_outbound"):
                 st.session_state.selected_flow = "out"
                 st.session_state.view = 'flow'
                 st.rerun()
@@ -255,7 +285,7 @@ with tab_charts:
     col_pie, col_bar_flow = st.columns(2)
     with col_pie:
         df_flows = df_curr.groupby('flow')[['loss_sum', 'loss_qty']].sum().reset_index()
-        fig_pie = px.pie(df_flows, names='flow', values='loss_sum', title="Доля потоков в общей сумме", color='flow', color_discrete_map={'Входящий поток': '#FF4B4B', 'Исходящий поток': '#00CC96', 'Другое': '#888888'}, hole=0.4)
+        fig_pie = px.pie(df_flows, names='flow', values='loss_sum', title="Доля потоков в общей сумме", color='flow', color_discrete_map={'Входящий поток': '#2e7d32', 'Исходящий поток': '#1565c0', 'Другое': '#888888'}, hole=0.4)
         fig_pie.update_traces(hovertemplate="<b>%{label}</b><br>Сумма: %{value:,.2f} ₽<br>Доля: %{percent}<extra></extra>")
         st.plotly_chart(fig_pie, use_container_width=True)
 
