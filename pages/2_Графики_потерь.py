@@ -10,14 +10,12 @@ utils.render_admin_panel()
 st.title("📈 Визуальный анализ потерь")
 
 start_date, end_date, prev_start_date, prev_end_date = utils.render_date_selector()
-
 df_curr = utils.load_data(start_date, end_date)
 
 if df_curr.empty:
     st.warning("⚠️ Нет данных за этот период.")
     st.stop()
 
-# Кэшируем данные для графиков
 @st.cache_data(ttl=3600)
 def get_charts_data(df):
     df_flows = df.groupby('flow')[['loss_sum']].sum().reset_index()
