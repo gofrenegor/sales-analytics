@@ -65,11 +65,12 @@ def process_excel(file):
             if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
+# --- ЖЕСТКАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ПОТОКА ---
 def get_flow_name(status_before):
-    if pd.isna(status_before) or str(status_before).strip() == "" or str(status_before).strip().upper() == "NAN":
-        return 'Другое'
-    
     status = str(status_before).strip().upper()
+    
+    if status == "НЕ УКАЗАНО" or status == "" or status == "NAN":
+        return 'Другое'
     
     inbound = ['ANV', 'DAP', 'IPS', 'ORG', 'OSS', 'PVP', 'RGP', 'RNP', 'RNR', 'RSP', 'RWP', 'SDI', 'SGP', 'SPM', 'TWR', 'WDC', 'WLN', 'WLR', 'WLT', 'WPU', 'WSC', 'WWE']
     outbound = ['GWS', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SMC', 'SMS', 'SPS', 'WMI']
@@ -93,7 +94,11 @@ def load_data(start, end):
             df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
             if 'status_before' in df.columns:
-                df['status_before'] = df['status_before'].fillna('Не указано').astype(str).str.strip().str.upper()
+                # МАГИЯ ОЧИСТКИ: оставляем только английские буквы, убираем пробелы и невидимые символы
+                df['status_before'] = df['status_before'].fillna('').astype(str)
+                df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
+                df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
+                
                 df['flow'] = df['status_before'].apply(get_flow_name)
             else:
                 df['flow'] = 'Другое'
@@ -138,7 +143,6 @@ def render_date_selector():
         
     return start_date, end_date, prev_start_date, prev_end_date
 
-# --- Сводка по базе для админки ---
 def get_db_summary():
     try:
         with engine.connect() as conn:
@@ -151,12 +155,10 @@ def get_db_summary():
     except Exception:
         return None, None, None, None
 
-# --- АДМИН-ПАНЕЛЬ ---
 def render_admin_panel():
     with st.sidebar:
         st.header("👤 Админ-панель")
         
-        # 1. Загрузка
         with st.expander("📥 Загрузка данных", expanded=True):
             uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
             
@@ -180,7 +182,6 @@ def render_admin_panel():
                         st.success("🎉 Данные сохранены!")
                         st.rerun()
         
-        # 2. Что в базе (ВОЗВРАЩЕНО)
         with st.expander("ℹ️ Что в базе"):
             total_rows, min_date, max_date, df_months = get_db_summary()
             if not total_rows:
@@ -194,7 +195,6 @@ def render_admin_panel():
                     df_months.columns = ['Месяц', 'Строк']
                     st.dataframe(df_months, hide_index=True, use_container_width=True)
                     
-        # 3. Очистка
         st.divider()
         if st.checkbox("Я уверен, что хочу удалить всё"):
             if st.button("🗑️ Очистить базу", use_container_width=True):
