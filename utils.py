@@ -65,15 +65,18 @@ def process_excel(file):
             if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
-# --- ЖЕСТКАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ПОТОКА ---
+# --- НОВАЯ ЛОГИКА ПО СКРИНШОТУ ---
 def get_flow_name(status_before):
     status = str(status_before).strip().upper()
     
     if status == "НЕ УКАЗАНО" or status == "" or status == "NAN":
         return 'Другое'
     
-    inbound = ['ANV', 'DAP', 'IPS', 'ORG', 'OSS', 'PVP', 'RGP', 'RNP', 'RNR', 'RSP', 'RWP', 'SDI', 'SGP', 'SPM', 'TWR', 'WDC', 'WLN', 'WLR', 'WLT', 'WPU', 'WSC', 'WWE']
-    outbound = ['GWS', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SMC', 'SMS', 'SPS', 'WMI']
+    # Вход (по скрину)
+    inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
+    
+    # Исход (по скрину)
+    outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
     if status in inbound:
         return 'Входящий поток'
@@ -94,8 +97,8 @@ def load_data(start, end):
             df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
             if 'status_before' in df.columns:
-                # МАГИЯ ОЧИСТКИ: оставляем только английские буквы, убираем пробелы и невидимые символы
                 df['status_before'] = df['status_before'].fillna('').astype(str)
+                # Очистка от пробелов и невидимых символов
                 df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
                 df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
                 
