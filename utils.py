@@ -5,7 +5,6 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine, text
 import calendar
 
-# --- Подключение к базе данных ---
 @st.cache_resource
 def get_db_engine():
     try:
@@ -21,7 +20,6 @@ def get_db_engine():
 
 engine = get_db_engine()
 
-# --- CSS Стили ---
 def inject_css():
     st.markdown("""
         <style>
@@ -36,15 +34,13 @@ def inject_css():
         </style>
     """, unsafe_allow_html=True)
 
-# --- Парсер дат (убирает часовые пояса) ---
 def clean_date_col(series):
     if pd.api.types.is_datetime64_any_dtype(series): return series
     s = series.astype(str).replace(['NaT', 'nan', 'None'], pd.NA)
-    s = s.str.replace(r'\+\d{2}:\d{2}', '', regex=True) # убираем +03:00
-    s = s.str.replace(r'\.\d+', '', regex=True)       # убираем микросекунды
+    s = s.str.replace(r'\+\d{2}:\d{2}', '', regex=True)
+    s = s.str.replace(r'\.\d+', '', regex=True)
     return pd.to_datetime(s, errors='coerce')
 
-# --- Функция очистки Excel ---
 def process_excel(file):
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
@@ -69,7 +65,23 @@ def process_excel(file):
             if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
-# --- Загрузка данных из БД ---
+# --- НОВАЯ ЛОГИКА ОПРЕДЕЛЕНИЯ ПОТОКА ПО СТАТУСУ ---
+def get_flow_name(status_before):
+    if pd.isna(status_before) or str(status_before).strip() == "" or str(status_before).strip().upper() == "NAN":
+        return 'Другое'
+    
+    status = str(status_before).strip().upper()
+    
+    inbound = ['ANV', 'DAP', 'IPS', 'ORG', 'OSS', 'PVP', 'RGP', 'RNP', 'RNR', 'RSP', 'RWP', 'SDI', 'SGP', 'SPM', 'TWR', 'WDC', 'WLN', 'WLR', 'WLT', 'WPU', 'WSC', 'WWE']
+    outbound = ['GWS', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SMC', 'SMS', 'SPS', 'WMI']
+    
+    if status in inbound:
+        return 'Входящий поток'
+    elif status in outbound:
+        return 'Исходящий поток'
+    else:
+        return 'Другое'
+
 @st.cache_data(ttl=3600)
 def load_data(start, end):
     query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
@@ -80,16 +92,17 @@ def load_data(start, end):
             if 'status_before_date' in df.columns:
                 df['status_before_date'] = pd.to_datetime(df['status_before_date'])
             df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-            df['flow'] = df['reason'].apply(get_flow_name)
+            
+            # Применяем функцию к статусу перед списанием
+            if 'status_before' in df.columns:
+                df['status_before'] = df['status_before'].fillna('Не указано').astype(str).str.strip().str.upper()
+                df['flow'] = df['status_before'].apply(get_flow_name)
+            else:
+                df['flow'] = 'Другое'
+                
         return df
     except Exception:
         return pd.DataFrame()
-
-# --- Вспомогательные функции ---
-def get_flow_name(reason):
-    if reason in ['36', '46', '47']: return 'Входящий поток'
-    elif reason in ['26', '5']: return 'Исходящий поток'
-    return 'Другое'
 
 def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     diff_sum = curr_sum - prev_sum
@@ -100,10 +113,8 @@ def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     qty_str = f"{sign_q}{diff_qty:,.0f} шт".replace(",", " ")
     return f"{sum_str} / {qty_str}"
 
-# --- Глобальный выбор дат (синхронизирует все страницы) ---
 def render_date_selector():
     date_mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True)
-    
     start_date, end_date, prev_start_date, prev_end_date = None, None, None, None
     
     if date_mode == "День":
@@ -129,30 +140,35 @@ def render_date_selector():
         
     return start_date, end_date, prev_start_date, prev_end_date
 
-# --- Админ-панель (доступна везде) ---
 def render_admin_panel():
     with st.sidebar:
-        st.header("👤 Админ-панель")
-        with st.expander("📥 Загрузка данных"):
-            uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True)
-            if uploaded_files:
-                all_dfs = [process_excel(file) for file in uploaded_files]
-                df_new = pd.concat(all_dfs, ignore_index=True)
-                df_new_valid = df_new.dropna(subset=['loss_date'])
+        st.header("📥 Админ-панель")
+        uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+        
+        if uploaded_files:
+            all_dfs = [process_excel(file) for file in uploaded_files]
+            df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
+            
+            if not df_new.empty:
+                min_date = df_new['loss_date'].min().date()
+                max_date = df_new['loss_date'].max().date()
                 
-                if not df_new_valid.empty:
-                    min_date = df_new_valid['loss_date'].min().date()
-                    max_date = df_new_valid['loss_date'].max().date()
-                    st.info(f"Период: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
-                    if st.button("💾 ВЫГРУЗИТЬ", use_container_width=True, type="primary"):
-                        with st.spinner("Загрузка..."):
-                            with engine.begin() as conn:
-                                conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
-                                df_new_valid.to_sql('losses', con=conn, if_exists='append', index=False, chunksize=5000)
-                        st.cache_data.clear()
-                        st.rerun()
-            if st.button("🗑️ Очистить базу", disabled=not st.checkbox("Удалить всё")):
-                with engine.begin() as conn:
-                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
-                st.cache_data.clear()
-                st.rerun()
+                st.success(f"Прочитано файлов: {len(uploaded_files)}")
+                st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                
+                if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                    with st.spinner("Загрузка..."):
+                        with engine.begin() as conn:
+                            conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                            df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
+                    st.cache_data.clear()
+                    st.success("🎉 Данные сохранены!")
+                    st.rerun()
+                    
+        st.divider()
+        if st.button("🗑️ Очистить базу", disabled=not st.checkbox("Удалить всё"), use_container_width=True):
+            with engine.begin() as conn:
+                conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+            st.cache_data.clear()
+            st.success("База очищена!")
+            st.rerun()
