@@ -109,10 +109,11 @@ def load_data(start, end):
             else:
                 df['flow'] = 'Другое'
                 
-            # --- ИСПРАВЛЕННАЯ ЛОГИКА РАСПРЕДЕЛЕНИЯ ПО БЛОКАМ ---
+            # --- БРОНЕБОЙНАЯ ЛОГИКА РАСПРЕДЕЛЕНИЯ ПО БЛОКАМ ---
             def get_block_group(row):
-                # Берем ID, чистим от пробелов и отрезаем ".0" (если Pandas сделал float)
-                b_id = str(row.get('block_id', '')).strip().replace('.0', '')
+                # Превращаем в строку, убираем пробелы и разбиваем по точке, берем первую часть
+                # Это 100% сработает, даже если Pandas сделал из 6800 -> 6800.0
+                b_id = str(row.get('block_id', '')).strip().split('.')[0]
                 b_name = str(row.get('block_name', '')).strip()
                 
                 # Если ID равен 6800, это Опер площадь
@@ -126,5 +127,91 @@ def load_data(start, end):
         return df
     except Exception:
         return pd.DataFrame()
+
+def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
+    diff_sum = curr_sum - prev_sum
+    diff_qty = curr_qty - prev_qty
+    sign = "+" if diff_sum > 0 else ""
+    sum_str = f"{sign}{diff_sum:,.0f} ₽".replace(",", " ")
+    sign_q = "+" if diff_qty > 0 else ""
+    qty_str = f"{sign_q}{diff_qty:,.0f} шт".replace(",", " ")
+    return f"{sum_str} / {qty_str}"
+
+def render_date_selector():
+    date_mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True)
+    start_date, end_date, prev_start_date, prev_end_date = None, None, None, None
+    
+    if date_mode == "День":
+        target_date = st.date_input("Выберите дату", value=date.today())
+        start_date, end_date = target_date, target_date
+        prev_start_date = target_date - timedelta(days=1)
+        prev_end_date = prev_start_date
+        st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')}**")
+    elif date_mode == "Неделя":
+        target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
+        start_date = target_date - timedelta(days=target_date.weekday())
+        end_date = start_date + timedelta(days=6)
+        prev_start_date = start_date - timedelta(days=7)
+        prev_end_date = start_date - timedelta(days=1)
+        st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
+    elif date_mode == "Месяц":
+        target_date = st.date_input("Выберите любой день нужного месяца", value=date.today())
+        start_date = target_date.replace(day=1)
+        end_date = target_date.replace(day=calendar.monthrange(target_date.year, target_date.month)[1])
+        prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
+        prev_end_date = start_date - timedelta(days=1)
+        st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
         
-# ... (остальные функции get_delta_text, render_date_selector, get_db_summary, render_admin_panel без изменений) ...
+    return start_date, end_date, prev_start_date, prev_end_date
+
+def get_db_summary():
+    try:
+        with engine.connect() as conn:
+            res_total = conn.execute(text("SELECT COUNT(*), MIN(loss_date), MAX(loss_date) FROM losses")).fetchone()
+            total_rows, min_date, max_date = res_total
+            if total_rows == 0: return None, None, None, None
+            df_months = pd.read_sql("SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count FROM losses GROUP BY TO_CHAR(loss_date, 'YYYY-MM') ORDER BY month DESC", conn)
+            return total_rows, min_date, max_date, df_months
+    except Exception:
+        return None, None, None, None
+
+def render_admin_panel():
+    with st.sidebar:
+        st.header("👤 Админ-панель")
+        with st.expander("📥 Загрузка данных", expanded=True):
+            uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
+            if uploaded_files:
+                all_dfs = [process_excel(file) for file in uploaded_files]
+                df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
+                if not df_new.empty:
+                    min_date = df_new['loss_date'].min().date()
+                    max_date = df_new['loss_date'].max().date()
+                    st.success(f"Прочитано файлов: {len(uploaded_files)}")
+                    st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                    if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                        with st.spinner("Загрузка..."):
+                            with engine.begin() as conn:
+                                conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                                df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
+                        st.cache_data.clear()
+                        st.success("🎉 Данные сохранены!")
+                        st.rerun()
+        with st.expander("ℹ️ Что в базе"):
+            total_rows, min_date, max_date, df_months = get_db_summary()
+            if not total_rows:
+                st.info("База данных пока пуста.")
+            else:
+                st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
+                if min_date and max_date:
+                    st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                if df_months is not None:
+                    df_months.columns = ['Месяц', 'Строк']
+                    st.dataframe(df_months, hide_index=True, use_container_width=True)
+        st.divider()
+        if st.checkbox("Я уверен, что хочу удалить всё"):
+            if st.button("🗑️ Очистить базу", use_container_width=True):
+                with engine.begin() as conn:
+                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                st.cache_data.clear()
+                st.success("База очищена!")
+                st.rerun()
