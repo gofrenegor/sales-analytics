@@ -6,8 +6,8 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine
 import calendar
 
-# --- Настройка страницы ---
-st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide")
+# --- Настройка страницы (отключаем боковую панель) ---
+st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide", initial_sidebar_state="collapsed")
 
 # --- Подключение к базе данных ---
 @st.cache_resource
@@ -47,7 +47,7 @@ def process_excel(file):
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
     return df
 
-# --- Вспомогательная функция для расчета дельты ---
+# --- Вспомогательные функции ---
 def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     diff_sum = curr_sum - prev_sum
     diff_qty = curr_qty - prev_qty
@@ -62,37 +62,44 @@ def get_flow_name(reason):
     elif reason in ['26', '5']: return 'Исходящий поток'
     return 'Другое'
 
-# --- Боковая панель ---
-with st.sidebar:
-    st.header("📥 Загрузка данных")
-    uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
-    
-    if uploaded_file:
-        try:
-            df_new = process_excel(uploaded_file)
-            st.success(f"Файл прочитан: {len(df_new)} строк")
-            if st.button("💾 Сохранить в базу", use_container_width=True):
-                if engine is None:
-                    st.error("Нет подключения к базе.")
-                else:
-                    try:
-                        df_to_save = df_new.dropna(subset=['loss_date'])
-                        df_to_save.to_sql('losses', engine, if_exists='append', index=False)
-                        st.success("✅ Успешно сохранено!")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        st.error(f"Ошибка сохранения: {e}")
-        except Exception as e:
-            st.error(f"Ошибка: {e}")
+# ==========================================
+# ШАПКА САЙТА И АДМИН-ПАНЕЛЬ (Верхний левый угол)
+# ==========================================
+# Создаем две колонки: узкую для кнопки админа и широкую для заголовка
+col_admin, col_title = st.columns([1, 8])
 
-# --- Инициализация состояний ---
-if 'view' not in st.session_state: st.session_state.view = 'dashboard'
-if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
-if 'selected_lr' not in st.session_state: st.session_state.selected_lr = None
+with col_admin:
+    # st.popover создает кнопку, при нажатии на которую открывается окошко
+    with st.popover("⋮ Админ-панель", use_container_width=True):
+        st.markdown("### Загрузка данных")
+        uploaded_file = st.file_uploader("Excel файл (.xlsx)", type=["xlsx"])
+        
+        if uploaded_file:
+            try:
+                df_new = process_excel(uploaded_file)
+                st.success(f"Прочитано: {len(df_new)} строк")
+                
+                if st.button("💾 Сохранить в базу", use_container_width=True, type="primary"):
+                    if engine is None:
+                        st.error("Нет подключения к базе.")
+                    else:
+                        try:
+                            df_to_save = df_new.dropna(subset=['loss_date'])
+                            df_to_save.to_sql('losses', engine, if_exists='append', index=False)
+                            st.success("✅ Успешно сохранено!")
+                            st.cache_data.clear() # Очищаем кэш, чтобы графики обновились
+                            st.rerun() # Перезагружаем страницу
+                        except Exception as e:
+                            st.error(f"Ошибка сохранения: {e}")
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
 
-# --- Главный интерфейс ---
-st.title("📦 Аналитика списаний")
+with col_title:
+    st.title("📦 Аналитика списаний")
 
+# ==========================================
+# ОСНОВНОЙ ИНТЕРФЕЙС (Даты)
+# ==========================================
 date_mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True)
 
 start_date, end_date = None, None
@@ -142,18 +149,21 @@ def load_data(start, end):
 df_curr = load_data(start_date, end_date)
 df_prev = load_data(prev_start_date, prev_end_date)
 
+# Если база совсем пустая
 if df_curr.empty and df_prev.empty:
-    st.info("Нет данных за выбранный или предыдущий период.")
+    st.warning("⚠️ В базе данных пока нет информации за этот период. Нажмите «⋮ Админ-панель» в левом верхнем углу, чтобы загрузить Excel-файл.")
     st.stop()
 
 st.divider()
 
+# ==========================================
+# ВКЛАДКИ (Аналитика и Графики)
+# ==========================================
 tab_analytics, tab_charts = st.tabs(["📊 Аналитика потерь", "📈 Графики потерь"])
 
-# ==========================================
-# ВКЛАДКА 1: АНАЛИТИКА
-# ==========================================
 with tab_analytics:
+    if st.session_state.get('view') is None: st.session_state.view = 'dashboard'
+    
     if st.session_state.view == 'dashboard':
         total_sum = df_curr['loss_sum'].sum()
         total_qty = df_curr['loss_qty'].sum()
@@ -223,9 +233,10 @@ with tab_analytics:
             st.markdown("---")
             st.markdown("#### Динамика списаний")
             df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
+            df_grouped['time_label'] = df_grouped['loss_date'].dt.strftime('%d.%m %H:%M')
             
-            fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True, labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
-            fig.update_traces(hovertemplate="<b>Дата:</b> %{x|%d.%m.%Y %H:%M}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>")
+            fig = px.line(df_grouped, x='time_label', y='loss_sum', markers=True, labels={'loss_sum': 'Сумма (₽)', 'time_label': 'Время'})
+            fig.update_traces(hovertemplate="<b>Время:</b> %{x}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>")
             fig.update_xaxes(type='category')
             st.plotly_chart(fig, use_container_width=True)
             
@@ -237,9 +248,6 @@ with tab_analytics:
                 st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=300)
 
 
-# ==========================================
-# ВКЛАДКА 2: ГРАФИКИ
-# ==========================================
 with tab_charts:
     st.subheader("Визуальный анализ потерь")
     st.markdown("Наведите мышкой на график, чтобы увидеть точные цифры.")
@@ -260,10 +268,7 @@ with tab_charts:
 
     st.divider()
 
-    # 3. Динамика по дням или часам с ФИЛЬТРОМ ПО LR
     st.markdown("#### Динамика потерь")
-    
-    # НОВЫЙ ФИЛЬТР ПО LR
     all_lrs = sorted(df_curr['reason'].unique())
     selected_lr_chart = st.selectbox("Выберите LR для графика (или оставьте 'Все'):", ["Все"] + list(all_lrs))
     
@@ -275,17 +280,12 @@ with tab_charts:
         has_time = (df_chart['loss_date'].dt.hour != 0).any() or (df_chart['loss_date'].dt.minute != 0).any()
         
         if date_mode == "День" and has_time:
-            # Строим по часам
             df_curr_daily = df_chart.set_index('loss_date').resample('h')[['loss_sum', 'loss_qty']].sum().reset_index()
-            # Убираем пустые часы, чтобы не было нулей
             df_curr_daily = df_curr_daily[df_curr_daily['loss_sum'] > 0]
-            
-            # Делаем красивый текстовый формат для оси X
             df_curr_daily['time_label'] = df_curr_daily['loss_date'].dt.strftime('%d.%m %H:%M')
             x_col = 'time_label'
             title_text = "Сумма потерь по часам"
         else:
-            # Строим по дням
             df_curr_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum', 'loss_qty']].sum().reset_index()
             df_curr_daily['time_label'] = pd.to_datetime(df_curr_daily['loss_date']).dt.strftime('%d.%m.%Y')
             x_col = 'time_label'
@@ -293,13 +293,12 @@ with tab_charts:
 
         fig_daily = px.line(df_curr_daily, x=x_col, y='loss_sum', markers=True, title=title_text)
         fig_daily.update_traces(hovertemplate="<b>Время:</b> %{x}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>", line_color='#FF4B4B')
-        fig_daily.update_xaxes(type='category') # Отключает наносекунды
+        fig_daily.update_xaxes(type='category')
         st.plotly_chart(fig_daily, use_container_width=True)
         
         if date_mode == "День" and not has_time:
-            st.caption("⚠️ В ваших данных нет времени (только дата), поэтому график по часам не построить. Добавьте время в Excel.")
+            st.caption("⚠️ В ваших данных нет времени (только дата), поэтому график по часам не построить.")
     
-    # 4. Топ-10 блоков (тоже применяем фильтр)
     st.markdown(f"#### Топ-10 блоков по сумме потерь {'(по LR ' + selected_lr_chart + ')' if selected_lr_chart != 'Все' else ''}")
     if 'block_name' in df_chart:
         df_top_blocks = df_chart.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False).head(10)
