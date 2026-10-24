@@ -47,14 +47,17 @@ def process_excel(file):
 def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     diff_sum = curr_sum - prev_sum
     diff_qty = curr_qty - prev_qty
-    
     sign = "+" if diff_sum > 0 else ""
     sum_str = f"{sign}{diff_sum:,.0f} ₽".replace(",", " ")
-    
     sign_q = "+" if diff_qty > 0 else ""
     qty_str = f"{sign_q}{diff_qty:,.0f} шт".replace(",", " ")
-    
     return f"{sum_str} / {qty_str}"
+
+# --- Функция для определения потока по LR ---
+def get_flow_name(reason):
+    if reason in ['36', '46', '47']: return 'Входящий поток'
+    elif reason in ['26', '5']: return 'Исходящий поток'
+    return 'Другое'
 
 # --- Боковая панель для загрузки данных ---
 with st.sidebar:
@@ -65,7 +68,6 @@ with st.sidebar:
         try:
             df_new = process_excel(uploaded_file)
             st.success(f"Файл прочитан: {len(df_new)} строк")
-            
             if st.button("💾 Сохранить в базу", use_container_width=True):
                 if engine is None:
                     st.error("Нет подключения к базе.")
@@ -80,7 +82,7 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Ошибка: {e}")
 
-# --- Инициализация состояний ---
+# --- Инициализация состояний для навигации ---
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
 if 'selected_lr' not in st.session_state: st.session_state.selected_lr = None
@@ -89,7 +91,7 @@ if 'selected_lr' not in st.session_state: st.session_state.selected_lr = None
 st.title("📦 Аналитика списаний")
 
 # ==========================================
-# ВЫБОР ПЕРИОДА (Разрезы)
+# ВЫБОР ПЕРИОДА (Общий для всех вкладок)
 # ==========================================
 date_mode = st.radio(
     "Выберите разрез:", 
@@ -102,37 +104,27 @@ prev_start_date, prev_end_date = None, None
 
 if date_mode == "День":
     target_date = st.date_input("Выберите дату", value=date.today())
-    start_date = target_date
-    end_date = target_date
-    
+    start_date, end_date = target_date, target_date
     prev_start_date = target_date - timedelta(days=1)
     prev_end_date = prev_start_date
-    
-    st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}**\n\n"
-            f"Сравнение с предыдущим днем: **{prev_start_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}** | Сравнение с предыдущим днем: **{prev_start_date.strftime('%d.%m.%Y')}**")
 
 elif date_mode == "Неделя":
     target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
     start_date = target_date - timedelta(days=target_date.weekday())
     end_date = start_date + timedelta(days=6)
-    
     prev_start_date = start_date - timedelta(days=7)
     prev_end_date = start_date - timedelta(days=1)
-    
-    st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**\n\n"
-            f"Сравнение с прошлой неделей: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
 
 elif date_mode == "Месяц":
     target_date = st.date_input("Выберите любой день нужного месяца", value=date.today())
     start_date = target_date.replace(day=1)
     _, last_day = calendar.monthrange(target_date.year, target_date.month)
     end_date = target_date.replace(day=last_day)
-    
     prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
     prev_end_date = start_date - timedelta(days=1)
-    
-    st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**\n\n"
-            f"Сравнение с прошлым месяцем: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
 
 if engine is None:
     st.error("Нет подключения к базе данных.")
@@ -147,6 +139,7 @@ def load_data(start, end):
         if not df.empty:
             df['loss_date'] = pd.to_datetime(df['loss_date'])
             df['reason'] = df['reason'].astype(str).str.strip()
+            df['flow'] = df['reason'].apply(get_flow_name)
         return df
     except Exception as e:
         return pd.DataFrame()
@@ -161,122 +154,211 @@ if df_curr.empty and df_prev.empty:
 st.divider()
 
 # ==========================================
-# ЭКРАН 1: ДАШБОРД
+# ГЛАВНЫЕ ВКЛАДКИ (Кнопки)
 # ==========================================
-if st.session_state.view == 'dashboard':
-    total_sum = df_curr['loss_sum'].sum() if not df_curr.empty else 0
-    total_qty = df_curr['loss_qty'].sum() if not df_curr.empty else 0
-    
-    prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
-    prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
-    
-    st.markdown("### Общие списания за период")
-    st.metric(
-        label="Сумма", 
-        value=f"{total_sum:,.2f} ₽".replace(",", " "),
-        delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty),
-        delta_color="inverse"
-    )
-    
-    st.markdown("---")
-    st.subheader("Выберите поток для детализации:")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("⬇️ ВХОДЯЩИЙ ПОТОК", use_container_width=True):
-            st.session_state.selected_flow = "in"
-            st.session_state.view = 'flow'
-            st.rerun()
-    with col2:
-        if st.button("⬆️ ИСХОДЯЩИЙ ПОТОК", use_container_width=True):
-            st.session_state.selected_flow = "out"
-            st.session_state.view = 'flow'
-            st.rerun()
+tab_analytics, tab_charts = st.tabs(["📊 Аналитика потерь", "📈 Графики потерь"])
 
 # ==========================================
-# ЭКРАН 2: ВЫБОР ПРИЧИНЫ (LR)
+# ВКЛАДКА 1: АНАЛИТИКА (Наша старая логика)
 # ==========================================
-elif st.session_state.view == 'flow':
-    if st.button("⬅️ Назад на главную"):
-        st.session_state.view = 'dashboard'
-        st.rerun()
+with tab_analytics:
+    if st.session_state.view == 'dashboard':
+        total_sum = df_curr['loss_sum'].sum()
+        total_qty = df_curr['loss_qty'].sum()
+        prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
+        prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
         
-    flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
-    st.subheader(f"Выбран: {flow_name}")
-    st.markdown("Выберите причину списания (LR):")
-    
-    if st.session_state.selected_flow == "in":
-        available_lrs = ['36', '46', '47']
-    else:
-        available_lrs = ['26', '5']
+        st.markdown("### Общие списания за период")
+        st.metric(
+            label="Сумма", 
+            value=f"{total_sum:,.2f} ₽".replace(",", " "),
+            delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty),
+            delta_color="inverse"
+        )
         
-    cols = st.columns(len(available_lrs))
-    for i, lr in enumerate(available_lrs):
-        with cols[i]:
-            lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
-            lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
-            lr_qty_curr = lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0
-            
-            lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
-            lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
-            lr_qty_prev = lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0
-            
-            delta_text = get_delta_text(lr_sum_curr, lr_qty_curr, lr_sum_prev, lr_qty_prev)
-            
-            st.metric(
-                label=f"LR {lr}",
-                value=f"{lr_sum_curr:,.0f} ₽".replace(",", " "),
-                delta=delta_text,
-                delta_color="inverse"
-            )
-            
-            if st.button(f"Подробнее", key=f"btn_{lr}", use_container_width=True):
-                st.session_state.selected_lr = lr
-                st.session_state.view = 'lr_detail'
+        st.markdown("---")
+        st.subheader("Выберите поток для детализации:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("⬇️ ВХОДЯЩИЙ ПОТОК", use_container_width=True):
+                st.session_state.selected_flow = "in"
+                st.session_state.view = 'flow'
+                st.rerun()
+        with col2:
+            if st.button("⬆️ ИСХОДЯЩИЙ ПОТОК", use_container_width=True):
+                st.session_state.selected_flow = "out"
+                st.session_state.view = 'flow'
                 st.rerun()
 
-# ==========================================
-# ЭКРАН 3: ДЕТАЛЬНАЯ АНАЛИТИКА ПО LR
-# ==========================================
-elif st.session_state.view == 'lr_detail':
-    if st.button("⬅️ Назад к выбору LR"):
-        st.session_state.view = 'flow'
-        st.rerun()
+    elif st.session_state.view == 'flow':
+        if st.button("⬅️ Назад на главную"):
+            st.session_state.view = 'dashboard'
+            st.rerun()
+            
+        flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
+        st.subheader(f"Выбран: {flow_name}")
+        st.markdown("Выберите причину списания (LR):")
         
-    lr = st.session_state.selected_lr
-    df_filtered_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
-    df_filtered_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
+        available_lrs = ['36', '46', '47'] if st.session_state.selected_flow == "in" else ['26', '5']
+            
+        cols = st.columns(len(available_lrs))
+        for i, lr in enumerate(available_lrs):
+            with cols[i]:
+                lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
+                lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
+                lr_qty_curr = lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0
+                
+                lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
+                lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
+                lr_qty_prev = lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0
+                
+                st.metric(
+                    label=f"LR {lr}",
+                    value=f"{lr_sum_curr:,.0f} ₽".replace(",", " "),
+                    delta=get_delta_text(lr_sum_curr, lr_qty_curr, lr_sum_prev, lr_qty_prev),
+                    delta_color="inverse"
+                )
+                
+                if st.button(f"Подробнее", key=f"btn_{lr}", use_container_width=True):
+                    st.session_state.selected_lr = lr
+                    st.session_state.view = 'lr_detail'
+                    st.rerun()
+
+    elif st.session_state.view == 'lr_detail':
+        if st.button("⬅️ Назад к выбору LR"):
+            st.session_state.view = 'flow'
+            st.rerun()
+            
+        lr = st.session_state.selected_lr
+        df_filtered_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
+        df_filtered_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
+        
+        st.subheader(f"Детализация по причине (LR): {lr}")
+        
+        lr_sum = df_filtered_curr['loss_sum'].sum() if not df_filtered_curr.empty else 0
+        lr_qty = df_filtered_curr['loss_qty'].sum() if not df_filtered_curr.empty else 0
+        prev_sum = df_filtered_prev['loss_sum'].sum() if not df_filtered_prev.empty else 0
+        prev_qty = df_filtered_prev['loss_qty'].sum() if not df_filtered_prev.empty else 0
+        
+        st.metric(
+            label=f"Сумма по LR {lr}", 
+            value=f"{lr_sum:,.2f} ₽".replace(",", " "),
+            delta=get_delta_text(lr_sum, lr_qty, prev_sum, prev_qty),
+            delta_color="inverse"
+        )
+        
+        if df_filtered_curr.empty:
+            st.warning(f"По причине (LR) {lr} нет данных за текущий период.")
+            st.stop()
+        
+        st.markdown("---")
+        st.markdown("#### Динамика списаний")
+        df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
+        
+        fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True,
+                      labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
+        # Включаем отображение точных цифр при наведении
+        fig.update_traces(hovertemplate="<b>Дата:</b> %{x|%d.%m.%Y}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("#### Сводка по блокам")
+        if 'block_name' in df_filtered_curr:
+            df_blocks = df_filtered_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
+            df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
+            df_blocks.columns = ['Блок', 'Сумма потерь (₽)', 'Кол-во (шт)']
+            st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=300)
+
+
+# ==========================================
+# ВКЛАДКА 2: ГРАФИКИ ПОТЕРЬ (Новое)
+# ==========================================
+with tab_charts:
+    st.subheader("Визуальный анализ потерь")
+    st.markdown("Наведите мышкой на любой график, чтобы увидеть точные цифры.")
     
-    st.subheader(f"Детализация по причине (LR): {lr}")
+    # 1. Круговая диаграмма: Входящий vs Исходящий
+    col_pie, col_bar_flow = st.columns(2)
     
-    lr_sum = df_filtered_curr['loss_sum'].sum() if not df_filtered_curr.empty else 0
-    lr_qty = df_filtered_curr['loss_qty'].sum() if not df_filtered_curr.empty else 0
-    prev_sum = df_filtered_prev['loss_sum'].sum() if not df_filtered_prev.empty else 0
-    prev_qty = df_filtered_prev['loss_qty'].sum() if not df_filtered_prev.empty else 0
+    with col_pie:
+        # Группируем по потокам
+        df_flows = df_curr.groupby('flow')[['loss_sum', 'loss_qty']].sum().reset_index()
+        
+        fig_pie = px.pie(
+            df_flows, 
+            names='flow', 
+            values='loss_sum', 
+            title="Доля потоков в общей сумме потерь",
+            color='flow',
+            color_discrete_map={'Входящий поток': '#FF4B4B', 'Исходящий поток': '#00CC96', 'Другое': '#888888'},
+            hole=0.4 # Делает диаграмму в виде кольца
+        )
+        fig_pie.update_traces(
+            hovertemplate="<b>%{label}</b><br>Сумма: %{value:,.2f} ₽<br>Доля: %{percent}<extra></extra>"
+        )
+        st.plotly_chart(fig_pie, use_container_width=True)
+
+    # 2. Столбчатая диаграмма: Сумма по LR
+    with col_bar_flow:
+        # Группируем по причинам (LR)
+        df_lr = df_curr.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False)
+        
+        fig_lr = px.bar(
+            df_lr, 
+            x='reason', 
+            y='loss_sum',
+            title="Сумма потерь по причинам (LR)",
+            labels={'reason': 'LR', 'loss_sum': 'Сумма (₽)'},
+            text_auto='.2s' # Подписываем столбцы коротко (например, 1.5M)
+        )
+        fig_lr.update_traces(
+            hovertemplate="<b>LR:</b> %{x}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>",
+            marker_color='#1f77b4'
+        )
+        st.plotly_chart(fig_lr, use_container_width=True)
+
+    st.divider()
+
+    # 3. График динамики по дням за выбранный период
+    st.markdown("#### Динамика потерь по дням")
     
-    st.metric(
-        label=f"Сумма по LR {lr}", 
-        value=f"{lr_sum:,.2f} ₽".replace(",", " "),
-        delta=get_delta_text(lr_sum, lr_qty, prev_sum, prev_qty),
-        delta_color="inverse"
-    )
+    if len(df_curr) > 0:
+        # Группируем текущий и предыдущий период по датам
+        df_curr_daily = df_curr.groupby('loss_date')[['loss_sum', 'loss_qty']].sum().reset_index()
+        
+        fig_daily = px.line(
+            df_curr_daily, 
+            x='loss_date', 
+            y='loss_sum', 
+            markers=True,
+            title="Сумма потерь по дням",
+            labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'}
+        )
+        fig_daily.update_traces(
+            hovertemplate="<b>Дата:</b> %{x|%d.%m.%Y}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>",
+            line_color='#FF4B4B'
+        )
+        st.plotly_chart(fig_daily, use_container_width=True)
     
-    if df_filtered_curr.empty:
-        st.warning(f"По причине (LR) {lr} нет данных за текущий период.")
-        st.stop()
-    
-    st.markdown("---")
-    
-    st.markdown("#### Динамика списаний")
-    df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
-    
-    fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True,
-                  labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
-    st.plotly_chart(fig, use_container_width=True)
-    
-    st.markdown("#### Сводка по блокам")
-    if 'block_name' in df_filtered_curr:
-        df_blocks = df_filtered_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
-        df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
-        df_blocks.columns = ['Блок', 'Сумма потерь (₽)', 'Кол-во (шт)']
-        st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=300)
+    # 4. Топ-10 проблемных блоков
+    st.markdown("#### Топ-10 блоков по сумме потерь")
+    if 'block_name' in df_curr:
+        df_top_blocks = df_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
+        df_top_blocks = df_top_blocks.sort_values('loss_sum', ascending=False).head(10)
+        
+        fig_blocks = px.bar(
+            df_top_blocks,
+            x='loss_sum',
+            y='block_name',
+            orientation='h', # Горизонтальные столбцы
+            title="Топ-10 блоков (₽)",
+            labels={'loss_sum': 'Сумма (₽)', 'block_name': 'Блок'},
+            text_auto='.2s'
+        )
+        # Чтобы самый большой блок был наверху
+        fig_blocks.update_layout(yaxis={'categoryorder':'total ascending'}) 
+        fig_blocks.update_traces(
+            hovertemplate="<b>Блок:</b> %{y}<br><b>Сумма:</b> %{x:,.2f} ₽<extra></extra>",
+            marker_color='#FFA15A'
+        )
+        st.plotly_chart(fig_blocks, use_container_width=True)
