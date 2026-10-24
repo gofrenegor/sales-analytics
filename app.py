@@ -99,7 +99,7 @@ def get_db_summary():
 # КЭШИРУЕМЫЕ ФУНКЦИИ ДЛЯ ТЯЖЕЛЫХ ВЫЧИСЛЕНИЙ
 # ==========================================
 
-@st.cache_data(ttl=3600) # Кэш на 1 час
+@st.cache_data(ttl=3600)
 def load_data(start, end):
     query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
     try:
@@ -116,7 +116,6 @@ def load_data(start, end):
 
 @st.cache_data(ttl=3600)
 def get_lr5_investigation_data(df_curr):
-    """Считает разницу во времени и категории для LR5. Кэшируется."""
     if 'status_before_date' not in df_curr.columns: return pd.DataFrame()
     
     df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
@@ -129,8 +128,8 @@ def get_lr5_investigation_data(df_curr):
     
     def categorize_time(hours):
         if hours < 24: return "< 24 часов"
-        elif hours < 168: return "От 1 до 7 дней"
-        elif hours < 720: return "От 7 до 30 дней"
+        elif hours < 168: return "1-7 дней"
+        elif hours < 720: return "7-30 дней"
         else: return "> 30 дней"
         
     df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
@@ -138,22 +137,17 @@ def get_lr5_investigation_data(df_curr):
 
 @st.cache_data(ttl=3600)
 def get_charts_data(df_curr):
-    """Готовит агрегированные данные для кругового графика и графика по LR."""
     if df_curr.empty: return pd.DataFrame(), pd.DataFrame()
-    
     df_flows = df_curr.groupby('flow')[['loss_sum']].sum().reset_index()
     df_lr = df_curr.groupby('reason')[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
     return df_flows, df_lr
 
 @st.cache_data(ttl=3600)
 def get_dynamic_chart_data(df_curr, selected_lr="Все"):
-    """Готовит данные для графика динамики."""
     if df_curr.empty: return pd.DataFrame()
-    
     df_chart = df_curr.copy()
     if selected_lr != "Все": 
         df_chart = df_chart[df_chart['reason'] == selected_lr]
-        
     df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
     df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
     return df_daily
@@ -201,7 +195,6 @@ with col_admin:
                                                 conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
                                                 df_new_valid.to_sql('losses', con=conn, if_exists='append', index=False, chunksize=5000)
                                         
-                                        # ОЧИЩАЕМ КЭШ, ЧТОБЫ САЙТ ПОДТЯНУЛ НОВЫЕ ДАННЫЕ
                                         st.cache_data.clear()
                                         st.success("🎉 Данные сохранены!")
                                         st.rerun()
@@ -324,7 +317,6 @@ with tab_analytics:
 with tab_charts:
     st.subheader("Визуальный анализ")
     if not df_curr.empty:
-        # БЕРЕМ ДАННЫЕ ИЗ КЭША
         df_flows, df_lr = get_charts_data(df_curr)
         
         col_pie, col_bar = st.columns(2)
@@ -339,7 +331,6 @@ with tab_charts:
         all_lrs = sorted(df_curr['reason'].unique())
         selected_lr_chart = st.selectbox("Выберите LR для графика:", ["Все"] + list(all_lrs))
         
-        # БЕРЕМ ДАННЫЕ ИЗ КЭША
         df_daily = get_dynamic_chart_data(df_curr, selected_lr_chart)
         
         if not df_daily.empty:
@@ -359,13 +350,12 @@ with tab_investigation:
     elif df_curr.empty:
         st.info("Нет данных за выбранный период.")
     else:
-        # БЕРЕМ ТЯЖЕЛЫЕ РАСЧЕТЫ ИЗ КЭША
         df_lr5 = get_lr5_investigation_data(df_curr)
         
         if df_lr5.empty:
             st.info("Нет данных для LR 5 с заполненными датами статуса.")
         else:
-            cat_order = ["< 24 часов", "От 1 до 7 дней", "От 7 до 30 дней", "> 30 дней"]
+            cat_order = ["< 24 часов", "1-7 дней", "7-30 дней", "> 30 дней"]
             df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
             
             missing_cats = [c for c in cat_order if c not in df_cat_summary['time_category'].values]
@@ -375,7 +365,7 @@ with tab_investigation:
             df_cat_summary['time_category'] = pd.Categorical(df_cat_summary['time_category'], categories=cat_order, ordered=True)
             df_cat_summary = df_cat_summary.sort_values('time_category')
             
-            custom_colors = {'< 24 часов': '#FF4B4B', 'От 1 до 7 дней': '#FFA15A', 'От 7 до 30 дней': '#19D3F3', '> 30 дней': '#888888'}
+            custom_colors = {'< 24 часов': '#FF4B4B', '1-7 дней': '#FFA15A', '7-30 дней': '#19D3F3', '> 30 дней': '#888888'}
             
             st.markdown("### Распределение потерь по времени")
             fig_cat = px.bar(df_cat_summary, x='time_category', y='loss_qty', 
@@ -389,22 +379,24 @@ with tab_investigation:
             st.divider()
             
             st.markdown("### Детальный список по выбранному разрезу")
+            # Обновили названия кнопок, чтобы было понятно, что это диапазоны
             time_options = [
                 "Меньше 24 часов",
-                "Меньше недели (7 дней)",
-                "Меньше месяца (30 дней)",
+                "От 1 до 7 дней",
+                "От 7 до 30 дней",
                 "Больше месяца (>30 дней)"
             ]
             selected_time_label = st.radio("Выберите разрез:", time_options, horizontal=True)
 
+            # СТРОГАЯ ЛОГИКА ДИАПАЗОНОВ (взаимоисключающие)
             if selected_time_label == "Меньше 24 часов":
-                df_filtered = df_lr5[df_lr5['diff_hours'] <= 24]
-            elif selected_time_label == "Меньше недели (7 дней)":
-                df_filtered = df_lr5[df_lr5['diff_hours'] <= 168]
-            elif selected_time_label == "Меньше месяца (30 дней)":
-                df_filtered = df_lr5[df_lr5['diff_hours'] <= 720]
+                df_filtered = df_lr5[df_lr5['diff_hours'] < 24]
+            elif selected_time_label == "От 1 до 7 дней":
+                df_filtered = df_lr5[(df_lr5['diff_hours'] >= 24) & (df_lr5['diff_hours'] < 168)]
+            elif selected_time_label == "От 7 до 30 дней":
+                df_filtered = df_lr5[(df_lr5['diff_hours'] >= 168) & (df_lr5['diff_hours'] < 720)]
             else:
-                df_filtered = df_lr5[df_lr5['diff_hours'] > 720]
+                df_filtered = df_lr5[df_lr5['diff_hours'] >= 720]
 
             fast_qty = df_filtered['loss_qty'].sum()
             fast_sum = df_filtered['loss_sum'].sum()
@@ -414,7 +406,7 @@ with tab_investigation:
             col_m2.metric(label="Сумма потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
             
             if not df_filtered.empty:
-                st.markdown("#### Список товаров (сверь даты с Excel)")
+                st.markdown("#### Список проблемных товаров")
                 
                 cols_to_show = ['barcode', 'block_name', 'status_before', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']
                 if 'status_before' not in df_filtered.columns:
