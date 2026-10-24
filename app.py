@@ -6,7 +6,6 @@ import utils
 # Настройка главной страницы
 st.set_page_config(page_title="Аналитика списаний", page_icon="📦", layout="wide")
 
-# Стили и Админ-панель
 utils.inject_css()
 utils.render_admin_panel()
 
@@ -53,8 +52,11 @@ if st.session_state.view == 'dashboard':
     # Считаем суммы для каждого потока отдельно
     sum_in = df_curr[df_curr['flow'] == 'Входящий поток']['loss_sum'].sum() if not df_curr.empty else 0
     sum_out = df_curr[df_curr['flow'] == 'Исходящий поток']['loss_sum'].sum() if not df_curr.empty else 0
+    sum_other = df_curr[df_curr['flow'] == 'Другое']['loss_sum'].sum() if not df_curr.empty else 0
     
-    col1, col2 = st.columns(2)
+    # Делаем 3 колонки
+    col1, col2, col3 = st.columns(3)
+    
     with col1:
         if st.button("ВХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_inbound"):
             st.session_state.selected_flow = "in"
@@ -68,6 +70,16 @@ if st.session_state.view == 'dashboard':
             st.session_state.view = 'flow'
             st.rerun()
         st.metric(label="Сумма исходящего потока", value=f"{sum_out:,.2f} ₽".replace(",", " "))
+        
+    with col3:
+        # Для "Другого" не нужна кнопка перехода, так как мы не настраивали для него блоки
+        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+        st.metric(label="Прочие причины (Другое)", value=f"{sum_other:,.2f} ₽".replace(",", " "))
+        
+    # Если есть "Другое", выводим подсказку, какие LR туда попали
+    if sum_other > 0:
+        other_lrs = df_curr[df_curr['flow'] == 'Другое']['reason'].unique()
+        st.warning(f"⚠️ Внимание: В данные попали списания с причинами, которые не отнесены ко Входу или Исходу: {list(other_lrs)}")
 
 # ==========================================
 # 2. ЭКРАН ПОТОКА (Блоки)
@@ -80,7 +92,6 @@ elif st.session_state.view == 'flow':
     flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
     st.subheader(f"Выбран: {flow_name}")
     
-    # Фильтруем данные только по выбранному потоку
     df_flow = df_curr[df_curr['flow'] == flow_name] if not df_curr.empty else pd.DataFrame()
     
     if df_flow.empty:
@@ -89,20 +100,16 @@ elif st.session_state.view == 'flow':
         flow_total_sum = df_flow['loss_sum'].sum()
         st.markdown(f"**Общая сумма списаний по потоку:** `{flow_total_sum:,.2f} ₽`".replace(",", " "))
         
-        # Группируем по блокам
         df_blocks = df_flow.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
-        # Считаем процент от общего потока
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
         df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
         
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
         
-        # Выводим блоки в виде колонок (по 4 в ряд)
         cols = st.columns(4)
         for i, row in df_blocks.iterrows():
             with cols[i % 4]:
-                # Выводим метрику: Название блока, Сумма, Процент
                 st.metric(
                     label=row['block_name'],
                     value=f"{row['loss_sum']:,.0f} ₽".replace(",", " "),
@@ -125,7 +132,6 @@ elif st.session_state.view == 'block_detail':
     flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
     block = st.session_state.selected_block
     
-    # Фильтруем данные по потоку и выбранному блоку
     df_block = df_curr[(df_curr['flow'] == flow_name) & (df_curr['block_name'] == block)]
     
     st.subheader(f"Блок: {block} ({flow_name})")
@@ -137,7 +143,6 @@ elif st.session_state.view == 'block_detail':
     st.markdown("---")
     st.markdown("#### Детализация по причинам (LR) внутри блока")
     
-    # Группируем по LR
     df_lr = df_block.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
     df_lr.columns = ['Причина (LR)', 'Сумма (₽)', 'Кол-во (шт)']
     df_lr = df_lr.sort_values('Сумма (₽)', ascending=False)
