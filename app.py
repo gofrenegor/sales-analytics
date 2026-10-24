@@ -43,12 +43,19 @@ engine = get_db_engine()
 def process_excel(file):
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
+    
+    # ВАЖНО: Теперь мы мапим "Первую дату" и "Первый лостризон" в наши стандартные колонки
     cols_map = {
-        'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
-        'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
-        'Дата последнего списания': 'loss_date', 'Лостризон последнего списания': 'reason',
+        'ШК': 'barcode', 
+        'Наименование блока': 'block_name', 
+        'ID блока': 'block_id',
+        'Сумма списания': 'loss_sum', 
+        'Кол-во лог объектов для списания': 'loss_qty',
+        'Дата первого списания': 'loss_date',          # Берем первую дату
+        'Лостризон первого списания': 'reason',        # Берем первую причину
         'Дата статуса перед списанием': 'status_before_date'
     }
+    
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
     
@@ -105,41 +112,44 @@ with col_admin:
         admin_tab_upload, admin_tab_info = st.tabs(["📥 Загрузка", "ℹ️ Что в базе"])
         
         with admin_tab_upload:
-            # ИЗМЕНЕНИЕ: accept_multiple_files=True позволяет выбрать сразу несколько файлов
             uploaded_files = st.file_uploader("Excel файлы (.xlsx) - можно выбрать несколько", type=["xlsx"], accept_multiple_files=True)
             
             if uploaded_files:
                 try:
-                    # Собираем все файлы в один большой DataFrame
-                    all_dfs = []
-                    for file in uploaded_files:
-                        all_dfs.append(process_excel(file))
-                    
+                    all_dfs = [process_excel(file) for file in uploaded_files]
                     df_new = pd.concat(all_dfs, ignore_index=True)
-                    df_new_valid = df_new.dropna(subset=['loss_date'])
                     
-                    if not df_new_valid.empty:
-                        min_date = df_new_valid['loss_date'].min().date()
-                        max_date = df_new_valid['loss_date'].max().date()
-                        
-                        st.success(f"Успешно прочитано файлов: {len(uploaded_files)}")
-                        st.info(f"Общий период данных: **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
-                        st.warning("⚠️ Старые данные за эти даты будут заменены новыми!")
-                        
-                        if st.button("💾 Заменить данные", use_container_width=True, type="primary"):
-                            if engine is not None:
-                                try:
-                                    with engine.begin() as conn:
-                                        conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
-                                    
-                                    df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
-                                    st.success("✅ Все данные успешно обновлены!")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Ошибка: {e}")
+                    if 'loss_date' not in df_new.columns:
+                        st.error("❌ Ошибка: В файлах нет колонки 'Дата первого списания'.")
                     else:
-                        st.error("В файлах нет корректных дат.")
+                        df_new_valid = df_new.dropna(subset=['loss_date'])
+                        
+                        if df_new_valid.empty:
+                            st.error("❌ Ошибка: Не удалось распознать даты. Проверьте формат в Excel.")
+                        else:
+                            min_date = df_new_valid['loss_date'].min().date()
+                            max_date = df_new_valid['loss_date'].max().date()
+                            
+                            st.success(f"✅ Прочитано файлов: {len(uploaded_files)}")
+                            st.info(f"Период данных (по первой дате): **{min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}**")
+                            
+                            with st.expander("👀 Посмотреть предпросмотр данных"):
+                                st.dataframe(df_new_valid.head(10), use_container_width=True)
+                            
+                            st.warning("⚠️ Старые данные за эти даты будут удалены!")
+                            
+                            if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                                if engine is not None:
+                                    try:
+                                        with engine.begin() as conn:
+                                            conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                                        
+                                        df_new_valid.to_sql('losses', engine, if_exists='append', index=False)
+                                        st.success("🎉 Данные успешно сохранены в базу!")
+                                        st.cache_data.clear()
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Ошибка сохранения: {e}")
                 except Exception as e:
                     st.error(f"Ошибка при чтении файлов: {e}")
             
@@ -162,7 +172,7 @@ with col_admin:
                 st.info("База данных пока пуста. Загрузите файлы на соседней вкладке.")
             else:
                 st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
-                if min_date and max_date: st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                if min_date and max_date: st.markdown(f"**Период (по 1-й дате):** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
                 st.divider()
                 st.markdown("**Месяцы:**")
                 if df_months is not None: st.dataframe(df_months.rename(columns={'month':'Месяц','rows_count':'Строк'}), hide_index=True, use_container_width=True)
@@ -182,21 +192,21 @@ if date_mode == "День":
     start_date, end_date = target_date, target_date
     prev_start_date = target_date - timedelta(days=1)
     prev_end_date = prev_start_date
-    st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Выбран день (1-го списания): **{start_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')}**")
 elif date_mode == "Неделя":
     target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
     start_date = target_date - timedelta(days=target_date.weekday())
     end_date = start_date + timedelta(days=6)
     prev_start_date = start_date - timedelta(days=7)
     prev_end_date = start_date - timedelta(days=1)
-    st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Текущая неделя (1-х списаний): **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
 elif date_mode == "Месяц":
     target_date = st.date_input("Выберите любой день нужного месяца", value=date.today())
     start_date = target_date.replace(day=1)
     end_date = target_date.replace(day=calendar.monthrange(target_date.year, target_date.month)[1])
     prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
     prev_end_date = start_date - timedelta(days=1)
-    st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
+    st.info(f"Текущий месяц (1-х списаний): **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
 
 if engine is None: st.stop()
 
@@ -236,7 +246,7 @@ with tab_analytics:
         total_qty = df_curr['loss_qty'].sum()
         prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
         prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
-        st.markdown("### Общие списания за период")
+        st.markdown("### Общие списания за период (по дате первого списания)")
         st.metric(label="Сумма", value=f"{total_sum:,.2f} ₽".replace(",", " "), delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty), delta_color="inverse")
         st.markdown("---")
         col1, col2 = st.columns(2)
@@ -296,7 +306,7 @@ with tab_charts:
     if not df_chart.empty:
         df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
         df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
-        fig_daily = px.line(df_daily, x='time_label', y='loss_sum', markers=True, title="Динамика")
+        fig_daily = px.line(df_daily, x='time_label', y='loss_sum', markers=True, title="Динамика по датам первых списаний")
         fig_daily.update_xaxes(type='category')
         st.plotly_chart(fig_daily, use_container_width=True)
 
@@ -305,7 +315,7 @@ with tab_charts:
 # ==========================================
 with tab_investigation:
     st.subheader("🕵️ Разбор полетов: Быстрые потери")
-    st.markdown("Анализ для **LR 5 (Сборка)**. Показывает, сколько товаров было потеряно в течение заданного времени после раскладки.")
+    st.markdown("Анализ для **LR 5 (Сборка)**. Показывает, сколько товаров было потеряно в течение заданного времени после раскладки (по дате первого списания).")
     
     if 'status_before_date' not in df_curr.columns:
         st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'. Пожалуйста, перезагрузите Excel-файл с этой колонкой.")
@@ -350,10 +360,10 @@ with tab_investigation:
                 
                 st.markdown("#### Список проблемных товаров")
                 df_display = df_fast_loss[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
-                df_display.columns = ['ШК', 'Блок', 'Время раскладки', 'Время списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                df_display.columns = ['ШК', 'Блок', 'Время раскладки', '1-е списание', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
                 
                 df_display['Время раскладки'] = df_display['Время раскладки'].dt.strftime('%d.%m.%Y %H:%M')
-                df_display['Время списания'] = df_display['Время списания'].dt.strftime('%d.%m.%Y %H:%M')
+                df_display['1-е списание'] = df_display['1-е списание'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Прошло часов'] = df_display['Прошло часов'].round(1)
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
