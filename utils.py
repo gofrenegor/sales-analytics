@@ -1,221 +1,213 @@
 import streamlit as st
 import pandas as pd
-import utils
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
+from sqlalchemy import create_engine, text
+import calendar
 
-st.set_page_config(page_title="Аналитика списаний", page_icon="📦", layout="wide")
-utils.inject_css()
-utils.render_admin_panel()
+@st.cache_resource
+def get_db_engine():
+    try:
+        db_url = st.secrets["database"]["connection_string"]
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return create_engine(db_url, connect_args={"connect_timeout": 10})
+    except Exception as e:
+        st.error(f"Ошибка при чтении секретов: {e}")
+        return None
 
-st.title("📦 Аналитика списаний")
+engine = get_db_engine()
 
-start_date, end_date, prev_start_date, prev_end_date = utils.render_date_selector()
-df_curr = utils.load_data(start_date, end_date)
-df_prev = utils.load_data(prev_start_date, prev_end_date)
-
-if df_curr.empty and df_prev.empty:
-    st.warning("⚠️ Нет данных за этот период.")
-    st.stop()
-
-# --- БЛОК ДИАГНОСТИКИ ID 6800 (ВРЕМЕННЫЙ) ---
-with st.expander("🛠️ Диагностика блока 6800 (Опер площадь)", expanded=True):
-    # Ищем строки, где в ID блока есть '6800'
-    debug_6800 = df_curr[df_curr['block_id'].astype(str).str.contains('6800', na=False)]
-    
-    if debug_6800.empty:
-        st.error("В текущей загрузке данных вообще нет строк с ID блока 6800. Возможно, ты не загрузил этот файл или в Excel другой ID.")
-    else:
-        st.write("Найденные статусы для ID 6800 и их распределение по потокам:")
-        # Показываем уникальные комбинации статусов и потоков
-        diag_table = debug_6800[['block_id', 'block_name', 'status_before', 'flow']].drop_duplicates()
-        st.dataframe(diag_table, use_container_width=True)
-        
-        statuses = debug_6800['status_before'].unique().tolist()
-        st.warning(f"Статусы для 6800: {statuses}")
-# ---------------------------------------------
-
-st.divider()
-
-if 'view' not in st.session_state: st.session_state.view = 'dashboard'
-if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
-if 'selected_group' not in st.session_state: st.session_state.selected_group = None
-if 'selected_block' not in st.session_state: st.session_state.selected_block = None
-
-def get_gradient_colors(pct):
-    pct = max(0.0, min(100.0, float(pct)))
-    r = int(46 + (255 - 46) * (pct / 100))
-    g = int(125 + (75 - 125) * (pct / 100))
-    b = int(50 + (75 - 50) * (pct / 100))
-    return f"rgb({r}, {g}, {b})", f"rgba({r}, {g}, {b}, 0.15)", f"rgba({r}, {g}, {b}, 0.4)"
-
-def render_cards(df_grouped, total_sum, next_view, button_key_prefix):
-    max_pct = df_grouped['pct'].max()
-    
+def inject_css():
     st.markdown("""
-    <style>
-    div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
-    div[class*="st-key-card-red-"] { border: 2px solid #FF4B4B !important; border-radius: 8px; box-shadow: 0 0 8px rgba(255, 75, 75, 0.3); }
-    </style>
+        <style>
+        .st-key-btn_inbound button {
+            background-color: #2e7d32 !important; color: white !important; border: 1px solid #2e7d32 !important;
+        }
+        .st-key-btn_inbound button:hover { background-color: #1b5e20 !important; border: 1px solid #1b5e20 !important; }
+        .st-key-btn_outbound button {
+            background-color: #1565c0 !important; color: white !important; border: 1px solid #1565c0 !important;
+        }
+        .st-key-btn_outbound button:hover { background-color: #0d47a1 !important; border: 1px solid #0d47a1 !important; }
+        </style>
     """, unsafe_allow_html=True)
+
+def clean_date_col(series):
+    if pd.api.types.is_datetime64_any_dtype(series): return series
+    s = series.astype(str).replace(['NaT', 'nan', 'None'], pd.NA)
+    s = s.str.replace(r'\+\d{2}:\d{2}', '', regex=True)
+    s = s.str.replace(r'\.\d+', '', regex=True)
+    return pd.to_datetime(s, errors='coerce')
+
+def process_excel(file):
+    df = pd.read_excel(file)
+    df.columns = df.columns.astype(str).str.strip()
+    cols_map = {
+        'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
+        'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
+        'Дата первого списания': 'loss_date', 'Лостризон первого списания': 'reason',        
+        'Дата статуса перед списанием': 'status_before_date', 'Статус перед списанием': 'status_before'
+    }
+    existing_cols = [c for c in cols_map.keys() if c in df.columns]
+    df = df[existing_cols].rename(columns=cols_map)
     
-    cols = st.columns(4)
-    for i, row in df_grouped.iterrows():
-        with cols[i % 4]:
-            pct_text = "< 0.1%" if (row['pct'] < 0.1 and row['pct'] > 0) else f"{row['pct']:.1f}%"
-            is_worst = (row['pct'] == max_pct)
-            color_key = "red" if is_worst else "blue"
-            text_color, bg_color, border_color = get_gradient_colors(row['pct'])
+    for col in ['loss_sum', 'loss_qty']:
+        if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+    
+    for col in ['loss_date', 'status_before_date']:
+        if col in df.columns: df[col] = clean_date_col(df[col])
             
-            with st.container(key=f"card-{color_key}-{button_key_prefix}-{i}", border=True):
-                st.markdown(f"**{row['name']}**")
-                st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
+    for col in ['block_name', 'reason', 'status_before']:
+        if col in df.columns: 
+            df[col] = df[col].fillna("Не указано").astype(str)
+            if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
+    return df
+
+def get_flow_name(status_before):
+    status = str(status_before).strip().upper()
+    if status == "НЕ УКАЗАНО" or status == "" or status == "NAN":
+        return 'Другое'
+    
+    inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
+    outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
+    
+    if status in inbound: return 'Входящий поток'
+    elif status in outbound: return 'Исходящий поток'
+    else: return 'Другое'
+
+BLOCK_MAPPING = {
+    "Рязань Тюшевское 1": "Рязань Тюшевское 1",
+    "Рязань КГТ Левый": "Рязань Тюшевское 1",
+    "Рязань Дорогостой 2": "Рязань Тюшевское 2",
+    "Рязань Красота 2": "Рязань Тюшевское 2",
+    "Рязань Продукты 2": "Рязань Тюшевское 2",
+    "Рязань КГТ 2": "Рязань Тюшевское 2",
+    "Рязань Тюшевское 3": "Рязань Тюшевское 3",
+    "Рязань Тюшевское 3 КГТ": "Рязань Тюшевское 3",
+    "Рязань Тюшевское 3 тест": "Рязань Тюшевское 3",
+    "Рязань Тюшевское 4": "Рязань Тюшевское 4"
+}
+
+@st.cache_data(ttl=3600)
+def load_data(start, end):
+    query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
+    try:
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['loss_date'] = pd.to_datetime(df['loss_date'])
+            if 'status_before_date' in df.columns:
+                df['status_before_date'] = pd.to_datetime(df['status_before_date'])
+            df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+            
+            if 'status_before' in df.columns:
+                df['status_before'] = df['status_before'].fillna('').astype(str)
+                df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
+                df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
+                df['flow'] = df['status_before'].apply(get_flow_name)
+            else:
+                df['flow'] = 'Другое'
                 
-                chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {border_color}; padding: 6px 14px; border-radius: 20px; font-size: 16px; font-weight: 600; display: inline-block; margin-bottom: 10px;"
-                st.markdown(f"<div style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
+            def get_block_group(row):
+                b_id = str(row.get('block_id', '')).strip().split('.')[0]
+                b_name = str(row.get('block_name', '')).strip()
                 
-                if st.button(f"Подробнее", key=f"btn_{button_key_prefix}_{i}", use_container_width=True):
-                    if next_view == 'group':
-                        st.session_state.selected_group = row['name']
-                    else:
-                        st.session_state.selected_block = row['name']
-                    st.session_state.view = next_view
-                    st.rerun()
+                if b_id == '6800':
+                    return 'Опер площадь'
+                
+                return BLOCK_MAPPING.get(b_name, 'Другое')
+                
+            df['block_group'] = df.apply(get_block_group, axis=1)
+            
+        return df
+    except Exception:
+        return pd.DataFrame()
 
-# ==========================================
-# 1. ГЛАВНЫЙ ЭКРАН
-# ==========================================
-if st.session_state.view == 'dashboard':
-    total_sum = df_curr['loss_sum'].sum()
-    total_qty = df_curr['loss_qty'].sum()
-    prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
-    prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
-    
-    st.markdown("### Общие списания за период")
-    st.metric(label="Сумма", value=f"{total_sum:,.2f} ₽".replace(",", " "), delta=utils.get_delta_text(total_sum, total_qty, prev_sum, prev_qty), delta_color="inverse")
-    
-    st.markdown("---")
-    st.subheader("Разделение по потокам:")
-    
-    sum_in = df_curr[df_curr['flow'] == 'Входящий поток']['loss_sum'].sum() if not df_curr.empty else 0
-    sum_out = df_curr[df_curr['flow'] == 'Исходящий поток']['loss_sum'].sum() if not df_curr.empty else 0
-    sum_other = df_curr[df_curr['flow'] == 'Другое']['loss_sum'].sum() if not df_curr.empty else 0
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("ВХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_inbound"):
-            st.session_state.selected_flow = "in"
-            st.session_state.view = 'flow'
-            st.rerun()
-        st.metric(label="Сумма входящего потока", value=f"{sum_in:,.2f} ₽".replace(",", " "))
-    with col2:
-        if st.button("ИСХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_outbound"):
-            st.session_state.selected_flow = "out"
-            st.session_state.view = 'flow'
-            st.rerun()
-        st.metric(label="Сумма исходящего потока", value=f"{sum_out:,.2f} ₽".replace(",", " "))
-    with col3:
-        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
-        st.metric(label="Прочие причины (Другое)", value=f"{sum_other:,.2f} ₽".replace(",", " "))
-        
-    if sum_other > 0:
-        other_statuses = df_curr[df_curr['flow'] == 'Другое']['status_before'].unique()
-        display_statuses = [str(s) for s in other_statuses[:10]]
-        st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
+def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
+    diff_sum = curr_sum - prev_sum
+    diff_qty = curr_qty - prev_qty
+    sign = "+" if diff_sum > 0 else ""
+    sum_str = f"{sign}{diff_sum:,.0f} ₽".replace(",", " ")
+    sign_q = "+" if diff_qty > 0 else ""
+    qty_str = f"{sign_q}{diff_qty:,.0f} шт".replace(",", " ")
+    return f"{sum_str} / {qty_str}"
 
-# ==========================================
-# 2. ЭКРАН ПОТОКА (Блоки)
-# ==========================================
-elif st.session_state.view == 'flow':
-    if st.button("⬅️ Назад на главную"):
-        st.session_state.view = 'dashboard'
-        st.rerun()
-        
-    flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
-    st.subheader(f"Выбран: {flow_name}")
+def render_date_selector():
+    date_mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True)
+    start_date, end_date, prev_start_date, prev_end_date = None, None, None, None
     
-    df_flow = df_curr[df_curr['flow'] == flow_name] if not df_curr.empty else pd.DataFrame()
-    
-    if df_flow.empty:
-        st.info("Нет данных по этому потоку за выбранный период.")
-    else:
-        flow_total_sum = df_flow['loss_sum'].sum()
-        formatted_sum = f"{flow_total_sum:,.2f} ₽".replace(",", " ")
+    if date_mode == "День":
+        target_date = st.date_input("Выберите дату", value=date.today())
+        start_date, end_date = target_date, target_date
+        prev_start_date = target_date - timedelta(days=1)
+        prev_end_date = prev_start_date
+        st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}** | Сравнение: **{prev_start_date.strftime('%d.%m.%Y')}**")
+    elif date_mode == "Неделя":
+        target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
+        start_date = target_date - timedelta(days=target_date.weekday())
+        end_date = start_date + timedelta(days=6)
+        prev_start_date = start_date - timedelta(days=7)
+        prev_end_date = start_date - timedelta(days=1)
+        st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
+    elif date_mode == "Месяц":
+        target_date = st.date_input("Выберите любой день нужного месяца", value=date.today())
+        start_date = target_date.replace(day=1)
+        end_date = target_date.replace(day=calendar.monthrange(target_date.year, target_date.month)[1])
+        prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
+        prev_end_date = start_date - timedelta(days=1)
+        st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
         
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; margin-top: 10px; margin-bottom: 20px;">
-            <span style="font-size: 16px; font-weight: 600; margin-right: 15px;">Общая сумма списаний по потоку:</span>
-            <span style="background-color: rgba(0, 191, 255, 0.1); color: #00BFFF; border: 1.5px solid #00BFFF; padding: 6px 16px; border-radius: 20px; font-size: 24px; font-weight: 700; font-family: monospace;">{formatted_sum}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
-        df_blocks.columns = ['name', 'loss_sum']
-        df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
-        df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
-        
-        st.markdown("---")
-        st.markdown("### Выберите блок для детализации:")
-        render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow')
+    return start_date, end_date, prev_start_date, prev_end_date
 
-# ==========================================
-# 3. ЭКРАН БЛОКА (Площадки внутри)
-# ==========================================
-elif st.session_state.view == 'group':
-    if st.button("⬅️ Назад к потокам"):
-        st.session_state.view = 'flow'
-        st.rerun()
-        
-    flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
-    group_name = st.session_state.selected_group
-    st.subheader(f"Блок: {group_name} ({flow_name})")
-    
-    df_group = df_curr[(df_curr['flow'] == flow_name) & (df_curr['block_group'] == group_name)]
-    
-    if df_group.empty:
-        st.info("Нет данных по этому блоку.")
-    else:
-        group_total_sum = df_group['loss_sum'].sum()
-        formatted_sum = f"{group_total_sum:,.2f} ₽".replace(",", " ")
-        
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; margin-top: 10px; margin-bottom: 20px;">
-            <span style="font-size: 16px; font-weight: 600; margin-right: 15px;">Общая сумма списаний по блоку:</span>
-            <span style="background-color: rgba(0, 191, 255, 0.1); color: #00BFFF; border: 1.5px solid #00BFFF; padding: 6px 16px; border-radius: 20px; font-size: 24px; font-weight: 700; font-family: monospace;">{formatted_sum}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        df_platforms = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
-        df_platforms.columns = ['name', 'loss_sum']
-        df_platforms['pct'] = (df_platforms['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
-        df_platforms = df_platforms.sort_values('loss_sum', ascending=False)
-        
-        st.markdown("---")
-        st.markdown("### Выберите площадку для детализации:")
-        render_cards(df_platforms, group_total_sum, next_view='block_detail', button_key_prefix='group')
+def get_db_summary():
+    try:
+        with engine.connect() as conn:
+            res_total = conn.execute(text("SELECT COUNT(*), MIN(loss_date), MAX(loss_date) FROM losses")).fetchone()
+            total_rows, min_date, max_date = res_total
+            if total_rows == 0: return None, None, None, None
+            df_months = pd.read_sql("SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count FROM losses GROUP BY TO_CHAR(loss_date, 'YYYY-MM') ORDER BY month DESC", conn)
+            return total_rows, min_date, max_date, df_months
+    except Exception:
+        return None, None, None, None
 
-# ==========================================
-# 4. ЭКРАН ДЕТАЛИЗАЦИИ ПО LR
-# ==========================================
-elif st.session_state.view == 'block_detail':
-    if st.button("⬅️ Назад к площадкам"):
-        st.session_state.view = 'group'
-        st.rerun()
-        
-    flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
-    block = st.session_state.selected_block
-    
-    df_block = df_curr[(df_curr['flow'] == flow_name) & (df_curr['block_name'] == block)]
-    
-    st.subheader(f"Площадка: {block} ({flow_name})")
-    
-    block_total = df_block['loss_sum'].sum()
-    block_qty = df_block['loss_qty'].sum()
-    st.metric(label="Сумма списаний по площадке", value=f"{block_total:,.2f} ₽".replace(",", " "), delta=f"{block_qty:,.0f} шт", delta_color="off")
-    
-    st.markdown("---")
-    st.markdown("#### Детализация по причинам (LR)")
-    
-    df_lr = df_block.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
-    df_lr.columns = ['Причина (LR)', 'Сумма (₽)', 'Кол-во (шт)']
-    df_lr = df_lr.sort_values('Сумма (₽)', ascending=False)
-    
-    st.dataframe(df_lr, use_container_width=True, hide_index=True)
+def render_admin_panel():
+    with st.sidebar:
+        st.header("👤 Админ-панель")
+        with st.expander("📥 Загрузка данных", expanded=True):
+            uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
+            if uploaded_files:
+                all_dfs = [process_excel(file) for file in uploaded_files]
+                df_new = pd.concat(all_dfs, ignore_index=True).dropna(subset=['loss_date'])
+                if not df_new.empty:
+                    min_date = df_new['loss_date'].min().date()
+                    max_date = df_new['loss_date'].max().date()
+                    st.success(f"Прочитано файлов: {len(uploaded_files)}")
+                    st.info(f"Период: {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                    if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
+                        with st.spinner("Загрузка..."):
+                            with engine.begin() as conn:
+                                conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
+                                df_new.to_sql('losses', conn, if_exists='append', index=False, chunksize=5000)
+                        st.cache_data.clear()
+                        st.success("🎉 Данные сохранены!")
+                        st.rerun()
+        with st.expander("ℹ️ Что в базе"):
+            total_rows, min_date, max_date, df_months = get_db_summary()
+            if not total_rows:
+                st.info("База данных пока пуста.")
+            else:
+                st.markdown(f"**Всего строк:** {total_rows:,}".replace(",", " "))
+                if min_date and max_date:
+                    st.markdown(f"**Период:** {min_date.strftime('%d.%m.%Y')} — {max_date.strftime('%d.%m.%Y')}")
+                if df_months is not None:
+                    df_months.columns = ['Месяц', 'Строк']
+                    st.dataframe(df_months, hide_index=True, use_container_width=True)
+        st.divider()
+        if st.checkbox("Я уверен, что хочу удалить всё"):
+            if st.button("🗑️ Очистить базу", use_container_width=True):
+                with engine.begin() as conn:
+                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                st.cache_data.clear()
+                st.success("База очищена!")
+                st.rerun()
