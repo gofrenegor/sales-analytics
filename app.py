@@ -18,13 +18,11 @@ if df_curr.empty and df_prev.empty:
 
 st.divider()
 
-# Инициализация состояний
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
 if 'selected_group' not in st.session_state: st.session_state.selected_group = None
 if 'selected_block' not in st.session_state: st.session_state.selected_block = None
 
-# Функция для градиента (зеленый -> красный)
 def get_gradient_colors(pct):
     pct = max(0.0, min(100.0, float(pct)))
     r = int(46 + (255 - 46) * (pct / 100))
@@ -32,11 +30,9 @@ def get_gradient_colors(pct):
     b = int(50 + (75 - 50) * (pct / 100))
     return f"rgb({r}, {g}, {b})", f"rgba({r}, {g}, {b}, 0.15)", f"rgba({r}, {g}, {b}, 0.4)"
 
-# Функция для отрисовки сетки карточек (чтобы не дублировать код)
 def render_cards(df_grouped, total_sum, next_view, button_key_prefix):
     max_pct = df_grouped['pct'].max()
     
-    # CSS для рамок
     st.markdown("""
     <style>
     div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
@@ -109,7 +105,7 @@ if st.session_state.view == 'dashboard':
         st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
-# 2. ЭКРАН ПОТОКА (Блоки РЗТ 1, 2, 3)
+# 2. ЭКРАН ПОТОКА (Блоки Рязань Тюшевское 1, 2, 3, 4)
 # ==========================================
 elif st.session_state.view == 'flow':
     if st.button("⬅️ Назад на главную"):
@@ -134,7 +130,7 @@ elif st.session_state.view == 'flow':
         </div>
         """, unsafe_allow_html=True)
         
-        # ГРУППИРУЕМ ПО БЛОКАМ (РЗТ)
+        # ГРУППИРУЕМ ПО БЛОКАМ (Рязань Тюшевское X)
         df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
         df_blocks.columns = ['name', 'loss_sum']
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
@@ -145,7 +141,7 @@ elif st.session_state.view == 'flow':
         render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow')
 
 # ==========================================
-# 3. ЭКРАН БЛОКА (Площадки внутри РЗТ)
+# 3. ЭКРАН БЛОКА (Площадки внутри)
 # ==========================================
 elif st.session_state.view == 'group':
     if st.button("⬅️ Назад к потокам"):
@@ -156,7 +152,6 @@ elif st.session_state.view == 'group':
     group_name = st.session_state.selected_group
     st.subheader(f"Блок: {group_name} ({flow_name})")
     
-    # Фильтруем по потоку и выбранному блоку
     df_group = df_curr[(df_curr['flow'] == flow_name) & (df_curr['block_group'] == group_name)]
     
     if df_group.empty:
@@ -172,7 +167,7 @@ elif st.session_state.view == 'group':
         </div>
         """, unsafe_allow_html=True)
         
-        # ГРУППИРУЕМ ПО ПЛОЩАДКАМ (block_name)
+        # ГРУППИРУЕМ ПО ПЛОЩАДКАМ
         df_platforms = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
         df_platforms.columns = ['name', 'loss_sum']
         df_platforms['pct'] = (df_platforms['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
