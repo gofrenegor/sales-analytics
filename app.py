@@ -52,7 +52,8 @@ def process_excel(file):
         'Кол-во лог объектов для списания': 'loss_qty',
         'Дата первого списания': 'loss_date',          
         'Лостризон первого списания': 'reason',        
-        'Дата статуса перед списанием': 'status_before_date'
+        'Дата статуса перед списанием': 'status_before_date',
+        'Статус перед списанием': 'status_before' # НОВАЯ КОЛОНКА
     }
     
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
@@ -64,11 +65,12 @@ def process_excel(file):
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns: 
             df[col] = pd.to_datetime(df[col], errors='coerce')
-            # ГЛАВНОЕ ИСПРАВЛЕНИЕ: Убираем часовой пояс (например, +03:00), чтобы время не сдвигалось
+            # Убираем часовой пояс, чтобы время не сдвигалось
             if df[col].dt.tz is not None:
                 df[col] = df[col].dt.tz_localize(None)
             
-    for col in ['block_name', 'reason']:
+    # Добавили status_before в заполнение пустых значений
+    for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
     return df
 
@@ -317,7 +319,6 @@ with tab_investigation:
         if df_lr5.empty:
             st.info("Нет данных для LR 5 с заполненными датами статуса.")
         else:
-            # Считаем разницу: Дата первого списания минус Дата статуса перед списанием
             df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
             df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
             
@@ -380,8 +381,16 @@ with tab_investigation:
             if not df_filtered.empty:
                 st.markdown("#### Список товаров (сверь даты с Excel)")
                 
-                df_display = df_filtered[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
-                df_display.columns = ['ШК', 'Блок', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                # Добавили колонку status_before
+                cols_to_show = ['barcode', 'block_name', 'status_before', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']
+                # Если колонки status_before нет в базе (потому что ты не перезалил файлы), покажем без нее, чтобы не падало
+                if 'status_before' not in df_filtered.columns:
+                    cols_to_show.remove('status_before')
+                    df_display = df_filtered[cols_to_show].copy()
+                    df_display.columns = ['ШК', 'Блок', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                else:
+                    df_display = df_filtered[cols_to_show].copy()
+                    df_display.columns = ['ШК', 'Блок', 'Статус перед списанием', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
                 
                 df_display['Дата статуса перед списанием'] = df_display['Дата статуса перед списанием'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Дата первого списания'] = df_display['Дата первого списания'].dt.strftime('%d.%m.%Y %H:%M')
