@@ -84,7 +84,7 @@ def get_flow_name(status_before):
     elif status in outbound: return 'Исходящий поток'
     else: return 'Другое'
 
-# --- СЛОВАРЬ ЭТАПОВ ЛОГИСТИКИ (ОТРЕДАКТИРУЙ ПРИ НЕОБХОДИМОСТИ) ---
+# --- СЛОВАРЬ ЭТАПОВ ЛОГИСТИКИ (ДОБАВЛЕН LAM) ---
 STAGE_MAPPING = {
     # Отгрузка
     'GWS': 'Отгрузка', 'LSS': 'Отгрузка', 'LIO': 'Отгрузка', 'LIP': 'Отгрузка', 'LPG': 'Отгрузка', 'SAP': 'Отгрузка',
@@ -93,7 +93,9 @@ STAGE_MAPPING = {
     # Сортировка
     'SMC': 'Сортировка', 'SPM': 'Сортировка', 'SPS': 'Сортировка', 'SSG': 'Сортировка', 'WLI': 'Сортировка', 
     'WLN': 'Сортировка', 'WLR': 'Сортировка', 'WLT': 'Сортировка', 'WMI': 'Сортировка', 'OPS': 'Сортировка', 
-    'OSE': 'Сортировка', 'OSR': 'Сортировка', 'IKZ': 'Сортировка', 'IPG': 'Сортировка', 'ISB': 'Сортировка'
+    'OSE': 'Сортировка', 'OSR': 'Сортировка', 'IKZ': 'Сортировка', 'IPG': 'Сортировка', 'ISB': 'Сортировка',
+    # Раскладка
+    'LAM': 'Раскладка'
 }
 # -------------------------------------------------------------------
 
@@ -126,7 +128,6 @@ def load_data(start, end):
                 df['status_before'] = df['status_before'].str.upper().str.replace(r'[^A-Z]', '', regex=True)
                 df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
                 df['flow'] = df['status_before'].apply(get_flow_name)
-                # НОВОЕ: Присваиваем этап логистики
                 df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
             else:
                 df['flow'] = 'Другое'
