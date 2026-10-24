@@ -22,6 +22,7 @@ if 'view' not in st.session_state: st.session_state.view = 'dashboard'
 if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
 if 'selected_group' not in st.session_state: st.session_state.selected_group = None
 if 'selected_block' not in st.session_state: st.session_state.selected_block = None
+if 'selected_detail_type' not in st.session_state: st.session_state.selected_detail_type = None
 
 def get_gradient_colors(pct):
     pct = max(0.0, min(100.0, float(pct)))
@@ -30,7 +31,7 @@ def get_gradient_colors(pct):
     b = int(50 + (75 - 50) * (pct / 100))
     return f"rgb({r}, {g}, {b})", f"rgba({r}, {g}, {b}, 0.15)", f"rgba({r}, {g}, {b}, 0.4)"
 
-def render_cards(df_grouped, total_sum, next_view, button_key_prefix):
+def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_type=None):
     max_pct = df_grouped['pct'].max()
     
     st.markdown("""
@@ -58,8 +59,9 @@ def render_cards(df_grouped, total_sum, next_view, button_key_prefix):
                 if st.button(f"Подробнее", key=f"btn_{button_key_prefix}_{i}", use_container_width=True):
                     if next_view == 'group':
                         st.session_state.selected_group = row['name']
-                    else:
+                    elif next_view == 'block_detail':
                         st.session_state.selected_block = row['name']
+                        st.session_state.selected_detail_type = detail_type
                     st.session_state.view = next_view
                     st.rerun()
 
@@ -132,7 +134,6 @@ elif st.session_state.view == 'flow':
         
         st.markdown("---")
         
-        # ОБНОВЛЕНИЕ: Теперь и для входящего, и для исходящего потока показываем блоки (block_group)
         st.markdown("### Выберите блок для детализации:")
         df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
         df_blocks.columns = ['name', 'loss_sum']
@@ -141,10 +142,9 @@ elif st.session_state.view == 'flow':
         render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow_block')
 
 # ==========================================
-# 3. ЭКРАН БЛОКА (Площадки)
+# 3. ЭКРАН БЛОКА (Площадки или Этапы)
 # ==========================================
 elif st.session_state.view == 'group':
-    # ОБНОВЛЕНИЕ: Возврат всегда на экран потока, так как этапы убраны
     if st.button("⬅️ Назад"):
         st.session_state.view = 'flow'
         st.rerun()
@@ -167,36 +167,51 @@ elif st.session_state.view == 'group':
         </div>
         """, unsafe_allow_html=True)
         
-        df_platforms = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
-        df_platforms.columns = ['name', 'loss_sum']
-        df_platforms['pct'] = (df_platforms['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
-        df_platforms = df_platforms.sort_values('loss_sum', ascending=False)
-        
         st.markdown("---")
-        st.markdown("### Выберите площадку для детализации:")
-        render_cards(df_platforms, group_total_sum, next_view='block_detail', button_key_prefix='group_platform')
+        
+        # Если это Опер площадь — показываем этапы. Если обычный блок — площадки.
+        if group_name == 'Опер площадь':
+            st.markdown("### Выберите этап для детализации:")
+            df_sub = df_group.groupby('process_stage')[['loss_sum']].sum().reset_index()
+            df_sub.columns = ['name', 'loss_sum']
+            df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
+            df_sub = df_sub.sort_values('loss_sum', ascending=False)
+            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_stage', detail_type='stage')
+        else:
+            st.markdown("### Выберите площадку для детализации:")
+            df_sub = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
+            df_sub.columns = ['name', 'loss_sum']
+            df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
+            df_sub = df_sub.sort_values('loss_sum', ascending=False)
+            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_platform', detail_type='platform')
 
 # ==========================================
 # 4. ЭКРАН ДЕТАЛИЗАЦИИ ПО LR
 # ==========================================
 elif st.session_state.view == 'block_detail':
-    if st.button("⬅️ Назад к площадкам"):
+    if st.button("⬅️ Назад к детализации"):
         st.session_state.view = 'group'
         st.rerun()
         
-    block = st.session_state.selected_block
-    df_block = df_curr[df_curr['block_name'] == block]
+    detail_name = st.session_state.selected_block
+    detail_type = st.session_state.get('selected_detail_type')
     
-    st.subheader(f"Площадка: {block}")
-    
-    block_total = df_block['loss_sum'].sum()
-    block_qty = df_block['loss_qty'].sum()
-    st.metric(label="Сумма списаний по площадке", value=f"{block_total:,.2f} ₽".replace(",", " "), delta=f"{block_qty:,.0f} шт", delta_color="off")
+    # Фильтруем в зависимости от того, куда кликнули: на этап или на площадку
+    if detail_type == 'stage':
+        df_detail = df_curr[(df_curr['block_group'] == st.session_state.selected_group) & (df_curr['process_stage'] == detail_name)]
+        st.subheader(f"Этап: {detail_name}")
+    else:
+        df_detail = df_curr[df_curr['block_name'] == detail_name]
+        st.subheader(f"Площадка: {detail_name}")
+        
+    detail_total = df_detail['loss_sum'].sum()
+    detail_qty = df_detail['loss_qty'].sum()
+    st.metric(label="Сумма списаний", value=f"{detail_total:,.2f} ₽".replace(",", " "), delta=f"{detail_qty:,.0f} шт", delta_color="off")
     
     st.markdown("---")
     st.markdown("#### Детализация по причинам (LR)")
     
-    df_lr = df_block.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
+    df_lr = df_detail.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
     df_lr.columns = ['Причина (LR)', 'Сумма (₽)', 'Кол-во (шт)']
     df_lr = df_lr.sort_values('Сумма (₽)', ascending=False)
     
