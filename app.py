@@ -57,18 +57,15 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # УЛЬТРА-НАДЕЖНАЯ ОЧИСТКА ДАТ ОТ ЧАСОВЫХ ПОЯСОВ (убираем +03:00 и любые пробелы)
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(r'\+\d{2}:\d{2}', '', regex=True).str.strip()
             df[col] = pd.to_datetime(df[col], errors='coerce')
             
-    # ОЧИСТКА ПРИЧИН (чтобы число 5.0 не ломало поиск строки '5')
     for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns: 
             df[col] = df[col].fillna("Не указано").astype(str)
             if col == 'reason':
-                # Убираем .0 в конце, если Excel сохранил число как 5.0
                 df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
                 
     return df
@@ -122,17 +119,26 @@ def load_data(start, end):
 
 @st.cache_data(ttl=3600)
 def get_lr5_investigation_data(df_curr):
-    if 'status_before_date' not in df_curr.columns: return pd.DataFrame()
+    # ВОЗВРАЩАЕМ ДИАГНОСТИКУ ВМЕСТЕ С ДАННЫМИ
+    if 'status_before_date' not in df_curr.columns: 
+        return pd.DataFrame(), {}
     
-    df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
-    df_lr5 = df_lr5.dropna(subset=['status_before_date', 'loss_date'])
+    df_lr5_raw = df_curr[df_curr['reason'] == '5'].copy()
+    total_lr5 = len(df_lr5_raw)
     
-    if df_lr5.empty: return pd.DataFrame()
+    # 1. Отсекаем пустые даты
+    df_lr5_clean = df_lr5_raw.dropna(subset=['status_before_date', 'loss_date'])
+    dropped_dates = total_lr5 - len(df_lr5_clean)
     
-    # Считаем разницу
-    df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
-    # Оставляем только положительные (на всякий случай)
-    df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
+    if df_lr5_clean.empty: 
+        return pd.DataFrame(), {"total": total_lr5, "dropped_dates": dropped_dates, "dropped_neg": 0}
+    
+    # 2. Считаем разницу
+    df_lr5_clean['diff_hours'] = (df_lr5_clean['loss_date'] - df_lr5_clean['status_before_date']).dt.total_seconds() / 3600
+    
+    # 3. Отсекаем отрицательные значения
+    df_lr5_positive = df_lr5_clean[df_lr5_clean['diff_hours'] >= 0].copy()
+    dropped_neg = len(df_lr5_clean) - len(df_lr5_positive)
     
     def categorize_time(hours):
         if hours < 24: return "< 24 часов"
@@ -140,8 +146,16 @@ def get_lr5_investigation_data(df_curr):
         elif hours < 720: return "7-30 дней"
         else: return "> 30 дней"
         
-    df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
-    return df_lr5
+    df_lr5_positive['time_category'] = df_lr5_positive['diff_hours'].apply(categorize_time)
+    
+    stats = {
+        "total": total_lr5,
+        "dropped_dates": dropped_dates,
+        "dropped_neg": dropped_neg,
+        "valid": len(df_lr5_positive)
+    }
+    
+    return df_lr5_positive, stats
 
 @st.cache_data(ttl=3600)
 def get_charts_data(df_curr):
@@ -358,10 +372,21 @@ with tab_investigation:
     elif df_curr.empty:
         st.info("Нет данных за выбранный период.")
     else:
-        df_lr5 = get_lr5_investigation_data(df_curr)
+        # Получаем данные И статистику
+        df_lr5, stats = get_lr5_investigation_data(df_curr)
+        
+        # БЛОК ДИАГНОСТИКИ
+        with st.expander("🔍 Диагностика данных (почему цифры могут не совпадать с Excel)"):
+            st.markdown(f"""
+            *   **Всего строк с LR 5 за этот месяц (по базе):** `{stats.get('total', 0):,}`.replace(",", " ")
+            *   **Отброшено из-за пустой даты статуса или списания:** `{stats.get('dropped_dates', 0):,}`.replace(",", " ")
+            *   **Отброшено из-за отрицательной разницы (списание раньше статуса):** `{stats.get('dropped_neg', 0):,}`.replace(",", " ")
+            *   **Осталось для анализа:** `{stats.get('valid', 0):,}`.replace(",", " ")
+            """)
+            st.info("Если 'Отброшено из-за отрицательной разницы' очень большое, значит в исходном Excel даты перепутаны местами или сбиты часовые пояса.")
         
         if df_lr5.empty:
-            st.info("Нет данных для LR 5 с заполненными датами статуса.")
+            st.warning("Нет валидных данных для LR 5 с заполненными датами статуса.")
         else:
             cat_order = ["< 24 часов", "1-7 дней", "7-30 дней", "> 30 дней"]
             df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
