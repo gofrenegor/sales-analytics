@@ -47,7 +47,7 @@ def process_excel(file):
         'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
         'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
         'Дата последнего списания': 'loss_date', 'Лостризон последнего списания': 'reason',
-        'Дата статуса перед списанием': 'status_before_date' # НОВАЯ КОЛОНКА
+        'Дата статуса перед списанием': 'status_before_date'
     }
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
@@ -55,7 +55,6 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # Превращаем в даты
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns: 
             df[col] = pd.to_datetime(df[col], errors='coerce')
@@ -211,7 +210,7 @@ if df_curr.empty and df_prev.empty:
 st.divider()
 
 # ==========================================
-# ВКЛАДКИ (Аналитика, Графики и РАЗБОР ПОЛЕТОВ)
+# ВКЛАДКИ
 # ==========================================
 tab_analytics, tab_charts, tab_investigation = st.tabs(["📊 Аналитика потерь", "📈 Графики потерь", "🕵️ Потери < 24ч (LR 5)"])
 
@@ -287,14 +286,14 @@ with tab_charts:
         st.plotly_chart(fig_daily, use_container_width=True)
 
 # ==========================================
-# НОВАЯ ВКЛАДКА: РАЗБОР ПОЛЕТОВ (LR 5)
+# ВКЛАДКА РАЗБОР ПОЛЕТОВ (LR 5)
 # ==========================================
 with tab_investigation:
-    st.subheader("🕵️ Разбор полетов: Товары, списанные < 24 часов после раскладки")
-    st.markdown("Анализ для **LR 5 (Сборка)**. Показывает, сколько товаров было потеряно почти сразу после того, как их положили на полку.")
+    st.subheader("🕵️ Разбор полетов: Быстрые потери")
+    st.markdown("Анализ для **LR 5 (Сборка)**. Показывает, сколько товаров было потеряно в течение заданного времени после раскладки.")
     
     if 'status_before_date' not in df_curr.columns:
-        st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'. Пожалуйста, убедитесь, что в загруженном Excel-файле есть эта колонка, и перезагрузите данные.")
+        st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'. Пожалуйста, перезагрузите Excel-файл с этой колонкой.")
     else:
         # Берем только LR 5 и убираем пустые даты
         df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
@@ -306,39 +305,47 @@ with tab_investigation:
             # Считаем разницу в часах
             df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
             
-            # Фильтруем те, что пропали меньше чем за 24 часа (и больше 0, чтобы убрать ошибки данных)
-            df_fast_loss = df_lr5[(df_lr5['diff_hours'] < 24) & (df_lr5['diff_hours'] >= 0)]
+            # ВЫБОР ПОРОГА ВРЕМЕНИ
+            time_options = {
+                "24 часа": 24,
+                "48 часов (2 дня)": 48,
+                "72 часа (3 дня)": 72,
+                "168 часов (7 дней)": 168
+            }
+            selected_time_label = st.radio("Выберите максимальное время после раскладки:", list(time_options.keys()), horizontal=True)
+            selected_hours = time_options[selected_time_label]
+
+            # Фильтруем (убираем отрицательные значения, чтобы исключить ошибки данных)
+            df_fast_loss = df_lr5[(df_lr5['diff_hours'] <= selected_hours) & (df_lr5['diff_hours'] >= 0)]
             
-            # Считаем метрики
             fast_qty = df_fast_loss['loss_qty'].sum()
             fast_sum = df_fast_loss['loss_sum'].sum()
             
-            # Выводим красивые карточки
+            st.markdown(f"### Потери в течение {selected_time_label} после раскладки")
             col_m1, col_m2 = st.columns(2)
-            col_m1.metric(label="Списано < 24 часов (шт)", value=f"{fast_qty:,.0f}".replace(",", " "))
+            col_m1.metric(label=f"Списано < {selected_hours} ч (шт)", value=f"{fast_qty:,.0f}".replace(",", " "))
             col_m2.metric(label="Сумма этих потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
             
             st.markdown("---")
             
-            # График распределения по часам
             if not df_fast_loss.empty:
-                # Группируем по часам (округленным)
+                # График распределения
                 df_fast_loss['hours_bucket'] = df_fast_loss['diff_hours'].astype(int)
                 df_hist = df_fast_loss.groupby('hours_bucket')[['loss_qty']].sum().reset_index()
                 
                 fig_hist = px.bar(df_hist, x='hours_bucket', y='loss_qty', 
-                                  title="Через сколько часов теряется товар?",
-                                  labels={'hours_bucket': 'Часов прошло после раскладки', 'loss_qty': 'Кол-во потерянных ШК'})
+                                  title="Распределение по часам (через сколько теряется)",
+                                  labels={'hours_bucket': 'Часов прошло', 'loss_qty': 'Кол-во ШК'})
                 st.plotly_chart(fig_hist, use_container_width=True)
                 
-                # Таблица деталей
                 st.markdown("#### Список проблемных товаров")
                 df_display = df_fast_loss[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
                 df_display.columns = ['ШК', 'Блок', 'Время раскладки', 'Время списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
                 
-                # Форматируем даты для красоты
                 df_display['Время раскладки'] = df_display['Время раскладки'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Время списания'] = df_display['Время списания'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Прошло часов'] = df_display['Прошло часов'].round(1)
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
+            else:
+                st.success(f"Отлично! За выбранный период нет товаров, потерянных быстрее чем за {selected_time_label}.")
