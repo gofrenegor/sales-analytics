@@ -41,6 +41,20 @@ def process_excel(file):
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
     return df
 
+# --- Вспомогательная функция для расчета дельты ---
+def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
+    diff_sum = curr_sum - prev_sum
+    diff_qty = curr_qty - prev_qty
+    
+    # Форматируем с плюсом/минусом, убираем копейки
+    sign = "+" if diff_sum > 0 else ""
+    sum_str = f"{sign}{diff_sum:,.0f} ₽".replace(",", " ")
+    
+    sign_q = "+" if diff_qty > 0 else ""
+    qty_str = f"{sign_q}{diff_qty:,.0f} шт".replace(",", " ")
+    
+    return f"{sum_str} / {qty_str}"
+
 # --- Боковая панель для загрузки данных ---
 with st.sidebar:
     st.header("📥 Загрузка данных")
@@ -65,18 +79,15 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Ошибка: {e}")
 
-# --- Инициализация состояний (для навигации) ---
-if 'view' not in st.session_state:
-    st.session_state.view = 'dashboard'
-if 'selected_flow' not in st.session_state:
-    st.session_state.selected_flow = None
-if 'selected_lr' not in st.session_state:
-    st.session_state.selected_lr = None
+# --- Инициализация состояний ---
+if 'view' not in st.session_state: st.session_state.view = 'dashboard'
+if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
+if 'selected_lr' not in st.session_state: st.session_state.selected_lr = None
 
 # --- Главный интерфейс ---
 st.title("📦 Аналитика списаний")
 
-# Фильтры по датам (всегда наверху)
+# Фильтры по датам
 col_d1, col_d2 = st.columns(2)
 with col_d1:
     start_date = st.date_input("Начало периода", value=date.today() - timedelta(days=30))
@@ -91,8 +102,13 @@ if engine is None:
     st.error("Нет подключения к базе данных.")
     st.stop()
 
-# Загружаем данные за период
-@st.cache_data(ttl=600)
+# Вычисляем предыдущий период для сравнения
+duration = (end_date - start_date).days + 1
+prev_end_date = start_date - timedelta(days=1)
+prev_start_date = prev_end_date - timedelta(days=duration - 1)
+
+# Загружаем данные за текущий и предыдущий периоды
+@st.cache_data(ttl=60)  # ttl=60 секунд, чтобы данные обновлялись быстрее
 def load_data(start, end):
     query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date <= '{end}'"
     try:
@@ -102,13 +118,13 @@ def load_data(start, end):
             df['reason'] = df['reason'].astype(str).str.strip()
         return df
     except Exception as e:
-        st.error(f"Ошибка БД: {e}")
         return pd.DataFrame()
 
-df = load_data(start_date, end_date)
+df_curr = load_data(start_date, end_date)
+df_prev = load_data(prev_start_date, prev_end_date)
 
-if df.empty:
-    st.info("Нет данных за выбранный период. Загрузите файлы в боковой панели.")
+if df_curr.empty and df_prev.empty:
+    st.info("Нет данных за выбранный или предыдущий период. Загрузите файлы в боковой панели.")
     st.stop()
 
 st.divider()
@@ -117,15 +133,20 @@ st.divider()
 # ЭКРАН 1: ДАШБОРД (Главная)
 # ==========================================
 if st.session_state.view == 'dashboard':
-    total_sum = df['loss_sum'].sum()
-    total_qty = df['loss_qty'].sum()
+    # Текущие показатели
+    total_sum = df_curr['loss_sum'].sum() if not df_curr.empty else 0
+    total_qty = df_curr['loss_qty'].sum() if not df_curr.empty else 0
+    
+    # Показатели предыдущего периода
+    prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
+    prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
     
     st.markdown("### Общие списания за период")
     st.metric(
         label="Сумма", 
         value=f"{total_sum:,.2f} ₽".replace(",", " "),
-        delta=f"{total_qty:,.0f} шт".replace(",", " "),
-        delta_color="off"
+        delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty),
+        delta_color="inverse"  # Рост потерь - красный, снижение - зеленый
     )
     
     st.markdown("---")
@@ -133,7 +154,6 @@ if st.session_state.view == 'dashboard':
     
     col1, col2 = st.columns(2)
     with col1:
-        # Делаем кнопку-чип
         if st.button("⬇️ ВХОДЯЩИЙ ПОТОК", use_container_width=True):
             st.session_state.selected_flow = "in"
             st.session_state.view = 'flow'
@@ -149,7 +169,6 @@ if st.session_state.view == 'dashboard':
 # ЭКРАН 2: ВЫБОР ПРИЧИНЫ (LR)
 # ==========================================
 elif st.session_state.view == 'flow':
-    # Кнопка Назад
     if st.button("⬅️ Назад на главную"):
         st.session_state.view = 'dashboard'
         st.rerun()
@@ -158,21 +177,34 @@ elif st.session_state.view == 'flow':
     st.subheader(f"Выбран: {flow_name}")
     st.markdown("Выберите причину списания (LR):")
     
-    # Определяем доступные LR
     if st.session_state.selected_flow == "in":
         available_lrs = ['36', '46', '47']
     else:
         available_lrs = ['26', '5']
         
-    # Делаем кнопки-чипы для LR в 3 колонки
     cols = st.columns(len(available_lrs))
     for i, lr in enumerate(available_lrs):
         with cols[i]:
-            # Считаем сумму по этому LR для отображения на кнопке (опционально)
-            lr_sum = df[df['reason'] == lr]['loss_sum'].sum()
-            lr_sum_str = f"{lr_sum:,.0f} ₽".replace(",", " ")
+            # Считаем данные для текущего LR
+            lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
+            lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
+            lr_qty_curr = lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0
             
-            if st.button(f"LR {lr}\n({lr_sum_str})", use_container_width=True):
+            # Считаем данные для предыдущего периода
+            lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
+            lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
+            lr_qty_prev = lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0
+            
+            delta_text = get_delta_text(lr_sum_curr, lr_qty_curr, lr_sum_prev, lr_qty_prev)
+            
+            st.metric(
+                label=f"LR {lr}",
+                value=f"{lr_sum_curr:,.0f} ₽".replace(",", " "),
+                delta=delta_text,
+                delta_color="inverse"
+            )
+            
+            if st.button(f"Подробнее", key=f"btn_{lr}", use_container_width=True):
                 st.session_state.selected_lr = lr
                 st.session_state.view = 'lr_detail'
                 st.rerun()
@@ -181,25 +213,33 @@ elif st.session_state.view == 'flow':
 # ЭКРАН 3: ДЕТАЛЬНАЯ АНАЛИТИКА ПО LR
 # ==========================================
 elif st.session_state.view == 'lr_detail':
-    # Кнопка Назад
     if st.button("⬅️ Назад к выбору LR"):
         st.session_state.view = 'flow'
         st.rerun()
         
     lr = st.session_state.selected_lr
-    df_filtered = df[df['reason'] == lr]
+    df_filtered_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
+    df_filtered_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
     
     st.subheader(f"Детализация по причине (LR): {lr}")
     
-    lr_sum = df_filtered['loss_sum'].sum()
-    lr_qty = df_filtered['loss_qty'].sum()
+    # Считаем метрики
+    lr_sum = df_filtered_curr['loss_sum'].sum() if not df_filtered_curr.empty else 0
+    lr_qty = df_filtered_curr['loss_qty'].sum() if not df_filtered_curr.empty else 0
+    
+    prev_sum = df_filtered_prev['loss_sum'].sum() if not df_filtered_prev.empty else 0
+    prev_qty = df_filtered_prev['loss_qty'].sum() if not df_filtered_prev.empty else 0
     
     st.metric(
-        label="Сумма по выбранному LR", 
+        label=f"Сумма по LR {lr}", 
         value=f"{lr_sum:,.2f} ₽".replace(",", " "),
-        delta=f"{lr_qty:,.0f} шт".replace(",", " "),
-        delta_color="off"
+        delta=get_delta_text(lr_sum, lr_qty, prev_sum, prev_qty),
+        delta_color="inverse"
     )
+    
+    if df_filtered_curr.empty:
+        st.warning(f"По причине (LR) {lr} нет данных за текущий период.")
+        st.stop()
     
     st.markdown("---")
     
@@ -208,13 +248,13 @@ elif st.session_state.view == 'lr_detail':
     time_cut = st.radio("Разрез:", ["По дням", "По неделям", "По месяцам"], horizontal=True)
     
     if time_cut == "По дням":
-        df_grouped = df_filtered.groupby('loss_date')['loss_sum'].sum().reset_index()
+        df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
     elif time_cut == "По неделям":
-        df_filtered['period'] = df_filtered['loss_date'].dt.to_period('W').dt.start_time
-        df_grouped = df_filtered.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
+        df_filtered_curr['period'] = df_filtered_curr['loss_date'].dt.to_period('W').dt.start_time
+        df_grouped = df_filtered_curr.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
     else:
-        df_filtered['period'] = df_filtered['loss_date'].dt.to_period('M').dt.start_time
-        df_grouped = df_filtered.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
+        df_filtered_curr['period'] = df_filtered_curr['loss_date'].dt.to_period('M').dt.start_time
+        df_grouped = df_filtered_curr.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
     
     fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True,
                   labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
@@ -222,8 +262,8 @@ elif st.session_state.view == 'lr_detail':
     
     # Таблица
     st.markdown("#### Сводка по блокам")
-    if 'block_name' in df_filtered:
-        df_blocks = df_filtered.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
+    if 'block_name' in df_filtered_curr:
+        df_blocks = df_filtered_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
         df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
         df_blocks.columns = ['Блок', 'Сумма потерь (₽)', 'Кол-во (шт)']
         st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=300)
