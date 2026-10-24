@@ -6,17 +6,16 @@ import utils
 # Настройка главной страницы
 st.set_page_config(page_title="Аналитика списаний", page_icon="📦", layout="wide")
 
-# Применяем стили (зеленые/синие кнопки) и рисуем Админ-панель слева
+# Стили и Админ-панель
 utils.inject_css()
 utils.render_admin_panel()
 
-# Заголовок
 st.title("📦 Аналитика списаний")
 
-# Выбор дат (общий для всех страниц)
+# Выбор дат
 start_date, end_date, prev_start_date, prev_end_date = utils.render_date_selector()
 
-# Загружаем данные
+# Загрузка данных
 df_curr = utils.load_data(start_date, end_date)
 df_prev = utils.load_data(prev_start_date, prev_end_date)
 
@@ -28,9 +27,11 @@ st.divider()
 
 # --- Инициализация состояний для навигации ---
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
+if 'selected_flow' not in st.session_state: st.session_state.selected_flow = None
+if 'selected_block' not in st.session_state: st.session_state.selected_block = None
 
 # ==========================================
-# РЕНДЕР ГЛАВНОГО ЭКРАНА (Дашборд)
+# 1. ГЛАВНЫЙ ЭКРАН (Дашборд)
 # ==========================================
 if st.session_state.view == 'dashboard':
     total_sum = df_curr['loss_sum'].sum()
@@ -38,7 +39,7 @@ if st.session_state.view == 'dashboard':
     prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
     prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
     
-    st.markdown("### Общие списания")
+    st.markdown("### Общие списания за период")
     st.metric(
         label="Сумма", 
         value=f"{total_sum:,.2f} ₽".replace(",", " "), 
@@ -47,7 +48,11 @@ if st.session_state.view == 'dashboard':
     )
     
     st.markdown("---")
-    st.subheader("Выберите поток для детализации:")
+    st.subheader("Разделение по потокам:")
+    
+    # Считаем суммы для каждого потока отдельно
+    sum_in = df_curr[df_curr['flow'] == 'Входящий поток']['loss_sum'].sum() if not df_curr.empty else 0
+    sum_out = df_curr[df_curr['flow'] == 'Исходящий поток']['loss_sum'].sum() if not df_curr.empty else 0
     
     col1, col2 = st.columns(2)
     with col1:
@@ -55,14 +60,17 @@ if st.session_state.view == 'dashboard':
             st.session_state.selected_flow = "in"
             st.session_state.view = 'flow'
             st.rerun()
+        st.metric(label="Сумма входящего потока", value=f"{sum_in:,.2f} ₽".replace(",", " "))
+        
     with col2:
         if st.button("ИСХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_outbound"):
             st.session_state.selected_flow = "out"
             st.session_state.view = 'flow'
             st.rerun()
+        st.metric(label="Сумма исходящего потока", value=f"{sum_out:,.2f} ₽".replace(",", " "))
 
 # ==========================================
-# РЕНДЕР ЭКРАНА ВЫБОРА LR (Внутри потока)
+# 2. ЭКРАН ПОТОКА (Блоки)
 # ==========================================
 elif st.session_state.view == 'flow':
     if st.button("⬅️ Назад на главную"):
@@ -72,55 +80,66 @@ elif st.session_state.view == 'flow':
     flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
     st.subheader(f"Выбран: {flow_name}")
     
-    available_lrs = ['36', '46', '47'] if st.session_state.selected_flow == "in" else ['26', '5']
-    cols = st.columns(len(available_lrs))
+    # Фильтруем данные только по выбранному потоку
+    df_flow = df_curr[df_curr['flow'] == flow_name] if not df_curr.empty else pd.DataFrame()
     
-    for i, lr in enumerate(available_lrs):
-        with cols[i]:
-            lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
-            lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
-            lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
-            lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
-            
-            st.metric(
-                label=f"LR {lr}", 
-                value=f"{lr_sum_curr:,.0f} ₽".replace(",", " "), 
-                delta=utils.get_delta_text(
-                    lr_sum_curr, 
-                    lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0, 
-                    lr_sum_prev, 
-                    lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0
-                ), 
-                delta_color="inverse"
-            )
-            if st.button(f"Подробнее", key=f"btn_{lr}", use_container_width=True):
-                st.session_state.selected_lr = lr
-                st.session_state.view = 'lr_detail'
-                st.rerun()
+    if df_flow.empty:
+        st.info("Нет данных по этому потоку за выбранный период.")
+    else:
+        flow_total_sum = df_flow['loss_sum'].sum()
+        st.markdown(f"**Общая сумма списаний по потоку:** `{flow_total_sum:,.2f} ₽`".replace(",", " "))
+        
+        # Группируем по блокам
+        df_blocks = df_flow.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
+        # Считаем процент от общего потока
+        df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
+        df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
+        
+        st.markdown("---")
+        st.markdown("### Выберите блок для детализации:")
+        
+        # Выводим блоки в виде колонок (по 4 в ряд)
+        cols = st.columns(4)
+        for i, row in df_blocks.iterrows():
+            with cols[i % 4]:
+                # Выводим метрику: Название блока, Сумма, Процент
+                st.metric(
+                    label=row['block_name'],
+                    value=f"{row['loss_sum']:,.0f} ₽".replace(",", " "),
+                    delta=f"{row['pct']:.1f}% от потока",
+                    delta_color="off"
+                )
+                if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
+                    st.session_state.selected_block = row['block_name']
+                    st.session_state.view = 'block_detail'
+                    st.rerun()
 
 # ==========================================
-# РЕНДЕР ДЕТАЛИЗАЦИИ ПО КОНКРЕТНОМУ LR
+# 3. ЭКРАН БЛОКА (Детализация)
 # ==========================================
-elif st.session_state.view == 'lr_detail':
-    if st.button("⬅️ Назад к выбору LR"):
+elif st.session_state.view == 'block_detail':
+    if st.button("⬅️ Назад к выбору блока"):
         st.session_state.view = 'flow'
         st.rerun()
         
-    lr = st.session_state.selected_lr
-    df_f_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
+    flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
+    block = st.session_state.selected_block
     
-    st.subheader(f"Детализация по LR: {lr}")
-    st.metric(label=f"Сумма", value=f"{df_f_curr['loss_sum'].sum():,.2f} ₽".replace(",", " "))
+    # Фильтруем данные по потоку и выбранному блоку
+    df_block = df_curr[(df_curr['flow'] == flow_name) & (df_curr['block_name'] == block)]
     
-    if not df_f_curr.empty:
-        df_grouped = df_f_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
-        df_grouped['time_label'] = df_grouped['loss_date'].dt.strftime('%d.%m %H:%M')
-        
-        fig = px.line(df_grouped, x='time_label', y='loss_sum', markers=True, title="Динамика списаний")
-        fig.update_xaxes(type='category')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("#### Сводка по блокам")
-        df_blocks = df_f_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False)
-        df_blocks.columns = ['Блок', 'Сумма потерь (₽)', 'Кол-во (шт)']
-        st.dataframe(df_blocks, use_container_width=True, hide_index=True)
+    st.subheader(f"Блок: {block} ({flow_name})")
+    
+    block_total = df_block['loss_sum'].sum()
+    block_qty = df_block['loss_qty'].sum()
+    st.metric(label="Сумма списаний по блоку", value=f"{block_total:,.2f} ₽".replace(",", " "), delta=f"{block_qty:,.0f} шт", delta_color="off")
+    
+    st.markdown("---")
+    st.markdown("#### Детализация по причинам (LR) внутри блока")
+    
+    # Группируем по LR
+    df_lr = df_block.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
+    df_lr.columns = ['Причина (LR)', 'Сумма (₽)', 'Кол-во (шт)']
+    df_lr = df_lr.sort_values('Сумма (₽)', ascending=False)
+    
+    st.dataframe(df_lr, use_container_width=True, hide_index=True)
