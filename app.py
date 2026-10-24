@@ -8,18 +8,19 @@ from sqlalchemy import create_engine
 st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide")
 
 # --- Подключение к базе данных Supabase ---
-from sqlalchemy import create_engine
-
 @st.cache_resource
 def get_db_engine():
     try:
         db_url = st.secrets["database"]["connection_string"]
         
-        # Если Supabase выдал строку начинающуюся с postgres://, SQLAlchemy требует postgresql://
+        # Заменяем устаревший префикс, если он есть
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
             
-        # Добавляем таймаут 10 секунд. Если связи нет, он выдаст ошибку, а не будет висеть
+        # Принудительно указываем драйвер psycopg2, чтобы избежать ошибки 'no pq wrapper available'
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
+            
         return create_engine(db_url, connect_args={"connect_timeout": 10})
     except Exception as e:
         st.error(f"Ошибка при чтении секретов или инициализации движка: {e}")
@@ -29,10 +30,8 @@ engine = get_db_engine()
 
 # --- Функция загрузки и очистки Excel ---
 def process_excel(file):
-    # Читаем файл
     df = pd.read_excel(file)
     
-    # Словарь для переименования колонок в те, что ждет база данных
     cols_map = {
         'Блок сборки': 'assembly_block',
         'Баркод сборки': 'assembly_barcode',
@@ -42,16 +41,13 @@ def process_excel(file):
         'Кол-во ШК на сортировке': 'sorting_qty'
     }
     
-    # Оставляем только те колонки, которые есть в файле, и переименовываем
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
     
-    # Превращаем количества в числа, ошибки заменяем на 0
     for col in ['assembly_qty', 'sorting_qty']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    # Заполняем пустые текстовые блоки, чтобы база не ругалась
     for col in ['assembly_block', 'sorting_block']:
         if col in df.columns:
             df[col] = df[col].fillna("Не указан")
@@ -78,24 +74,21 @@ with tab1:
         st.dataframe(df_new.head(10), use_container_width=True)
         
         if st.button("💾 Сохранить в базу данных"):
-            try:
-                # Добавляем колонку с датой
-                df_new['report_date'] = report_date
-                
-                # Отправляем в базу (таблица losses)
-                # if_exists='append' означает, что мы добавляем данные, а не перезаписываем таблицу
-                df_new.to_sql('losses', engine, if_exists='append', index=False)
-                
-                st.success(f"✅ Успешно загружено {len(df_new)} строк за {report_date}!")
-                st.cache_data.clear() # Очищаем кэш, чтобы аналитика подтянула новые данные
-            except Exception as e:
-                st.error(f"Ошибка при сохранении: {e}")
+            if engine is None:
+                st.error("Нет подключения к базе данных. Проверьте настройки Secrets.")
+            else:
+                try:
+                    df_new['report_date'] = report_date
+                    df_new.to_sql('losses', engine, if_exists='append', index=False)
+                    st.success(f"✅ Успешно загружено {len(df_new)} строк за {report_date}!")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"Ошибка при сохранении: {e}")
 
 # ================= ВКЛАДКА 2: АНАЛИТИКА =================
 with tab2:
     st.header("Аналитика и фильтры")
     
-    # 1. Выбор периода
     col_d1, col_d2 = st.columns(2)
     with col_d1:
         start_date = st.date_input("Начало периода", value=date.today() - timedelta(days=30))
@@ -105,57 +98,48 @@ with tab2:
     if start_date > end_date:
         st.error("Дата начала не может быть позже даты окончания.")
     else:
-        # 2. Загружаем данные из базы по фильтру
-        query = f"""
-            SELECT * FROM losses 
-            WHERE report_date >= '{start_date}' AND report_date <= '{end_date}'
-        """
-        try:
-            df = pd.read_sql(query, engine)
-        except Exception as e:
-            st.error(f"Ошибка чтения из базы (возможно, таблица еще не создана): {e}")
-            df = pd.DataFrame()
-            
-        if df.empty:
-            st.info("Нет данных за выбранный период. Загрузите файлы на первой вкладке.")
+        if engine is None:
+            st.error("Нет подключения к базе данных.")
         else:
-            # 3. Считаем итоги (KPI)
-            # Используем .sum() и проверяем, что колонки существуют
-            total_assembly = df['assembly_qty'].sum() if 'assembly_qty' in df else 0
-            total_sorting = df['sorting_qty'].sum() if 'sorting_qty' in df else 0
-            total_losses = total_assembly + total_sorting
-            
-            kpi1, kpi2, kpi3 = st.columns(3)
-            kpi1.metric("ОБЩИЕ ПОТЕРИ (шт)", f"{total_losses:,.0f}".replace(",", " "))
-            kpi2.metric("Потери на СБОРКЕ (шт)", f"{total_assembly:,.0f}".replace(",", " "))
-            kpi3.metric("Потери на СОРТИРОВКЕ (шт)", f"{total_sorting:,.0f}".replace(",", " "))
-            
-            st.markdown("---")
-            
-            # 4. График по дням
-            st.subheader("Динамика потерь по датам выгрузок")
-            # Группируем по дате
-            if 'report_date' in df:
-                df_daily = df.groupby('report_date')[['assembly_qty', 'sorting_qty']].sum().reset_index()
-                # Строим линейный график
-                fig = px.line(
-                    df_daily, x='report_date', y=['assembly_qty', 'sorting_qty'], 
-                    labels={'value': 'Потери (шт)', 'report_date': 'Дата', 'variable': 'Тип потерь'},
-                    markers=True
-                )
-                # Красивые названия линий
-                fig.for_each_trace(lambda t: t.update(name={'assembly_qty': 'Сборка', 'sorting_qty': 'Сортировка'}[t.name]))
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # 5. Таблица по блокам
-            st.subheader("Сводка по блокам за период")
-            if 'assembly_block' in df:
-                # Группируем по блоку сборки (так как сортировка может быть пустой)
-                df_blocks = df.groupby('assembly_block')[['assembly_qty', 'sorting_qty']].sum().reset_index()
-                df_blocks['total'] = df_blocks['assembly_qty'] + df_blocks['sorting_qty']
-                df_blocks = df_blocks.sort_values('total', ascending=False)
+            query = f"""
+                SELECT * FROM losses 
+                WHERE report_date >= '{start_date}' AND report_date <= '{end_date}'
+            """
+            try:
+                df = pd.read_sql(query, engine)
+            except Exception as e:
+                st.error(f"Ошибка чтения из базы (возможно, таблица еще не создана): {e}")
+                df = pd.DataFrame()
                 
-                # Переименовываем для красоты
-                df_blocks.columns = ['Блок', 'Потери на сборке', 'Потери на сортировке', 'Всего']
+            if df.empty:
+                st.info("Нет данных за выбранный период. Загрузите файлы на первой вкладке.")
+            else:
+                total_assembly = df['assembly_qty'].sum() if 'assembly_qty' in df else 0
+                total_sorting = df['sorting_qty'].sum() if 'sorting_qty' in df else 0
+                total_losses = total_assembly + total_sorting
                 
-                st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=400)
+                kpi1, kpi2, kpi3 = st.columns(3)
+                kpi1.metric("ОБЩИЕ ПОТЕРИ (шт)", f"{total_losses:,.0f}".replace(",", " "))
+                kpi2.metric("Потери на СБОРКЕ (шт)", f"{total_assembly:,.0f}".replace(",", " "))
+                kpi3.metric("Потери на СОРТИРОВКЕ (шт)", f"{total_sorting:,.0f}".replace(",", " "))
+                
+                st.markdown("---")
+                st.subheader("Динамика потерь по датам выгрузок")
+                
+                if 'report_date' in df:
+                    df_daily = df.groupby('report_date')[['assembly_qty', 'sorting_qty']].sum().reset_index()
+                    fig = px.line(
+                        df_daily, x='report_date', y=['assembly_qty', 'sorting_qty'], 
+                        labels={'value': 'Потери (шт)', 'report_date': 'Дата', 'variable': 'Тип потерь'},
+                        markers=True
+                    )
+                    fig.for_each_trace(lambda t: t.update(name={'assembly_qty': 'Сборка', 'sorting_qty': 'Сортировка'}[t.name]))
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                st.subheader("Сводка по блокам за период")
+                if 'assembly_block' in df:
+                    df_blocks = df.groupby('assembly_block')[['assembly_qty', 'sorting_qty']].sum().reset_index()
+                    df_blocks['total'] = df_blocks['assembly_qty'] + df_blocks['sorting_qty']
+                    df_blocks = df_blocks.sort_values('total', ascending=False)
+                    df_blocks.columns = ['Блок', 'Потери на сборке', 'Потери на сортировке', 'Всего']
+                    st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=400)
