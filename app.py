@@ -67,11 +67,9 @@ if st.session_state.view == 'dashboard':
         st.metric(label="Прочие причины (Другое)", value=f"{sum_other:,.2f} ₽".replace(",", " "))
         
     if sum_other > 0:
-        # Показываем статусы, которые попали в "Другое"
         other_statuses = df_curr[df_curr['flow'] == 'Другое']['status_before'].unique()
-        # Ограничиваем вывод до 10 штук, чтобы не сломать верстку
         display_statuses = [str(s) for s in other_statuses[:10]]
-        st.warning(f"⚠️ В категорию «Другое» попали статусы, не отнесенные ни к Входу, ни к Исходу: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
+        st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
 # 2. ЭКРАН ПОТОКА (Блоки)
@@ -102,12 +100,17 @@ elif st.session_state.view == 'flow':
         cols = st.columns(4)
         for i, row in df_blocks.iterrows():
             with cols[i % 4]:
+                # Определяем цвет для процента (если больше 10% - красный, иначе зеленый/серый)
+                pct_color = "#FF4B4B" if row['pct'] > 10 else "#2e7d32"
+                
                 st.metric(
                     label=row['block_name'],
                     value=f"{row['loss_sum']:,.0f} ₽".replace(",", " "),
-                    delta=f"{row['pct']:.1f}% от потока",
-                    delta_color="off"
+                    # Убрали delta, чтобы не было стрелочек, и добавили обычный текст с HTML цветом
+                    delta=None
                 )
+                st.markdown(f"<p style='color: {pct_color}; font-size: 14px; margin-top: -15px;'>{row['pct']:.1f}% от потока</p>", unsafe_allow_html=True)
+                
                 if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
                     st.session_state.selected_block = row['block_name']
                     st.session_state.view = 'block_detail'
