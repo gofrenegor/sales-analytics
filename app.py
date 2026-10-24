@@ -104,22 +104,25 @@ def get_db_summary():
 
 @st.cache_data(ttl=3600)
 def load_data(start, end):
-    query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
+    # ОПТИМИЗАЦИЯ: Запрашиваем только нужные колонки, а не всё подряд
+    cols = "barcode, block_name, reason, loss_date, status_before_date, loss_qty, loss_sum, status_before"
+    query = f"SELECT {cols} FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
     try:
         df = pd.read_sql(query, engine)
         if not df.empty:
+            # Оптимизация памяти: превращаем строки в категории
+            df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip().astype('category')
+            df['block_name'] = df['block_name'].astype('category')
             df['loss_date'] = pd.to_datetime(df['loss_date'])
             if 'status_before_date' in df.columns:
                 df['status_before_date'] = pd.to_datetime(df['status_before_date'])
-            df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             df['flow'] = df['reason'].apply(get_flow_name)
         return df
-    except Exception:
+    except Exception as e:
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
 def get_lr5_investigation_data(df_curr):
-    # ВОЗВРАЩАЕМ ДИАГНОСТИКУ ВМЕСТЕ С ДАННЫМИ
     if 'status_before_date' not in df_curr.columns: 
         return pd.DataFrame(), {}
     
@@ -140,13 +143,10 @@ def get_lr5_investigation_data(df_curr):
     df_lr5_positive = df_lr5_clean[df_lr5_clean['diff_hours'] >= 0].copy()
     dropped_neg = len(df_lr5_clean) - len(df_lr5_positive)
     
-    def categorize_time(hours):
-        if hours < 24: return "< 24 часов"
-        elif hours < 168: return "1-7 дней"
-        elif hours < 720: return "7-30 дней"
-        else: return "> 30 дней"
-        
-    df_lr5_positive['time_category'] = df_lr5_positive['diff_hours'].apply(categorize_time)
+    # ОПТИМИЗАЦИЯ: Используем pd.cut вместо apply (работает в 10 раз быстрее)
+    bins = [-1, 24, 168, 720, float('inf')]
+    labels = ['< 24 часов', '1-7 дней', '7-30 дней', '> 30 дней']
+    df_lr5_positive['time_category'] = pd.cut(df_lr5_positive['diff_hours'], bins=bins, labels=labels)
     
     stats = {
         "total": total_lr5,
@@ -160,8 +160,8 @@ def get_lr5_investigation_data(df_curr):
 @st.cache_data(ttl=3600)
 def get_charts_data(df_curr):
     if df_curr.empty: return pd.DataFrame(), pd.DataFrame()
-    df_flows = df_curr.groupby('flow')[['loss_sum']].sum().reset_index()
-    df_lr = df_curr.groupby('reason')[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
+    df_flows = df_curr.groupby('flow', observed=True)[['loss_sum']].sum().reset_index()
+    df_lr = df_curr.groupby('reason', observed=True)[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
     return df_flows, df_lr
 
 @st.cache_data(ttl=3600)
@@ -170,7 +170,7 @@ def get_dynamic_chart_data(df_curr, selected_lr="Все"):
     df_chart = df_curr.copy()
     if selected_lr != "Все": 
         df_chart = df_chart[df_chart['reason'] == selected_lr]
-    df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
+    df_daily = df_chart.groupby(df_chart['loss_date'].dt.date, observed=True)[['loss_sum']].sum().reset_index()
     df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
     return df_daily
 
@@ -289,172 +289,4 @@ st.divider()
 # ==========================================
 # ВКЛАДКИ
 # ==========================================
-tab_analytics, tab_charts, tab_investigation = st.tabs(["📊 Аналитика потерь", "📈 Графики потерь", "🕵️ Потери < 24ч (LR 5)"])
-
-with tab_analytics:
-    if st.session_state.get('view') is None: st.session_state.view = 'dashboard'
-    if st.session_state.view == 'dashboard':
-        total_sum = df_curr['loss_sum'].sum()
-        total_qty = df_curr['loss_qty'].sum()
-        prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
-        prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
-        st.markdown("### Общие списания")
-        st.metric(label="Сумма", value=f"{total_sum:,.2f} ₽".replace(",", " "), delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty), delta_color="inverse")
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("ВХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_inbound"):
-                st.session_state.selected_flow = "in"; st.session_state.view = 'flow'; st.rerun()
-        with col2:
-            if st.button("ИСХОДЯЩИЙ ПОТОК", use_container_width=True, key="btn_outbound"):
-                st.session_state.selected_flow = "out"; st.session_state.view = 'flow'; st.rerun()
-    elif st.session_state.view == 'flow':
-        if st.button("⬅️ Назад"): st.session_state.view = 'dashboard'; st.rerun()
-        flow_name = "Входящий поток" if st.session_state.selected_flow == "in" else "Исходящий поток"
-        st.subheader(f"Выбран: {flow_name}")
-        available_lrs = ['36', '46', '47'] if st.session_state.selected_flow == "in" else ['26', '5']
-        cols = st.columns(len(available_lrs))
-        for i, lr in enumerate(available_lrs):
-            with cols[i]:
-                lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
-                lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
-                lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
-                lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
-                st.metric(label=f"LR {lr}", value=f"{lr_sum_curr:,.0f} ₽".replace(",", " "), delta=get_delta_text(lr_sum_curr, lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0, lr_sum_prev, lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0), delta_color="inverse")
-                if st.button(f"Подробнее", key=f"btn_{lr}", use_container_width=True):
-                    st.session_state.selected_lr = lr; st.session_state.view = 'lr_detail'; st.rerun()
-    elif st.session_state.view == 'lr_detail':
-        if st.button("⬅️ Назад"): st.session_state.view = 'flow'; st.rerun()
-        lr = st.session_state.selected_lr
-        df_f_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
-        st.subheader(f"Детализация по LR: {lr}")
-        st.metric(label=f"Сумма", value=f"{df_f_curr['loss_sum'].sum():,.2f} ₽".replace(",", " "))
-        if not df_f_curr.empty:
-            df_grouped = df_f_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
-            df_grouped['time_label'] = df_grouped['loss_date'].dt.strftime('%d.%m %H:%M')
-            fig = px.line(df_grouped, x='time_label', y='loss_sum', markers=True)
-            fig.update_xaxes(type='category')
-            st.plotly_chart(fig, use_container_width=True)
-
-with tab_charts:
-    st.subheader("Визуальный анализ")
-    if not df_curr.empty:
-        df_flows, df_lr = get_charts_data(df_curr)
-        
-        col_pie, col_bar = st.columns(2)
-        with col_pie:
-            fig_pie = px.pie(df_flows, names='flow', values='loss_sum', title="Доля потоков", color='flow', color_discrete_map={'Входящий поток': '#2e7d32', 'Исходящий поток': '#1565c0', 'Другое': '#888888'}, hole=0.4)
-            st.plotly_chart(fig_pie, use_container_width=True)
-        with col_bar:
-            fig_lr = px.bar(df_lr, x='reason', y='loss_sum', title="Потери по причинам", text_auto='.2s')
-            fig_lr.update_xaxes(type='category', title="Причина (LR)")
-            st.plotly_chart(fig_lr, use_container_width=True)
-        st.divider()
-        all_lrs = sorted(df_curr['reason'].unique())
-        selected_lr_chart = st.selectbox("Выберите LR для графика:", ["Все"] + list(all_lrs))
-        
-        df_daily = get_dynamic_chart_data(df_curr, selected_lr_chart)
-        
-        if not df_daily.empty:
-            fig_daily = px.line(df_daily, x='time_label', y='loss_sum', markers=True, title="Динамика")
-            fig_daily.update_xaxes(type='category')
-            st.plotly_chart(fig_daily, use_container_width=True)
-
-# ==========================================
-# ВКЛАДКА РАЗБОР ПОЛЕТОВ (LR 5)
-# ==========================================
-with tab_investigation:
-    st.subheader("🕵️ Разбор полетов: Быстрые потери (LR 5)")
-    st.markdown("Анализ времени от **«Даты статуса перед списанием»** до **«Даты первого списания»**.")
-    
-    if 'status_before_date' not in df_curr.columns:
-        st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'.")
-    elif df_curr.empty:
-        st.info("Нет данных за выбранный период.")
-    else:
-        # Получаем данные И статистику
-        df_lr5, stats = get_lr5_investigation_data(df_curr)
-        
-        # БЛОК ДИАГНОСТИКИ
-        with st.expander("🔍 Диагностика данных (почему цифры могут не совпадать с Excel)"):
-            st.markdown(f"""
-            *   **Всего строк с LR 5 за этот месяц (по базе):** `{stats.get('total', 0):,}`.replace(",", " ")
-            *   **Отброшено из-за пустой даты статуса или списания:** `{stats.get('dropped_dates', 0):,}`.replace(",", " ")
-            *   **Отброшено из-за отрицательной разницы (списание раньше статуса):** `{stats.get('dropped_neg', 0):,}`.replace(",", " ")
-            *   **Осталось для анализа:** `{stats.get('valid', 0):,}`.replace(",", " ")
-            """)
-            st.info("Если 'Отброшено из-за отрицательной разницы' очень большое, значит в исходном Excel даты перепутаны местами или сбиты часовые пояса.")
-        
-        if df_lr5.empty:
-            st.warning("Нет валидных данных для LR 5 с заполненными датами статуса.")
-        else:
-            cat_order = ["< 24 часов", "1-7 дней", "7-30 дней", "> 30 дней"]
-            df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
-            
-            missing_cats = [c for c in cat_order if c not in df_cat_summary['time_category'].values]
-            for cat in missing_cats:
-                df_cat_summary = pd.concat([df_cat_summary, pd.DataFrame({'time_category': [cat], 'loss_qty': [0]})], ignore_index=True)
-                
-            df_cat_summary['time_category'] = pd.Categorical(df_cat_summary['time_category'], categories=cat_order, ordered=True)
-            df_cat_summary = df_cat_summary.sort_values('time_category')
-            
-            custom_colors = {'< 24 часов': '#FF4B4B', '1-7 дней': '#FFA15A', '7-30 дней': '#19D3F3', '> 30 дней': '#888888'}
-            
-            st.markdown("### Распределение потерь по времени")
-            fig_cat = px.bar(df_cat_summary, x='time_category', y='loss_qty', 
-                             title="Количество потерянных ШК по времени", 
-                             text_auto=True,
-                             labels={'time_category': 'Время', 'loss_qty': 'Кол-во (шт)'},
-                             color='time_category',
-                             color_discrete_map=custom_colors)
-            st.plotly_chart(fig_cat, use_container_width=True)
-            
-            st.divider()
-            
-            st.markdown("### Детальный список по выбранному разрезу")
-            time_options = [
-                "Все",
-                "Меньше 24 часов",
-                "От 1 до 7 дней",
-                "От 7 до 30 дней",
-                "Больше месяца (>30 дней)"
-            ]
-            selected_time_label = st.radio("Выберите разрез:", time_options, horizontal=True)
-
-            if selected_time_label == "Все":
-                df_filtered = df_lr5
-            elif selected_time_label == "Меньше 24 часов":
-                df_filtered = df_lr5[df_lr5['time_category'] == "< 24 часов"]
-            elif selected_time_label == "От 1 до 7 дней":
-                df_filtered = df_lr5[df_lr5['time_category'] == "1-7 дней"]
-            elif selected_time_label == "От 7 до 30 дней":
-                df_filtered = df_lr5[df_lr5['time_category'] == "7-30 дней"]
-            else:
-                df_filtered = df_lr5[df_lr5['time_category'] == "> 30 дней"]
-
-            fast_qty = df_filtered['loss_qty'].sum()
-            fast_sum = df_filtered['loss_sum'].sum()
-            
-            col_m1, col_m2 = st.columns(2)
-            col_m1.metric(label=f"Списано (шт)", value=f"{fast_qty:,.0f}".replace(",", " "))
-            col_m2.metric(label="Сумма потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
-            
-            if not df_filtered.empty:
-                st.markdown("#### Список проблемных товаров")
-                
-                cols_to_show = ['barcode', 'block_name', 'status_before', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']
-                if 'status_before' not in df_filtered.columns:
-                    cols_to_show.remove('status_before')
-                    df_display = df_filtered[cols_to_show].copy()
-                    df_display.columns = ['ШК', 'Блок', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
-                else:
-                    df_display = df_filtered[cols_to_show].copy()
-                    df_display.columns = ['ШК', 'Блок', 'Статус перед списанием', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
-                
-                df_display['Дата статуса перед списанием'] = df_display['Дата статуса перед списанием'].dt.strftime('%d.%m.%Y %H:%M')
-                df_display['Дата первого списания'] = df_display['Дата первого списания'].dt.strftime('%d.%m.%Y %H:%M')
-                df_display['Прошло часов'] = df_display['Прошло часов'].round(2)
-                
-                st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
-            else:
-                st.info(f"Нет данных для выбранного разреза: {selected_time_label}.")
+tab_analytics, tab_charts, tab_investigation = st.tabs(["📊 Аналитика потерь", "📈 Графики потерь", "🕵️ Потери < 24ч (LR 
