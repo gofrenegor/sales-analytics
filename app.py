@@ -57,11 +57,13 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
+    # УЛЬТРА-НАДЕЖНАЯ ОЧИСТКА ДАТ ОТ ЧАСОВЫХ ПОЯСОВ (+03:00)
     for col in ['loss_date', 'status_before_date']:
-        if col in df.columns: 
+        if col in df.columns:
+            # Превращаем всё в строку и отрезаем "+03:00" если он есть
+            df[col] = df[col].astype(str).str.split('+').str[0]
+            # Теперь конвертируем в дату. Ошибки будут NaT.
             df[col] = pd.to_datetime(df[col], errors='coerce')
-            if df[col].dt.tz is not None:
-                df[col] = df[col].dt.tz_localize(None)
             
     for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
@@ -123,7 +125,9 @@ def get_lr5_investigation_data(df_curr):
     
     if df_lr5.empty: return pd.DataFrame()
     
+    # Считаем разницу
     df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
+    # Оставляем только положительные (на всякий случай)
     df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
     
     def categorize_time(hours):
@@ -379,8 +383,8 @@ with tab_investigation:
             st.divider()
             
             st.markdown("### Детальный список по выбранному разрезу")
-            # Обновили названия кнопок, чтобы было понятно, что это диапазоны
             time_options = [
+                "Все",
                 "Меньше 24 часов",
                 "От 1 до 7 дней",
                 "От 7 до 30 дней",
@@ -388,15 +392,16 @@ with tab_investigation:
             ]
             selected_time_label = st.radio("Выберите разрез:", time_options, horizontal=True)
 
-            # СТРОГАЯ ЛОГИКА ДИАПАЗОНОВ (взаимоисключающие)
-            if selected_time_label == "Меньше 24 часов":
-                df_filtered = df_lr5[df_lr5['diff_hours'] < 24]
+            if selected_time_label == "Все":
+                df_filtered = df_lr5
+            elif selected_time_label == "Меньше 24 часов":
+                df_filtered = df_lr5[df_lr5['time_category'] == "< 24 часов"]
             elif selected_time_label == "От 1 до 7 дней":
-                df_filtered = df_lr5[(df_lr5['diff_hours'] >= 24) & (df_lr5['diff_hours'] < 168)]
+                df_filtered = df_lr5[df_lr5['time_category'] == "1-7 дней"]
             elif selected_time_label == "От 7 до 30 дней":
-                df_filtered = df_lr5[(df_lr5['diff_hours'] >= 168) & (df_lr5['diff_hours'] < 720)]
+                df_filtered = df_lr5[df_lr5['time_category'] == "7-30 дней"]
             else:
-                df_filtered = df_lr5[df_lr5['diff_hours'] >= 720]
+                df_filtered = df_lr5[df_lr5['time_category'] == "> 30 дней"]
 
             fast_qty = df_filtered['loss_qty'].sum()
             fast_sum = df_filtered['loss_sum'].sum()
