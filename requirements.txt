@@ -3,7 +3,5 @@ pandas>=2.0
 numpy>=1.24
 plotly>=5.18
 openpyxl
-supabase
 sqlalchemy
 psycopg2-binary
-psycopg
