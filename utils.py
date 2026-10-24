@@ -23,7 +23,6 @@ engine = get_db_engine()
 def inject_css():
     st.markdown("""
         <style>
-        /* Стили для кнопок потоков */
         .st-key-btn_inbound button {
             background-color: #2e7d32 !important; color: white !important; border: 1px solid #2e7d32 !important;
         }
@@ -32,17 +31,6 @@ def inject_css():
             background-color: #1565c0 !important; color: white !important; border: 1px solid #1565c0 !important;
         }
         .st-key-btn_outbound button:hover { background-color: #0d47a1 !important; border: 1px solid #0d47a1 !important; }
-        
-        /* Стили для карточек (чипов) */
-        div[data-testid="stVerticalBlockBorderWrapper"] {
-            border-radius: 12px;
-            padding: 15px;
-            background-color: #1a1a1a;
-        }
-        
-        /* Цвета обводки */
-        div[class*="st-key-card_green"] { border: 2px solid #2e7d32 !important; }
-        div[class*="st-key-card_red"] { border: 2px solid #FF4B4B !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -79,19 +67,28 @@ def process_excel(file):
 
 def get_flow_name(status_before):
     status = str(status_before).strip().upper()
-    
     if status == "НЕ УКАЗАНО" or status == "" or status == "NAN":
         return 'Другое'
     
     inbound = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU']
     outbound = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
     
-    if status in inbound:
-        return 'Входящий поток'
-    elif status in outbound:
-        return 'Исходящий поток'
-    else:
-        return 'Другое'
+    if status in inbound: return 'Входящий поток'
+    elif status in outbound: return 'Исходящий поток'
+    else: return 'Другое'
+
+# --- СЛОВАРЬ МАППИНГА ПЛОЩАДОК В БЛОКИ ---
+BLOCK_MAPPING = {
+    "Рязань Тюшевское 1": "РЗТ 1",
+    "Рязань КГТ Левый": "РЗТ 1",
+    "Рязань Дорогостой 2": "РЗТ 2",
+    "Рязань Красота 2": "РЗТ 2",
+    "Рязань Продукты 2": "РЗТ 2",
+    "Рязань КГТ 2": "РЗТ 2",
+    "Рязань Тюшевское 3": "РЗТ 3",
+    "Рязань Тюшевское 3 КГТ": "РЗТ 3",
+    "Рязань Тюшевское 3 тест": "РЗТ 3"
+}
 
 @st.cache_data(ttl=3600)
 def load_data(start, end):
@@ -111,6 +108,9 @@ def load_data(start, end):
                 df['flow'] = df['status_before'].apply(get_flow_name)
             else:
                 df['flow'] = 'Другое'
+                
+            # ДОБАВЛЯЕМ ГРУППИРОВКУ БЛОКОВ (РЗТ 1, 2, 3)
+            df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
         return df
     except Exception:
         return pd.DataFrame()
