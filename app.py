@@ -16,6 +16,22 @@ if df_curr.empty and df_prev.empty:
     st.warning("⚠️ Нет данных за этот период.")
     st.stop()
 
+# --- БЛОК ДИАГНОСТИКИ ID 6800 (ВРЕМЕННЫЙ) ---
+with st.expander("🛠️ Диагностика блока 6800 (Опер площадь)", expanded=True):
+    # Ищем строки, где в ID блока есть '6800' (на случай если там 6800.0)
+    debug_6800 = df_curr[df_curr['block_id'].astype(str).str.contains('6800', na=False)]
+    
+    if debug_6800.empty:
+        st.error("В текущей загрузке данных вообще нет строк с ID блока 6800. Возможно, ты не загрузил этот файл или в Excel другой ID.")
+    else:
+        st.write("Найденные статусы для ID 6800 и их распределение по потокам:")
+        diag_table = debug_6800[['block_id', 'block_name', 'status_before', 'flow']].drop_duplicates()
+        st.dataframe(diag_table, use_container_width=True)
+        
+        statuses = debug_6800['status_before'].unique().tolist()
+        st.warning(f"Статусы для 6800: {statuses}")
+# ---------------------------------------------
+
 st.divider()
 
 if 'view' not in st.session_state: st.session_state.view = 'dashboard'
@@ -105,7 +121,7 @@ if st.session_state.view == 'dashboard':
         st.warning(f"⚠️ В категорию «Другое» попали статусы: **{', '.join(display_statuses)}**" + (" и др." if len(other_statuses) > 10 else ""))
 
 # ==========================================
-# 2. ЭКРАН ПОТОКА (Блоки Рязань Тюшевское 1, 2, 3, 4)
+# 2. ЭКРАН ПОТОКА (Блоки)
 # ==========================================
 elif st.session_state.view == 'flow':
     if st.button("⬅️ Назад на главную"):
@@ -130,7 +146,6 @@ elif st.session_state.view == 'flow':
         </div>
         """, unsafe_allow_html=True)
         
-        # ГРУППИРУЕМ ПО БЛОКАМ (Рязань Тюшевское X)
         df_blocks = df_flow.groupby('block_group')[['loss_sum']].sum().reset_index()
         df_blocks.columns = ['name', 'loss_sum']
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
@@ -167,7 +182,6 @@ elif st.session_state.view == 'group':
         </div>
         """, unsafe_allow_html=True)
         
-        # ГРУППИРУЕМ ПО ПЛОЩАДКАМ
         df_platforms = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
         df_platforms.columns = ['name', 'loss_sum']
         df_platforms['pct'] = (df_platforms['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
