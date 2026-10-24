@@ -97,19 +97,34 @@ elif st.session_state.view == 'flow':
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
         
+        # Стили для овальных чипов
+        st.markdown("""
+        <style>
+        .chip-red { background-color: #FFE5E5; color: #D32F2F; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; display: inline-block; margin-bottom: 10px; }
+        .chip-green { background-color: #E8F5E9; color: #2E7D32; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 600; display: inline-block; margin-bottom: 10px; }
+        </style>
+        """, unsafe_allow_html=True)
+        
         cols = st.columns(4)
         for i, row in df_blocks.iterrows():
             with cols[i % 4]:
-                # Определяем цвет обводки
+                # Логика определения цвета (можно поменять порог 10 на 20 или 50)
                 is_red = row['pct'] > 10
                 color_class = "red" if is_red else "green"
-                text_color = "#FF4B4B" if is_red else "#2e7d32"
+                chip_class = "chip-red" if is_red else "chip-green"
                 
-                # Контейнер с рамкой (border=True) и нашим цветом (из CSS)
+                # Форматируем процент
+                if row['pct'] < 0.1 and row['pct'] > 0:
+                    pct_text = "< 0.1%"
+                else:
+                    pct_text = f"{row['pct']:.1f}%"
+                
                 with st.container(key=f"card_{color_class}_{i}", border=True):
                     st.markdown(f"**{row['block_name']}**")
                     st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
-                    st.markdown(f"<p style='color: {text_color}; font-size: 14px; margin-bottom: 15px;'>{row['pct']:.1f}% от потока</p>", unsafe_allow_html=True)
+                    
+                    # Вставляем чип через HTML
+                    st.markdown(f"<div class='{chip_class}'>{pct_text} от потока</div>", unsafe_allow_html=True)
                     
                     if st.button(f"Подробнее", key=f"btn_block_{row['block_name']}", use_container_width=True):
                         st.session_state.selected_block = row['block_name']
