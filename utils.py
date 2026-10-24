@@ -74,6 +74,8 @@ def process_excel(file):
     for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns:
             df[col] = df[col].fillna("Не указано").astype(str)
+            # Очищаем от звездочек и пробелов
+            df[col] = df[col].str.replace(r'\*', '', regex=True).str.strip()
             if col == 'reason': df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
     return df
 
@@ -91,7 +93,6 @@ STAGE_MAPPING = {
     'LAM': 'Пропуски сборки'
 }
 
-# ВОЗВРАЩАЕМ СТРОГО 8 СТАТУСОВ ДЛЯ ОПЕР ПЛОЩАДИ (как было в вашем изначальном коде)
 OPERKA_STATUSES = ['GWS', 'LSS', 'PAP', 'PWT', 'SAP', 'SAS', 'SMC', 'SPS']
 
 BLOCK_MAPPING = {
@@ -104,6 +105,7 @@ BLOCK_MAPPING = {
     "Рязань Тюшевское 3": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 тест": "Рязань Тюшевское 3",
+    "Рязань 3 КГТ": "Рязань Тюшевское 3",  # <--- ДОБАВЛЕНО
     "Рязань Тюшевское 4": "Рязань Тюшевское 4"
 }
 
@@ -140,7 +142,7 @@ def _next_day_str(d):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_data(start, end, _v="v3"):  # _v="v3" принудительно сбросит старый кэш
+def load_data(start, end, _v="v4"):  # _v="v4" принудительно сбросит старый кэш
     start_str = _as_date_str(start)
     end_excl_str = _next_day_str(end)
 
@@ -163,7 +165,10 @@ def load_data(start, end, _v="v3"):  # _v="v3" принудительно сбр
     df['loss_date'] = pd.to_datetime(df['loss_date'])
     if 'status_before_date' in df.columns:
         df['status_before_date'] = pd.to_datetime(df['status_before_date'])
+    
+    # Очищаем reason и block_name от лишних символов
     df['reason'] = df['reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    df['block_name'] = df['block_name'].astype(str).str.replace(r'\*', '', regex=True).str.strip()
 
     if 'status_before' in df.columns:
         df['status_before'] = df['status_before'].fillna('').astype(str)
@@ -179,7 +184,8 @@ def load_data(start, end, _v="v3"):  # _v="v3" принудительно сбр
         df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
 
         # Векторизованный аналог get_block_group
-        mapped = df['block_name'].astype(str).str.strip().map(BLOCK_MAPPING).fillna('Другое')
+        # Теперь block_name уже очищен от звездочек
+        mapped = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
 
         if 'status_block_id' in df.columns:
             status_b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
@@ -188,16 +194,13 @@ def load_data(start, end, _v="v3"):  # _v="v3" принудительно сбр
             is_operka_6800 = pd.Series(False, index=df.index)
 
         is_lam = df['status_before'] == 'LAM'
-        
-        # ТЕПЕРЬ ТОЛЬКО 8 СТАТУСОВ + 6800 ИДУТ В ОПЕР ПЛОЩАДЬ, ОСТАЛЬНЫЕ В БЛОКИ
         is_operka = (~is_lam) & (is_operka_6800 | df['status_before'].isin(OPERKA_STATUSES))
 
         df['block_group'] = mapped.where(~is_operka, 'Опер площадь')
     else:
         df['flow'] = 'Другое'
         df['process_stage'] = 'Другое'
-        df['block_group'] = (df['block_name'].astype(str).str.strip().map(BLOCK_MAPPING).fillna('Другое')
-                             if 'block_name' in df.columns else 'Другое')
+        df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое') if 'block_name' in df.columns else 'Другое'
 
     return df
 
