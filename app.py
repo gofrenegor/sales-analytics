@@ -45,15 +45,10 @@ def process_excel(file):
     df.columns = df.columns.astype(str).str.strip()
     
     cols_map = {
-        'ШК': 'barcode', 
-        'Наименование блока': 'block_name', 
-        'ID блока': 'block_id',
-        'Сумма списания': 'loss_sum', 
-        'Кол-во лог объектов для списания': 'loss_qty',
-        'Дата первого списания': 'loss_date',          
-        'Лостризон первого списания': 'reason',        
-        'Дата статуса перед списанием': 'status_before_date',
-        'Статус перед списанием': 'status_before' # НОВАЯ КОЛОНКА
+        'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
+        'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
+        'Дата первого списания': 'loss_date', 'Лостризон первого списания': 'reason',        
+        'Дата статуса перед списанием': 'status_before_date', 'Статус перед списанием': 'status_before'
     }
     
     existing_cols = [c for c in cols_map.keys() if c in df.columns]
@@ -65,11 +60,9 @@ def process_excel(file):
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns: 
             df[col] = pd.to_datetime(df[col], errors='coerce')
-            # Убираем часовой пояс, чтобы время не сдвигалось
             if df[col].dt.tz is not None:
                 df[col] = df[col].dt.tz_localize(None)
             
-    # Добавили status_before в заполнение пустых значений
     for col in ['block_name', 'reason', 'status_before']:
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
     return df
@@ -101,6 +94,69 @@ def get_db_summary():
             return total_rows, min_date, max_date, df_months, df_weeks
     except Exception:
         return None, None, None, None, None
+
+# ==========================================
+# КЭШИРУЕМЫЕ ФУНКЦИИ ДЛЯ ТЯЖЕЛЫХ ВЫЧИСЛЕНИЙ
+# ==========================================
+
+@st.cache_data(ttl=3600) # Кэш на 1 час
+def load_data(start, end):
+    query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
+    try:
+        df = pd.read_sql(query, engine)
+        if not df.empty:
+            df['loss_date'] = pd.to_datetime(df['loss_date'])
+            if 'status_before_date' in df.columns:
+                df['status_before_date'] = pd.to_datetime(df['status_before_date'])
+            df['reason'] = df['reason'].astype(str).str.strip()
+            df['flow'] = df['reason'].apply(get_flow_name)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=3600)
+def get_lr5_investigation_data(df_curr):
+    """Считает разницу во времени и категории для LR5. Кэшируется."""
+    if 'status_before_date' not in df_curr.columns: return pd.DataFrame()
+    
+    df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
+    df_lr5 = df_lr5.dropna(subset=['status_before_date', 'loss_date'])
+    
+    if df_lr5.empty: return pd.DataFrame()
+    
+    df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
+    df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
+    
+    def categorize_time(hours):
+        if hours < 24: return "< 24 часов"
+        elif hours < 168: return "От 1 до 7 дней"
+        elif hours < 720: return "От 7 до 30 дней"
+        else: return "> 30 дней"
+        
+    df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
+    return df_lr5
+
+@st.cache_data(ttl=3600)
+def get_charts_data(df_curr):
+    """Готовит агрегированные данные для кругового графика и графика по LR."""
+    if df_curr.empty: return pd.DataFrame(), pd.DataFrame()
+    
+    df_flows = df_curr.groupby('flow')[['loss_sum']].sum().reset_index()
+    df_lr = df_curr.groupby('reason')[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
+    return df_flows, df_lr
+
+@st.cache_data(ttl=3600)
+def get_dynamic_chart_data(df_curr, selected_lr="Все"):
+    """Готовит данные для графика динамики."""
+    if df_curr.empty: return pd.DataFrame()
+    
+    df_chart = df_curr.copy()
+    if selected_lr != "Все": 
+        df_chart = df_chart[df_chart['reason'] == selected_lr]
+        
+    df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
+    df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
+    return df_daily
 
 # ==========================================
 # ШАПКА САЙТА И АДМИН-ПАНЕЛЬ
@@ -144,6 +200,9 @@ with col_admin:
                                             with engine.begin() as conn:
                                                 conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
                                                 df_new_valid.to_sql('losses', con=conn, if_exists='append', index=False, chunksize=5000)
+                                        
+                                        # ОЧИЩАЕМ КЭШ, ЧТОБЫ САЙТ ПОДТЯНУЛ НОВЫЕ ДАННЫЕ
+                                        st.cache_data.clear()
                                         st.success("🎉 Данные сохранены!")
                                         st.rerun()
                                     except Exception as e:
@@ -157,6 +216,7 @@ with col_admin:
                     try:
                         with engine.begin() as conn:
                             conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                        st.cache_data.clear()
                         st.success("База очищена!")
                         st.rerun()
                     except Exception as e:
@@ -201,21 +261,6 @@ elif date_mode == "Месяц":
     st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**")
 
 if engine is None: st.stop()
-
-@st.cache_data(ttl=60)
-def load_data(start, end):
-    query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
-    try:
-        df = pd.read_sql(query, engine)
-        if not df.empty:
-            df['loss_date'] = pd.to_datetime(df['loss_date'])
-            if 'status_before_date' in df.columns:
-                df['status_before_date'] = pd.to_datetime(df['status_before_date'])
-            df['reason'] = df['reason'].astype(str).str.strip()
-            df['flow'] = df['reason'].apply(get_flow_name)
-        return df
-    except Exception:
-        return pd.DataFrame()
 
 df_curr = load_data(start_date, end_date)
 df_prev = load_data(prev_start_date, prev_end_date)
@@ -279,24 +324,25 @@ with tab_analytics:
 with tab_charts:
     st.subheader("Визуальный анализ")
     if not df_curr.empty:
+        # БЕРЕМ ДАННЫЕ ИЗ КЭША
+        df_flows, df_lr = get_charts_data(df_curr)
+        
         col_pie, col_bar = st.columns(2)
         with col_pie:
-            df_flows = df_curr.groupby('flow')[['loss_sum']].sum().reset_index()
             fig_pie = px.pie(df_flows, names='flow', values='loss_sum', title="Доля потоков", color='flow', color_discrete_map={'Входящий поток': '#2e7d32', 'Исходящий поток': '#1565c0', 'Другое': '#888888'}, hole=0.4)
             st.plotly_chart(fig_pie, use_container_width=True)
         with col_bar:
-            df_lr = df_curr.groupby('reason')[['loss_sum']].sum().reset_index().sort_values('loss_sum', ascending=False)
             fig_lr = px.bar(df_lr, x='reason', y='loss_sum', title="Потери по причинам", text_auto='.2s')
             fig_lr.update_xaxes(type='category', title="Причина (LR)")
             st.plotly_chart(fig_lr, use_container_width=True)
         st.divider()
         all_lrs = sorted(df_curr['reason'].unique())
         selected_lr_chart = st.selectbox("Выберите LR для графика:", ["Все"] + list(all_lrs))
-        df_chart = df_curr.copy()
-        if selected_lr_chart != "Все": df_chart = df_chart[df_chart['reason'] == selected_lr_chart]
-        if not df_chart.empty:
-            df_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum']].sum().reset_index()
-            df_daily['time_label'] = pd.to_datetime(df_daily['loss_date']).dt.strftime('%d.%m.%Y')
+        
+        # БЕРЕМ ДАННЫЕ ИЗ КЭША
+        df_daily = get_dynamic_chart_data(df_curr, selected_lr_chart)
+        
+        if not df_daily.empty:
             fig_daily = px.line(df_daily, x='time_label', y='loss_sum', markers=True, title="Динамика")
             fig_daily.update_xaxes(type='category')
             st.plotly_chart(fig_daily, use_container_width=True)
@@ -313,23 +359,12 @@ with tab_investigation:
     elif df_curr.empty:
         st.info("Нет данных за выбранный период.")
     else:
-        df_lr5 = df_curr[df_curr['reason'] == '5'].copy()
-        df_lr5 = df_lr5.dropna(subset=['status_before_date', 'loss_date'])
+        # БЕРЕМ ТЯЖЕЛЫЕ РАСЧЕТЫ ИЗ КЭША
+        df_lr5 = get_lr5_investigation_data(df_curr)
         
         if df_lr5.empty:
             st.info("Нет данных для LR 5 с заполненными датами статуса.")
         else:
-            df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
-            df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
-            
-            def categorize_time(hours):
-                if hours < 24: return "< 24 часов"
-                elif hours < 168: return "От 1 до 7 дней"
-                elif hours < 720: return "От 7 до 30 дней"
-                else: return "> 30 дней"
-            
-            df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
-            
             cat_order = ["< 24 часов", "От 1 до 7 дней", "От 7 до 30 дней", "> 30 дней"]
             df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
             
@@ -381,9 +416,7 @@ with tab_investigation:
             if not df_filtered.empty:
                 st.markdown("#### Список товаров (сверь даты с Excel)")
                 
-                # Добавили колонку status_before
                 cols_to_show = ['barcode', 'block_name', 'status_before', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']
-                # Если колонки status_before нет в базе (потому что ты не перезалил файлы), покажем без нее, чтобы не падало
                 if 'status_before' not in df_filtered.columns:
                     cols_to_show.remove('status_before')
                     df_display = df_filtered[cols_to_show].copy()
