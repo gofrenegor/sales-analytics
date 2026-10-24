@@ -2,7 +2,9 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine
+import calendar
 
 # --- Настройка страницы ---
 st.set_page_config(page_title="Аналитика потерь", page_icon="📦", layout="wide")
@@ -46,7 +48,6 @@ def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     diff_sum = curr_sum - prev_sum
     diff_qty = curr_qty - prev_qty
     
-    # Форматируем с плюсом/минусом, убираем копейки
     sign = "+" if diff_sum > 0 else ""
     sum_str = f"{sign}{diff_sum:,.0f} ₽".replace(",", " ")
     
@@ -87,28 +88,65 @@ if 'selected_lr' not in st.session_state: st.session_state.selected_lr = None
 # --- Главный интерфейс ---
 st.title("📦 Аналитика списаний")
 
-# Фильтры по датам
-col_d1, col_d2 = st.columns(2)
-with col_d1:
-    start_date = st.date_input("Начало периода", value=date.today() - timedelta(days=30))
-with col_d2:
-    end_date = st.date_input("Конец периода", value=date.today())
+# ==========================================
+# ВЫБОР ПЕРИОДА (Разрезы)
+# ==========================================
+date_mode = st.radio(
+    "Выберите разрез:", 
+    ["Произвольный период", "Неделя", "Месяц"], 
+    horizontal=True
+)
 
-if start_date > end_date:
-    st.error("Дата начала не может быть позже даты окончания.")
-    st.stop()
+start_date, end_date = None, None
+prev_start_date, prev_end_date = None, None
+
+if date_mode == "Произвольный период":
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        start_date = st.date_input("Начало периода", value=date.today() - timedelta(days=30))
+    with col_d2:
+        end_date = st.date_input("Конец периода", value=date.today())
+        
+    if start_date > end_date:
+        st.error("Дата начала не может быть позже даты окончания.")
+        st.stop()
+        
+    duration = (end_date - start_date).days + 1
+    prev_end_date = start_date - timedelta(days=1)
+    prev_start_date = prev_end_date - timedelta(days=duration - 1)
+    
+    st.info(f"Сравнение: **{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}** (с прошлым периодом такой же длины)")
+
+elif date_mode == "Неделя":
+    target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
+    # Находим понедельник этой недели
+    start_date = target_date - timedelta(days=target_date.weekday())
+    end_date = start_date + timedelta(days=6)
+    # Предыдущая неделя
+    prev_start_date = start_date - timedelta(days=7)
+    prev_end_date = start_date - timedelta(days=1)
+    
+    st.info(f"Текущая неделя: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**\n\n"
+            f"Сравнение с прошлой неделей: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
+
+elif date_mode == "Месяц":
+    target_date = st.date_input("Выберите любой день нужного месяца", value=date.today())
+    start_date = target_date.replace(day=1)
+    _, last_day = calendar.monthrange(target_date.year, target_date.month)
+    end_date = target_date.replace(day=last_day)
+    # Предыдущий месяц
+    prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
+    prev_end_date = start_date - timedelta(days=1)
+    
+    st.info(f"Текущий месяц: **{start_date.strftime('%d.%m.%Y')} — {end_date.strftime('%d.%m.%Y')}**\n\n"
+            f"Сравнение с прошлым месяцем: **{prev_start_date.strftime('%d.%m.%Y')} — {prev_end_date.strftime('%d.%m.%Y')}**")
 
 if engine is None:
     st.error("Нет подключения к базе данных.")
     st.stop()
 
-# Вычисляем предыдущий период для сравнения
-duration = (end_date - start_date).days + 1
-prev_end_date = start_date - timedelta(days=1)
-prev_start_date = prev_end_date - timedelta(days=duration - 1)
-
-# Загружаем данные за текущий и предыдущий периоды
-@st.cache_data(ttl=60)  # ttl=60 секунд, чтобы данные обновлялись быстрее
+# Загружаем данные
+@st.cache_data(ttl=60)
 def load_data(start, end):
     query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date <= '{end}'"
     try:
@@ -130,14 +168,12 @@ if df_curr.empty and df_prev.empty:
 st.divider()
 
 # ==========================================
-# ЭКРАН 1: ДАШБОРД (Главная)
+# ЭКРАН 1: ДАШБОРД
 # ==========================================
 if st.session_state.view == 'dashboard':
-    # Текущие показатели
     total_sum = df_curr['loss_sum'].sum() if not df_curr.empty else 0
     total_qty = df_curr['loss_qty'].sum() if not df_curr.empty else 0
     
-    # Показатели предыдущего периода
     prev_sum = df_prev['loss_sum'].sum() if not df_prev.empty else 0
     prev_qty = df_prev['loss_qty'].sum() if not df_prev.empty else 0
     
@@ -146,7 +182,7 @@ if st.session_state.view == 'dashboard':
         label="Сумма", 
         value=f"{total_sum:,.2f} ₽".replace(",", " "),
         delta=get_delta_text(total_sum, total_qty, prev_sum, prev_qty),
-        delta_color="inverse"  # Рост потерь - красный, снижение - зеленый
+        delta_color="inverse"
     )
     
     st.markdown("---")
@@ -158,7 +194,6 @@ if st.session_state.view == 'dashboard':
             st.session_state.selected_flow = "in"
             st.session_state.view = 'flow'
             st.rerun()
-            
     with col2:
         if st.button("⬆️ ИСХОДЯЩИЙ ПОТОК", use_container_width=True):
             st.session_state.selected_flow = "out"
@@ -185,12 +220,10 @@ elif st.session_state.view == 'flow':
     cols = st.columns(len(available_lrs))
     for i, lr in enumerate(available_lrs):
         with cols[i]:
-            # Считаем данные для текущего LR
             lr_df_curr = df_curr[df_curr['reason'] == lr] if not df_curr.empty else pd.DataFrame()
             lr_sum_curr = lr_df_curr['loss_sum'].sum() if not lr_df_curr.empty else 0
             lr_qty_curr = lr_df_curr['loss_qty'].sum() if not lr_df_curr.empty else 0
             
-            # Считаем данные для предыдущего периода
             lr_df_prev = df_prev[df_prev['reason'] == lr] if not df_prev.empty else pd.DataFrame()
             lr_sum_prev = lr_df_prev['loss_sum'].sum() if not lr_df_prev.empty else 0
             lr_qty_prev = lr_df_prev['loss_qty'].sum() if not lr_df_prev.empty else 0
@@ -223,10 +256,8 @@ elif st.session_state.view == 'lr_detail':
     
     st.subheader(f"Детализация по причине (LR): {lr}")
     
-    # Считаем метрики
     lr_sum = df_filtered_curr['loss_sum'].sum() if not df_filtered_curr.empty else 0
     lr_qty = df_filtered_curr['loss_qty'].sum() if not df_filtered_curr.empty else 0
-    
     prev_sum = df_filtered_prev['loss_sum'].sum() if not df_filtered_prev.empty else 0
     prev_qty = df_filtered_prev['loss_qty'].sum() if not df_filtered_prev.empty else 0
     
@@ -243,24 +274,13 @@ elif st.session_state.view == 'lr_detail':
     
     st.markdown("---")
     
-    # График
     st.markdown("#### Динамика списаний")
-    time_cut = st.radio("Разрез:", ["По дням", "По неделям", "По месяцам"], horizontal=True)
-    
-    if time_cut == "По дням":
-        df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
-    elif time_cut == "По неделям":
-        df_filtered_curr['period'] = df_filtered_curr['loss_date'].dt.to_period('W').dt.start_time
-        df_grouped = df_filtered_curr.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
-    else:
-        df_filtered_curr['period'] = df_filtered_curr['loss_date'].dt.to_period('M').dt.start_time
-        df_grouped = df_filtered_curr.groupby('period')['loss_sum'].sum().reset_index().rename(columns={'period': 'loss_date'})
+    df_grouped = df_filtered_curr.groupby('loss_date')['loss_sum'].sum().reset_index()
     
     fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True,
                   labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
     st.plotly_chart(fig, use_container_width=True)
     
-    # Таблица
     st.markdown("#### Сводка по блокам")
     if 'block_name' in df_filtered_curr:
         df_blocks = df_filtered_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
