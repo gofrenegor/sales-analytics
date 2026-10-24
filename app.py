@@ -31,7 +31,8 @@ def get_gradient_colors(pct):
     b = int(50 + (75 - 50) * (pct / 100))
     return f"rgb({r}, {g}, {b})", f"rgba({r}, {g}, {b}, 0.15)", f"rgba({r}, {g}, {b}, 0.4)"
 
-def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_type=None):
+# ДОБАВЛЕН ПАРАМЕТР label_suffix
+def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_type=None, label_suffix="от потока"):
     max_pct = df_grouped['pct'].max()
     
     st.markdown("""
@@ -54,7 +55,8 @@ def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_typ
                 st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
                 
                 chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {border_color}; padding: 6px 14px; border-radius: 20px; font-size: 16px; font-weight: 600; display: inline-block; margin-bottom: 10px;"
-                st.markdown(f"<div style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
+                # ИСПОЛЬЗУЕМ label_suffix
+                st.markdown(f"<div style='{chip_style}'>{pct_text} {label_suffix}</div>", unsafe_allow_html=True)
                 
                 if st.button(f"Подробнее", key=f"btn_{button_key_prefix}_{i}", use_container_width=True):
                     if next_view == 'group':
@@ -139,6 +141,7 @@ elif st.session_state.view == 'flow':
         df_blocks.columns = ['name', 'loss_sum']
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
         df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
+        # Здесь оставляем по умолчанию "от потока"
         render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow_block')
 
 # ==========================================
@@ -169,21 +172,22 @@ elif st.session_state.view == 'group':
         
         st.markdown("---")
         
-        # Если это Опер площадь — показываем этапы. Если обычный блок — площадки.
         if group_name == 'Опер площадь':
             st.markdown("### Выберите этап для детализации:")
             df_sub = df_group.groupby('process_stage')[['loss_sum']].sum().reset_index()
             df_sub.columns = ['name', 'loss_sum']
             df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
             df_sub = df_sub.sort_values('loss_sum', ascending=False)
-            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_stage', detail_type='stage')
+            # ИЗМЕНЕНО: label_suffix="от потерь блока"
+            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_stage', detail_type='stage', label_suffix="от потерь блока")
         else:
             st.markdown("### Выберите площадку для детализации:")
             df_sub = df_group.groupby('block_name')[['loss_sum']].sum().reset_index()
             df_sub.columns = ['name', 'loss_sum']
             df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
             df_sub = df_sub.sort_values('loss_sum', ascending=False)
-            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_platform', detail_type='platform')
+            # ИЗМЕНЕНО: label_suffix="от потерь блока"
+            render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_platform', detail_type='platform', label_suffix="от потерь блока")
 
 # ==========================================
 # 4. ЭКРАН ДЕТАЛИЗАЦИИ ПО LR
@@ -196,7 +200,6 @@ elif st.session_state.view == 'block_detail':
     detail_name = st.session_state.selected_block
     detail_type = st.session_state.get('selected_detail_type')
     
-    # Фильтруем в зависимости от того, куда кликнули: на этап или на площадку
     if detail_type == 'stage':
         df_detail = df_curr[(df_curr['block_group'] == st.session_state.selected_group) & (df_curr['process_stage'] == detail_name)]
         st.subheader(f"Этап: {detail_name}")
