@@ -90,7 +90,7 @@ STAGE_MAPPING = {
     'LAM': 'Пропуски сборки'
 }
 
-# ОБНОВЛЕНИЕ: Берем все статусы, которые относятся к Отгрузке, Предсортировке и Сортировке
+# Берем все статусы, которые относятся к Отгрузке, Предсортировке и Сортировке
 OPERKA_STATUSES = [k for k, v in STAGE_MAPPING.items() if v in ('Отгрузка', 'Предсортировка', 'Сортировка')]
 
 BLOCK_MAPPING = {
@@ -108,7 +108,6 @@ BLOCK_MAPPING = {
 
 
 def get_flow_name(status_before):
-    """Оставлено для совместимости. В load_data используется векторизованная версия."""
     status = str(status_before).strip().upper()
     if status in ('НЕ УКАЗАНО', '', 'NAN'):
         return 'Другое'
@@ -140,11 +139,11 @@ def _next_day_str(d):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_data(start, end):
-    """Загрузка и предобработка данных за период.
-
-    Оптимизация: вместо df.apply(axis=1) для block_group и apply для flow/stage
-    используются векторизованные .isin() / .map() / .where() — на порядок быстрее.
+def load_data(start, end, _v="v2"):
+    """Загрузка и предобработка данных.
+    
+    Параметр _v нужен для принудительного сброса кэша при изменении логики,
+    так как Streamlit не видит изменений в глобальных переменных (OPERKA_STATUSES).
     """
     start_str = _as_date_str(start)
     end_excl_str = _next_day_str(end)
@@ -264,6 +263,13 @@ def get_db_summary():
 def render_admin_panel():
     with st.sidebar:
         st.header("👤 Админ-панель")
+        
+        # Кнопка для ручного сброса кэша
+        if st.button("🔄 Сбросить кэш данных", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Кэш сброшен!")
+            st.rerun()
+            
         with st.expander("📥 Загрузка данных", expanded=True):
             uploaded_files = st.file_uploader("Excel файлы (.xlsx)", type=["xlsx"], accept_multiple_files=True, label_visibility="collapsed")
             if uploaded_files:
