@@ -84,7 +84,6 @@ def get_flow_name(reason):
     elif reason in ['26', '5']: return 'Исходящий поток'
     return 'Другое'
 
-# Убрали кэширование, чтобы всегда видеть реальное состояние базы
 def get_db_summary():
     try:
         with engine.connect() as conn:
@@ -95,7 +94,7 @@ def get_db_summary():
             df_months = pd.read_sql("SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) as rows_count FROM losses GROUP BY TO_CHAR(loss_date, 'YYYY-MM') ORDER BY month DESC", conn)
             df_weeks = pd.read_sql("SELECT TO_CHAR(DATE_TRUNC('week', loss_date), 'YYYY-MM-DD') AS week_start, COUNT(*) as rows_count FROM losses GROUP BY DATE_TRUNC('week', loss_date) ORDER BY week_start DESC", conn)
             return total_rows, min_date, max_date, df_months, df_weeks
-    except Exception as e:
+    except Exception:
         return None, None, None, None, None
 
 # ==========================================
@@ -137,16 +136,10 @@ with col_admin:
                             if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
                                 if engine is not None:
                                     try:
-                                        # Добавили спиннер загрузки
                                         with st.spinner("Загрузка данных в базу... Пожалуйста, подождите."):
-                                            # ВСЯ ОПЕРАЦИЯ ВНУТРИ ОДНОЙ ТРАНЗАКЦИИ
                                             with engine.begin() as conn:
-                                                # 1. Удаляем
                                                 conn.execute(text(f"DELETE FROM losses WHERE loss_date::date >= '{min_date}' AND loss_date::date <= '{max_date}'"))
-                                                
-                                                # 2. Вставляем (разбиваем на чанки по 5000 строк для скорости и стабильности)
                                                 df_new_valid.to_sql('losses', con=conn, if_exists='append', index=False, chunksize=5000)
-                                        
                                         st.success("🎉 Данные успешно сохранены в базу!")
                                         st.rerun()
                                     except Exception as e:
@@ -314,8 +307,8 @@ with tab_charts:
 # ВКЛАДКА РАЗБОР ПОЛЕТОВ (LR 5)
 # ==========================================
 with tab_investigation:
-    st.subheader("🕵️ Разбор полетов: Быстрые потери")
-    st.markdown("Анализ для **LR 5 (Сборка)**. Показывает, сколько товаров было потеряно в течение заданного времени после раскладки.")
+    st.subheader("🕵️ Разбор полетов: Быстрые потери (LR 5)")
+    st.markdown("Анализ времени от **последнего статуса перед списанием** до **даты первого списания**.")
     
     if 'status_before_date' not in df_curr.columns:
         st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'. Пожалуйста, перезагрузите Excel-файл с этой колонкой.")
@@ -326,46 +319,74 @@ with tab_investigation:
         if df_lr5.empty:
             st.info("Нет данных с указанными датами статуса для LR 5 за выбранный период.")
         else:
+            # Считаем разницу в часах (игнорируем отрицательные значения как ошибки данных)
             df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
+            df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
             
-            time_options = {
-                "24 часа": 24,
-                "48 часов (2 дня)": 48,
-                "72 часа (3 дня)": 72,
-                "168 часов (7 дней)": 168
-            }
-            selected_time_label = st.radio("Выберите максимальное время после раскладки:", list(time_options.keys()), horizontal=True)
-            selected_hours = time_options[selected_time_label]
+            # Создаем категории для графика (mutually exclusive)
+            def categorize_time(hours):
+                if hours < 24: return "< 24 часов"
+                elif hours < 168: return "От 1 до 7 дней"
+                elif hours < 720: return "От 7 до 30 дней"
+                else: return "> 30 дней"
+            
+            df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
+            
+            # 1. График по всем категориям (общая картина)
+            st.markdown("### Распределение потерь по времени")
+            df_cat_summary = df_lr5.groupby('time_category')[['loss_qty', 'loss_sum']].sum().reset_index()
+            
+            # Сортируем категории в правильном порядке
+            cat_order = ["< 24 часов", "От 1 до 7 дней", "От 7 до 30 дней", "> 30 дней"]
+            df_cat_summary['time_category'] = pd.Categorical(df_cat_summary['time_category'], categories=cat_order, ordered=True)
+            df_cat_summary = df_cat_summary.sort_values('time_category')
+            
+            fig_cat = px.bar(df_cat_summary, x='time_category', y='loss_qty', 
+                             title="Количество потерянных ШК по времени", 
+                             text_auto=True,
+                             labels={'time_category': 'Время', 'loss_qty': 'Кол-во (шт)'},
+                             color='time_category',
+                             color_discrete_sequence=px.colors.sequential.Reds)
+            st.plotly_chart(fig_cat, use_container_width=True)
+            
+            st.divider()
+            
+            # 2. Выбор разреза для детальной таблицы
+            st.markdown("### Детальный список по выбранному разрезу")
+            time_options = [
+                "Меньше 24 часов",
+                "Меньше недели (7 дней)",
+                "Меньше месяца (30 дней)",
+                "Больше месяца (>30 дней)"
+            ]
+            selected_time_label = st.radio("Выберите разрез:", time_options, horizontal=True)
 
-            df_fast_loss = df_lr5[(df_lr5['diff_hours'] <= selected_hours) & (df_lr5['diff_hours'] >= 0)]
+            # Фильтруем данные в зависимости от выбора
+            if selected_time_label == "Меньше 24 часов":
+                df_filtered = df_lr5[df_lr5['diff_hours'] <= 24]
+            elif selected_time_label == "Меньше недели (7 дней)":
+                df_filtered = df_lr5[df_lr5['diff_hours'] <= 168]
+            elif selected_time_label == "Меньше месяца (30 дней)":
+                df_filtered = df_lr5[df_lr5['diff_hours'] <= 720]
+            else: # Больше месяца
+                df_filtered = df_lr5[df_lr5['diff_hours'] > 720]
+
+            fast_qty = df_filtered['loss_qty'].sum()
+            fast_sum = df_filtered['loss_sum'].sum()
             
-            fast_qty = df_fast_loss['loss_qty'].sum()
-            fast_sum = df_fast_loss['loss_sum'].sum()
-            
-            st.markdown(f"### Потери в течение {selected_time_label} после раскладки")
             col_m1, col_m2 = st.columns(2)
-            col_m1.metric(label=f"Списано < {selected_hours} ч (шт)", value=f"{fast_qty:,.0f}".replace(",", " "))
+            col_m1.metric(label=f"Списано по фильтру (шт)", value=f"{fast_qty:,.0f}".replace(",", " "))
             col_m2.metric(label="Сумма этих потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
             
-            st.markdown("---")
-            
-            if not df_fast_loss.empty:
-                df_fast_loss['hours_bucket'] = df_fast_loss['diff_hours'].astype(int)
-                df_hist = df_fast_loss.groupby('hours_bucket')[['loss_qty']].sum().reset_index()
-                
-                fig_hist = px.bar(df_hist, x='hours_bucket', y='loss_qty', 
-                                  title="Распределение по часам (через сколько теряется)",
-                                  labels={'hours_bucket': 'Часов прошло', 'loss_qty': 'Кол-во ШК'})
-                st.plotly_chart(fig_hist, use_container_width=True)
-                
+            if not df_filtered.empty:
                 st.markdown("#### Список проблемных товаров")
-                df_display = df_fast_loss[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
-                df_display.columns = ['ШК', 'Блок', 'Время раскладки', '1-е списание', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                df_display = df_filtered[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
+                df_display.columns = ['ШК', 'Блок', 'Последний статус', '1-е списание', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
                 
-                df_display['Время раскладки'] = df_display['Время раскладки'].dt.strftime('%d.%m.%Y %H:%M')
+                df_display['Последний статус'] = df_display['Последний статус'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['1-е списание'] = df_display['1-е списание'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Прошло часов'] = df_display['Прошло часов'].round(1)
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
             else:
-                st.success(f"Отлично! За выбранный период нет товаров, потерянных быстрее чем за {selected_time_label}.")
+                st.success(f"Нет данных для выбранного разреза: {selected_time_label}.")
