@@ -64,6 +64,9 @@ def process_excel(file):
     for col in ['loss_date', 'status_before_date']:
         if col in df.columns: 
             df[col] = pd.to_datetime(df[col], errors='coerce')
+            # ГЛАВНОЕ ИСПРАВЛЕНИЕ: Убираем часовой пояс (например, +03:00), чтобы время не сдвигалось
+            if df[col].dt.tz is not None:
+                df[col] = df[col].dt.tz_localize(None)
             
     for col in ['block_name', 'reason']:
         if col in df.columns: df[col] = df[col].fillna("Не указано").astype(str)
@@ -326,7 +329,6 @@ with tab_investigation:
             
             df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
             
-            # График
             cat_order = ["< 24 часов", "От 1 до 7 дней", "От 7 до 30 дней", "> 30 дней"]
             df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
             
@@ -376,15 +378,14 @@ with tab_investigation:
             col_m2.metric(label="Сумма потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
             
             if not df_filtered.empty:
-                st.markdown("#### Список товаров (проверь даты, они должны совпадать с Excel)")
+                st.markdown("#### Список товаров (сверь даты с Excel)")
                 
-                # Переименовываем колонки ровно так, как они называются в твоем Excel
                 df_display = df_filtered[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
                 df_display.columns = ['ШК', 'Блок', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
                 
                 df_display['Дата статуса перед списанием'] = df_display['Дата статуса перед списанием'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Дата первого списания'] = df_display['Дата первого списания'].dt.strftime('%d.%m.%Y %H:%M')
-                df_display['Прошло часов'] = df_display['Прошло часов'].round(1)
+                df_display['Прошло часов'] = df_display['Прошло часов'].round(2)
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
             else:
