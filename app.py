@@ -301,7 +301,7 @@ with tab_charts:
 # ==========================================
 with tab_investigation:
     st.subheader("🕵️ Разбор полетов: Быстрые потери (LR 5)")
-    st.markdown("Анализ времени от **последнего статуса перед списанием** до **даты первого списания**.")
+    st.markdown("Анализ времени от **«Даты статуса перед списанием»** до **«Даты первого списания»**.")
     
     if 'status_before_date' not in df_curr.columns:
         st.error("⚠️ В данных нет колонки 'Дата статуса перед списанием'.")
@@ -312,8 +312,9 @@ with tab_investigation:
         df_lr5 = df_lr5.dropna(subset=['status_before_date', 'loss_date'])
         
         if df_lr5.empty:
-            st.info("Нет данных для LR 5.")
+            st.info("Нет данных для LR 5 с заполненными датами статуса.")
         else:
+            # Считаем разницу: Дата первого списания минус Дата статуса перед списанием
             df_lr5['diff_hours'] = (df_lr5['loss_date'] - df_lr5['status_before_date']).dt.total_seconds() / 3600
             df_lr5 = df_lr5[df_lr5['diff_hours'] >= 0]
             
@@ -325,7 +326,7 @@ with tab_investigation:
             
             df_lr5['time_category'] = df_lr5['diff_hours'].apply(categorize_time)
             
-            # Готовим данные для графика (добавляем пустые категории, чтобы все 4 столбца были видны)
+            # График
             cat_order = ["< 24 часов", "От 1 до 7 дней", "От 7 до 30 дней", "> 30 дней"]
             df_cat_summary = df_lr5.groupby('time_category')[['loss_qty']].sum().reset_index()
             
@@ -336,7 +337,6 @@ with tab_investigation:
             df_cat_summary['time_category'] = pd.Categorical(df_cat_summary['time_category'], categories=cat_order, ordered=True)
             df_cat_summary = df_cat_summary.sort_values('time_category')
             
-            # Задаем красивые цвета, чтобы не было белого
             custom_colors = {'< 24 часов': '#FF4B4B', 'От 1 до 7 дней': '#FFA15A', 'От 7 до 30 дней': '#19D3F3', '> 30 дней': '#888888'}
             
             st.markdown("### Распределение потерь по времени")
@@ -376,12 +376,14 @@ with tab_investigation:
             col_m2.metric(label="Сумма потерь (₽)", value=f"{fast_sum:,.2f} ₽".replace(",", " "))
             
             if not df_filtered.empty:
-                st.markdown("#### Список проблемных товаров")
-                df_display = df_filtered[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
-                df_display.columns = ['ШК', 'Блок', 'Последний статус', '1-е списание', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                st.markdown("#### Список товаров (проверь даты, они должны совпадать с Excel)")
                 
-                df_display['Последний статус'] = df_display['Последний статус'].dt.strftime('%d.%m.%Y %H:%M')
-                df_display['1-е списание'] = df_display['1-е списание'].dt.strftime('%d.%m.%Y %H:%M')
+                # Переименовываем колонки ровно так, как они называются в твоем Excel
+                df_display = df_filtered[['barcode', 'block_name', 'status_before_date', 'loss_date', 'diff_hours', 'loss_qty', 'loss_sum']].copy()
+                df_display.columns = ['ШК', 'Блок', 'Дата статуса перед списанием', 'Дата первого списания', 'Прошло часов', 'Кол-во', 'Сумма (₽)']
+                
+                df_display['Дата статуса перед списанием'] = df_display['Дата статуса перед списанием'].dt.strftime('%d.%m.%Y %H:%M')
+                df_display['Дата первого списания'] = df_display['Дата первого списания'].dt.strftime('%d.%m.%Y %H:%M')
                 df_display['Прошло часов'] = df_display['Прошло часов'].round(1)
                 
                 st.dataframe(df_display, use_container_width=True, hide_index=True, height=400)
