@@ -40,7 +40,6 @@ def process_excel(file):
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns: df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
     
-    # ТЕПЕРЬ МЫ ЧИТАЕМ ДАТУ И ВРЕМЯ
     if 'loss_date' in df.columns: 
         df['loss_date'] = pd.to_datetime(df['loss_date'], errors='coerce')
         
@@ -129,7 +128,6 @@ if engine is None:
 
 @st.cache_data(ttl=60)
 def load_data(start, end):
-    # Мы используем loss_date >= start и < end + 1 день, чтобы захватить все время
     query = f"SELECT * FROM losses WHERE loss_date >= '{start}' AND loss_date < '{end + timedelta(days=1)}'"
     try:
         df = pd.read_sql(query, engine)
@@ -228,7 +226,7 @@ with tab_analytics:
             
             fig = px.line(df_grouped, x='loss_date', y='loss_sum', markers=True, labels={'loss_sum': 'Сумма (₽)', 'loss_date': 'Дата'})
             fig.update_traces(hovertemplate="<b>Дата:</b> %{x|%d.%m.%Y %H:%M}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>")
-            fig.update_xaxes(type='category') # Защита от микросекунд
+            fig.update_xaxes(type='category')
             st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("#### Сводка по блокам")
@@ -254,51 +252,57 @@ with tab_charts:
         st.plotly_chart(fig_pie, use_container_width=True)
 
     with col_bar_flow:
-        # Исправление: сортируем по сумме, чтобы самые большие были слева
         df_lr = df_curr.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False)
-        
         fig_lr = px.bar(df_lr, x='reason', y='loss_sum', title="Сумма потерь по причинам (LR)", labels={'reason': 'LR', 'loss_sum': 'Сумма (₽)'}, text_auto='.2s')
         fig_lr.update_traces(hovertemplate="<b>LR:</b> %{x}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>", marker_color='#1f77b4')
-        
-        # ГЛАВНОЕ ИСПРАВЛЕНИЕ: Принудительно делаем ось X категориальной (текстовой), чтобы не было 0-50
         fig_lr.update_xaxes(type='category', title="Причина (LR)")
         st.plotly_chart(fig_lr, use_container_width=True)
 
     st.divider()
 
-    # 3. Динамика по дням или часам
+    # 3. Динамика по дням или часам с ФИЛЬТРОМ ПО LR
     st.markdown("#### Динамика потерь")
     
-    if len(df_curr) > 0:
-        # Проверяем, есть ли в данных время (часы/минуты), отличное от нуля
-        has_time = (df_curr['loss_date'].dt.hour != 0).any() or (df_curr['loss_date'].dt.minute != 0).any()
+    # НОВЫЙ ФИЛЬТР ПО LR
+    all_lrs = sorted(df_curr['reason'].unique())
+    selected_lr_chart = st.selectbox("Выберите LR для графика (или оставьте 'Все'):", ["Все"] + list(all_lrs))
+    
+    df_chart = df_curr.copy()
+    if selected_lr_chart != "Все":
+        df_chart = df_chart[df_chart['reason'] == selected_lr_chart]
+
+    if len(df_chart) > 0:
+        has_time = (df_chart['loss_date'].dt.hour != 0).any() or (df_chart['loss_date'].dt.minute != 0).any()
         
         if date_mode == "День" and has_time:
-            # Если выбран день и есть время — строим по часам!
-            df_curr_daily = df_curr.set_index('loss_date').resample('h')[['loss_sum', 'loss_qty']].sum().reset_index()
+            # Строим по часам
+            df_curr_daily = df_chart.set_index('loss_date').resample('h')[['loss_sum', 'loss_qty']].sum().reset_index()
+            # Убираем пустые часы, чтобы не было нулей
+            df_curr_daily = df_curr_daily[df_curr_daily['loss_sum'] > 0]
+            
+            # Делаем красивый текстовый формат для оси X
+            df_curr_daily['time_label'] = df_curr_daily['loss_date'].dt.strftime('%d.%m %H:%M')
+            x_col = 'time_label'
             title_text = "Сумма потерь по часам"
-            hover_format = "%{x|%H:%M}"
         else:
-            # Иначе строим по дням
-            df_curr_daily = df_curr.groupby(df_curr['loss_date'].dt.date)[['loss_sum', 'loss_qty']].sum().reset_index()
-            df_curr_daily.rename(columns={'loss_date': 'date_only'}, inplace=True)
+            # Строим по дням
+            df_curr_daily = df_chart.groupby(df_chart['loss_date'].dt.date)[['loss_sum', 'loss_qty']].sum().reset_index()
+            df_curr_daily['time_label'] = pd.to_datetime(df_curr_daily['loss_date']).dt.strftime('%d.%m.%Y')
+            x_col = 'time_label'
             title_text = "Сумма потерь по дням"
-            hover_format = "%{x|%d.%m.%Y}"
 
-        fig_daily = px.line(df_curr_daily, x=df_curr_daily.columns[0], y='loss_sum', markers=True, title=title_text, labels={df_curr_daily.columns[0]: 'Время', 'loss_sum': 'Сумма (₽)'})
-        fig_daily.update_traces(hovertemplate=f"<b>Время:</b> {hover_format}<br><b>Сумма:</b> %{{y:,.2f}} ₽<extra></extra>", line_color='#FF4B4B')
-        
-        # Принудительно ставим категориальную ось, чтобы Plotly не писал микросекунды, если точка всего одна
-        fig_daily.update_xaxes(type='category') 
+        fig_daily = px.line(df_curr_daily, x=x_col, y='loss_sum', markers=True, title=title_text)
+        fig_daily.update_traces(hovertemplate="<b>Время:</b> %{x}<br><b>Сумма:</b> %{y:,.2f} ₽<extra></extra>", line_color='#FF4B4B')
+        fig_daily.update_xaxes(type='category') # Отключает наносекунды
         st.plotly_chart(fig_daily, use_container_width=True)
         
         if date_mode == "День" and not has_time:
             st.caption("⚠️ В ваших данных нет времени (только дата), поэтому график по часам не построить. Добавьте время в Excel.")
     
-    # 4. Топ-10 блоков
-    st.markdown("#### Топ-10 блоков по сумме потерь")
-    if 'block_name' in df_curr:
-        df_top_blocks = df_curr.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False).head(10)
+    # 4. Топ-10 блоков (тоже применяем фильтр)
+    st.markdown(f"#### Топ-10 блоков по сумме потерь {'(по LR ' + selected_lr_chart + ')' if selected_lr_chart != 'Все' else ''}")
+    if 'block_name' in df_chart:
+        df_top_blocks = df_chart.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index().sort_values('loss_sum', ascending=False).head(10)
         fig_blocks = px.bar(df_top_blocks, x='loss_sum', y='block_name', orientation='h', title="Топ-10 блоков (₽)", labels={'loss_sum': 'Сумма (₽)', 'block_name': 'Блок'}, text_auto='.2s')
         fig_blocks.update_layout(yaxis={'categoryorder':'total ascending'}) 
         fig_blocks.update_traces(hovertemplate="<b>Блок:</b> %{y}<br><b>Сумма:</b> %{x:,.2f} ₽<extra></extra>", marker_color='#FFA15A')
