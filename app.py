@@ -28,11 +28,9 @@ engine = get_db_engine()
 
 # --- Функция загрузки и очистки Excel ---
 def process_excel(file):
-    # Читаем файл
     df = pd.read_excel(file)
     df.columns = df.columns.astype(str).str.strip()
     
-    # Нужные колонки из твоего нового файла
     cols_map = {
         'ШК': 'barcode',
         'Наименование блока': 'block_name',
@@ -50,16 +48,13 @@ def process_excel(file):
         
     df = df[existing_cols].rename(columns=cols_map)
     
-    # Превращаем суммы и количества в числа
     for col in ['loss_sum', 'loss_qty']:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    # Превращаем дату в правильный формат
     if 'loss_date' in df.columns:
         df['loss_date'] = pd.to_datetime(df['loss_date'], errors='coerce').dt.date
         
-    # Заполняем пустые текстовые блоки
     for col in ['block_name', 'reason']:
         if col in df.columns:
             df[col] = df[col].fillna("Не указано").astype(str)
@@ -88,9 +83,7 @@ with tab1:
                     st.error("Нет подключения к базе.")
                 else:
                     try:
-                        # Очищаем от строк, где нет даты (иначе база ругнется)
                         df_to_save = df_new.dropna(subset=['loss_date'])
-                        
                         df_to_save.to_sql('losses', engine, if_exists='append', index=False)
                         st.success(f"✅ Успешно загружено {len(df_to_save)} строк!")
                         st.cache_data.clear()
@@ -101,7 +94,7 @@ with tab1:
 
 # ================= ВКЛАДКА 2: АНАЛИТИКА =================
 with tab2:
-    st.header("Аналитика и фильтры")
+    st.header("Аналитика потерь")
     
     if engine is None:
         st.error("Нет подключения к базе данных.")
@@ -113,12 +106,10 @@ with tab2:
         with col_d2:
             end_date = st.date_input("Конец периода", value=date.today())
             
-        # 2. Выбор разреза
-        time_cut = st.radio("Разрез:", ["По дням", "По неделям", "По месяцам"], horizontal=True)
-        
         if start_date > end_date:
             st.error("Дата начала не может быть позже даты окончания.")
         else:
+            # Загружаем данные из базы
             query = f"""
                 SELECT * FROM losses 
                 WHERE loss_date >= '{start_date}' AND loss_date <= '{end_date}'
@@ -132,56 +123,100 @@ with tab2:
             if df.empty:
                 st.info("Нет данных за выбранный период. Загрузите файлы на первой вкладке.")
             else:
+                # Приводим типы данных в порядок
                 df['loss_date'] = pd.to_datetime(df['loss_date'])
+                df['reason'] = df['reason'].astype(str).str.strip()
                 
-                # Итоговые KPI
-                total_sum = df['loss_sum'].sum() if 'loss_sum' in df else 0
-                total_qty = df['loss_qty'].sum() if 'loss_qty' in df else 0
+                # ==========================================
+                # БЛОК 1: ОБЩИЕ СПИСАНИЯ ЗА ПЕРИОД
+                # ==========================================
+                total_sum = df['loss_sum'].sum()
+                total_qty = df['loss_qty'].sum()
                 
-                kpi1, kpi2 = st.columns(2)
-                kpi1.metric("ОБЩАЯ СУММА ПОТЕРЬ (₽)", f"{total_sum:,.0f} ₽".replace(",", " "))
-                kpi2.metric("КОЛИЧЕСТВО ПОТЕРЬ (шт)", f"{total_qty:,.0f}".replace(",", " "))
-                
-                st.markdown("---")
-                st.subheader(f"Динамика суммы потерь ({time_cut.lower()})")
-                
-                # 3. Группировка
-                if time_cut == "По дням":
-                    df_grouped = df.groupby('loss_date')['loss_sum'].sum().reset_index()
-                elif time_cut == "По неделям":
-                    df['period'] = df['loss_date'].dt.to_period('W').dt.start_time
-                    df_grouped = df.groupby('period')['loss_sum'].sum().reset_index()
-                    df_grouped.rename(columns={'period': 'loss_date'}, inplace=True)
-                else: # По месяцам
-                    df['period'] = df['loss_date'].dt.to_period('M').dt.start_time
-                    df_grouped = df.groupby('period')['loss_sum'].sum().reset_index()
-                    df_grouped.rename(columns={'period': 'loss_date'}, inplace=True)
-                
-                # 4. График
-                fig = px.line(
-                    df_grouped, x='loss_date', y='loss_sum', 
-                    labels={'loss_sum': 'Сумма потерь (₽)', 'loss_date': 'Дата'},
-                    markers=True
+                st.markdown("### Общие списания за период")
+                st.metric(
+                    label="Сумма", 
+                    value=f"{total_sum:,.2f} ₽".replace(",", " "),
+                    delta=f"{total_qty:,.0f} шт".replace(",", " "),
+                    delta_color="off"
                 )
-                st.plotly_chart(fig, use_container_width=True)
                 
-                st.markdown("---")
+                st.divider()
+
+                # ==========================================
+                # БЛОК 2: ВЫБОР ПОТОКА И ПРИЧИНЫ (LR)
+                # ==========================================
+                col_flow, col_lr = st.columns(2)
                 
-                # 5. Топ блоков и причин
-                col_b1, col_b2 = st.columns(2)
+                with col_flow:
+                    # Выбор потока
+                    flow = st.radio(
+                        "Выберите поток:", 
+                        ["Входящий поток", "Исходящий поток"], 
+                        horizontal=True
+                    )
                 
-                with col_b1:
-                    st.subheader("Топ блоков по сумме потерь")
-                    if 'block_name' in df:
-                        df_blocks = df.groupby('block_name')['loss_sum'].sum().reset_index()
-                        df_blocks = df_blocks.sort_values('loss_sum', ascending=False).head(10)
-                        df_blocks.columns = ['Блок', 'Сумма потерь (₽)']
-                        st.dataframe(df_blocks, use_container_width=True, hide_index=True)
-                        
-                with col_b2:
-                    st.subheader("Топ причин списания")
-                    if 'reason' in df:
-                        df_reasons = df.groupby('reason')['loss_sum'].sum().reset_index()
-                        df_reasons = df_reasons.sort_values('loss_sum', ascending=False).head(10)
-                        df_reasons.columns = ['Причина', 'Сумма потерь (₽)']
-                        st.dataframe(df_reasons, use_container_width=True, hide_index=True)
+                # Определяем доступные LR в зависимости от потока
+                if flow == "Входящий поток":
+                    available_lrs = ['36', '46', '47']
+                else:
+                    available_lrs = ['26', '5']
+                
+                with col_lr:
+                    # Выбор LR
+                    selected_lr = st.selectbox(
+                        f"Причина списания (LR) для {flow.lower()}:", 
+                        available_lrs
+                    )
+                
+                # Фильтруем данные по выбранному LR
+                df_filtered = df[df['reason'] == selected_lr]
+                
+                # ==========================================
+                # БЛОК 3: АНАЛИТИКА ПО ВЫБРАННОМУ LR
+                # ==========================================
+                if df_filtered.empty:
+                    st.warning(f"По причине (LR) {selected_lr} нет данных за выбранный период.")
+                else:
+                    lr_sum = df_filtered['loss_sum'].sum()
+                    lr_qty = df_filtered['loss_qty'].sum()
+                    
+                    st.markdown(f"#### Списания по причине (LR): {selected_lr}")
+                    st.metric(
+                        label="Сумма по выбранному LR", 
+                        value=f"{lr_sum:,.2f} ₽".replace(",", " "),
+                        delta=f"{lr_qty:,.0f} шт".replace(",", " "),
+                        delta_color="off"
+                    )
+                    
+                    st.markdown("---")
+                    
+                    # График динамики
+                    st.subheader("Динамика списаний")
+                    time_cut = st.radio("Разрез:", ["По дням", "По неделям", "По месяцам"], horizontal=True)
+                    
+                    if time_cut == "По дням":
+                        df_grouped = df_filtered.groupby('loss_date')['loss_sum'].sum().reset_index()
+                    elif time_cut == "По неделям":
+                        df_filtered['period'] = df_filtered['loss_date'].dt.to_period('W').dt.start_time
+                        df_grouped = df_filtered.groupby('period')['loss_sum'].sum().reset_index()
+                        df_grouped.rename(columns={'period': 'loss_date'}, inplace=True)
+                    else:
+                        df_filtered['period'] = df_filtered['loss_date'].dt.to_period('M').dt.start_time
+                        df_grouped = df_filtered.groupby('period')['loss_sum'].sum().reset_index()
+                        df_grouped.rename(columns={'period': 'loss_date'}, inplace=True)
+                    
+                    fig = px.line(
+                        df_grouped, x='loss_date', y='loss_sum', 
+                        labels={'loss_sum': 'Сумма потерь (₽)', 'loss_date': 'Дата'},
+                        markers=True
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                    # Таблица по блокам
+                    st.subheader("Сводка по блокам (для выбранного LR)")
+                    if 'block_name' in df_filtered:
+                        df_blocks = df_filtered.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
+                        df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
+                        df_blocks.columns = ['Блок', 'Сумма потерь (₽)', 'Кол-во (шт)']
+                        st.dataframe(df_blocks, use_container_width=True, hide_index=True, height=300)
