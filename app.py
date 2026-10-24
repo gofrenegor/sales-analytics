@@ -26,19 +26,14 @@ if 'selected_block' not in st.session_state: st.session_state.selected_block = N
 # ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ГРАДИЕНТА (Зеленый -> Красный)
 # ==========================================
 def get_gradient_colors(pct):
-    # Ограничиваем значение от 0 до 100
     pct = max(0.0, min(100.0, float(pct)))
-    
-    # Интерполяция цветов:
-    # 0% -> Зеленый (46, 125, 50)
-    # 100% -> Красный (255, 75, 75)
     r = int(46 + (255 - 46) * (pct / 100))
     g = int(125 + (75 - 125) * (pct / 100))
     b = int(50 + (75 - 50) * (pct / 100))
     
     text_color = f"rgb({r}, {g}, {b})"
-    bg_color = f"rgba({r}, {g}, {b}, 0.15)" # Полупрозрачный фон для чипа
-    border_color = f"rgba({r}, {g}, {b}, 0.4)" # Полупрозрачная рамка
+    bg_color = f"rgba({r}, {g}, {b}, 0.15)"
+    border_color = f"rgba({r}, {g}, {b}, 0.4)"
     
     return text_color, bg_color, border_color
 
@@ -108,7 +103,27 @@ elif st.session_state.view == 'flow':
         st.info("Нет данных по этому потоку за выбранный период.")
     else:
         flow_total_sum = df_flow['loss_sum'].sum()
-        st.markdown(f"**Общая сумма списаний по потоку:** `{flow_total_sum:,.2f} ₽`".replace(",", " "))
+        formatted_sum = f"{flow_total_sum:,.2f} ₽".replace(",", " ")
+        
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Выводим кастомный HTML для суммы потока ---
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; margin-top: 10px; margin-bottom: 20px;">
+            <span style="font-size: 16px; font-weight: 600; margin-right: 15px;">Общая сумма списаний по потоку:</span>
+            <span style="
+                background-color: rgba(0, 191, 255, 0.1);
+                color: #00BFFF;
+                border: 1.5px solid #00BFFF;
+                padding: 6px 16px;
+                border-radius: 20px;
+                font-size: 24px;
+                font-weight: 700;
+                font-family: monospace;
+            ">
+                {formatted_sum}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+        # -----------------------------------------------------------------
         
         df_blocks = df_flow.groupby('block_name')[['loss_sum', 'loss_qty']].sum().reset_index()
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
@@ -119,7 +134,6 @@ elif st.session_state.view == 'flow':
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
         
-        # Стили для рамок карточек
         st.markdown("""
         <style>
         div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
@@ -138,14 +152,12 @@ elif st.session_state.view == 'flow':
                 is_worst = (row['pct'] == max_pct)
                 color_key = "red" if is_worst else "blue"
                 
-                # Получаем цвета для чипа на основе процента потерь
                 text_color, bg_color, border_color = get_gradient_colors(row['pct'])
                 
                 with st.container(key=f"card-{color_key}-{i}", border=True):
                     st.markdown(f"**{row['block_name']}**")
                     st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
                     
-                    # Применяем динамический стиль (без использования старого класса chip-neutral)
                     chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {border_color}; padding: 6px 14px; border-radius: 20px; font-size: 16px; font-weight: 600; display: inline-block; margin-bottom: 10px;"
                     st.markdown(f"<div style='{chip_style}'>{pct_text} от потока</div>", unsafe_allow_html=True)
                     
