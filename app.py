@@ -93,36 +93,29 @@ st.title("📦 Аналитика списаний")
 # ==========================================
 date_mode = st.radio(
     "Выберите разрез:", 
-    ["Произвольный период", "Неделя", "Месяц"], 
+    ["День", "Неделя", "Месяц"], 
     horizontal=True
 )
 
 start_date, end_date = None, None
 prev_start_date, prev_end_date = None, None
 
-if date_mode == "Произвольный период":
-    col_d1, col_d2 = st.columns(2)
-    with col_d1:
-        start_date = st.date_input("Начало периода", value=date.today() - timedelta(days=30))
-    with col_d2:
-        end_date = st.date_input("Конец периода", value=date.today())
-        
-    if start_date > end_date:
-        st.error("Дата начала не может быть позже даты окончания.")
-        st.stop()
-        
-    duration = (end_date - start_date).days + 1
-    prev_end_date = start_date - timedelta(days=1)
-    prev_start_date = prev_end_date - timedelta(days=duration - 1)
+if date_mode == "День":
+    target_date = st.date_input("Выберите дату", value=date.today())
+    start_date = target_date
+    end_date = target_date
     
-    st.info(f"Сравнение: **{start_date.strftime('%d.%m.%Y')} - {end_date.strftime('%d.%m.%Y')}** (с прошлым периодом такой же длины)")
+    prev_start_date = target_date - timedelta(days=1)
+    prev_end_date = prev_start_date
+    
+    st.info(f"Выбран день: **{start_date.strftime('%d.%m.%Y')}**\n\n"
+            f"Сравнение с предыдущим днем: **{prev_start_date.strftime('%d.%m.%Y')}**")
 
 elif date_mode == "Неделя":
     target_date = st.date_input("Выберите любой день нужной недели", value=date.today())
-    # Находим понедельник этой недели
     start_date = target_date - timedelta(days=target_date.weekday())
     end_date = start_date + timedelta(days=6)
-    # Предыдущая неделя
+    
     prev_start_date = start_date - timedelta(days=7)
     prev_end_date = start_date - timedelta(days=1)
     
@@ -134,7 +127,7 @@ elif date_mode == "Месяц":
     start_date = target_date.replace(day=1)
     _, last_day = calendar.monthrange(target_date.year, target_date.month)
     end_date = target_date.replace(day=last_day)
-    # Предыдущий месяц
+    
     prev_start_date = (start_date - relativedelta(months=1)).replace(day=1)
     prev_end_date = start_date - timedelta(days=1)
     
