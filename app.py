@@ -31,8 +31,8 @@ def get_gradient_colors(pct):
     b = int(50 + (75 - 50) * (pct / 100))
     return f"rgb({r}, {g}, {b})", f"rgba({r}, {g}, {b}, 0.15)", f"rgba({r}, {g}, {b}, 0.4)"
 
-# ДОБАВЛЕН ПАРАМЕТР label_suffix
-def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_type=None, label_suffix="от потока"):
+# ИЗМЕНЕН ДЕФОЛТНЫЙ ПАРАМЕТР label_suffix
+def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_type=None, label_suffix="потерь потока"):
     max_pct = df_grouped['pct'].max()
     
     st.markdown("""
@@ -55,7 +55,6 @@ def render_cards(df_grouped, total_sum, next_view, button_key_prefix, detail_typ
                 st.markdown(f"### {row['loss_sum']:,.0f} ₽".replace(",", " "))
                 
                 chip_style = f"background-color: {bg_color}; color: {text_color}; border: 1px solid {border_color}; padding: 6px 14px; border-radius: 20px; font-size: 16px; font-weight: 600; display: inline-block; margin-bottom: 10px;"
-                # ИСПОЛЬЗУЕМ label_suffix
                 st.markdown(f"<div style='{chip_style}'>{pct_text} {label_suffix}</div>", unsafe_allow_html=True)
                 
                 if st.button(f"Подробнее", key=f"btn_{button_key_prefix}_{i}", use_container_width=True):
@@ -141,7 +140,7 @@ elif st.session_state.view == 'flow':
         df_blocks.columns = ['name', 'loss_sum']
         df_blocks['pct'] = (df_blocks['loss_sum'] / flow_total_sum) * 100 if flow_total_sum > 0 else 0
         df_blocks = df_blocks.sort_values('loss_sum', ascending=False)
-        # Здесь оставляем по умолчанию "от потока"
+        # Здесь используется дефолтный label_suffix="потерь потока"
         render_cards(df_blocks, flow_total_sum, next_view='group', button_key_prefix='flow_block')
 
 # ==========================================
@@ -178,7 +177,7 @@ elif st.session_state.view == 'group':
             df_sub.columns = ['name', 'loss_sum']
             df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
             df_sub = df_sub.sort_values('loss_sum', ascending=False)
-            # ИЗМЕНЕНО: label_suffix="от потерь блока"
+            # Здесь оставляем "от потерь блока"
             render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_stage', detail_type='stage', label_suffix="от потерь блока")
         else:
             st.markdown("### Выберите площадку для детализации:")
@@ -186,7 +185,7 @@ elif st.session_state.view == 'group':
             df_sub.columns = ['name', 'loss_sum']
             df_sub['pct'] = (df_sub['loss_sum'] / group_total_sum) * 100 if group_total_sum > 0 else 0
             df_sub = df_sub.sort_values('loss_sum', ascending=False)
-            # ИЗМЕНЕНО: label_suffix="от потерь блока"
+            # Здесь оставляем "от потерь блока"
             render_cards(df_sub, group_total_sum, next_view='block_detail', button_key_prefix='group_platform', detail_type='platform', label_suffix="от потерь блока")
 
 # ==========================================
