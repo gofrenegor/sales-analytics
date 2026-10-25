@@ -27,6 +27,13 @@ with st.expander("🔍 Проверка данных (что не распозн
     # Списания в блоке 6800 вне оперки — только для сверки, на расчёт не влияет
     chk = df_curr[df_curr['status_block_id'].astype(str).str.split('.').str[0].str.strip().eq('6800')
                   & (df_curr['block_group'] != 'Опер площадь')]
+    out_op = df_curr[df_curr['process_stage'].isin(utils.OPERKA_STAGES) & (df_curr['block_group'] != 'Опер площадь')
+                     & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
+    if not out_op.empty:
+        st.info("Сортировка / предсортировка / отгрузка вне блока 6800 (в оперку не попали, учтены в своих блоках). По «ID блока перед списанием»:")
+        ids = out_op['status_block_id'].astype(str).str.split('.').str[0].str.strip()
+        st.dataframe(out_op.groupby(ids)['loss_sum'].sum().sort_values(ascending=False).rename("Сумма (₽)").reset_index()
+                     .rename(columns={'status_block_id': 'ID блока'}), hide_index=True, use_container_width=True)
     lr_op = df_curr[df_curr['block_group'] == 'Опер площадь'].groupby('reason')['loss_sum'].sum().sort_values(ascending=False)
     if not lr_op.empty:
         st.info("LR внутри «Опер площадь». Если какой-то из них на деле сборка — добавьте его в ASSEMBLY_LR (utils.py):")
@@ -184,15 +191,18 @@ elif view == 'group':
     else:
         sum_badge("Общая сумма списаний по блоку:", dc['loss_sum'].sum())
         st.markdown("---")
-        st.markdown("### Выберите площадку для детализации:")
-        render_cards(build(dc, dp, 'block_name'), 'block_detail', 'group', "от блока")
+        by_stage = group == 'Опер площадь'
+        st.markdown("### Выберите этап для детализации:" if by_stage else "### Выберите площадку для детализации:")
+        render_cards(build(dc, dp, 'process_stage' if by_stage else 'block_name'), 'block_detail', 'group', "от блока")
 
 # ===== 4. ЭКРАН ПЛОЩАДКИ (детализация по LR) =====
 elif view == 'block_detail':
     back("⬅️ Назад к площадкам", 'group')
     flow, group, block = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group, st.session_state.selected_block
-    dc, dp = sl(df_curr, flow, group, block), sl(df_prev, flow, group, block)  # группа учитывается — суммы совпадают с карточкой
-    st.subheader(f"Площадка: {block} ({flow}, блок «{group}»)")
+    col = 'process_stage' if group == 'Опер площадь' else 'block_name'
+    dc, dp = sl(df_curr, flow, group), sl(df_prev, flow, group)
+    dc, dp = dc[dc[col] == block], dp[dp[col] == block]
+    st.subheader(f"{'Этап' if col == 'process_stage' else 'Площадка'}: {block} ({flow}, блок «{group}»)")
     delta = utils.get_delta_text(dc['loss_sum'].sum(), dc['loss_qty'].sum(), dp['loss_sum'].sum(), dp['loss_qty'].sum()) if has_prev else None
     st.metric("Сумма списаний по площадке", f"{dc['loss_sum'].sum():,.2f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
     st.markdown("---")
