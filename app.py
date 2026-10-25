@@ -27,6 +27,10 @@ with st.expander("🔍 Проверка данных (что не распозн
     # Списания в блоке 6800 вне оперки — только для сверки, на расчёт не влияет
     chk = df_curr[df_curr['status_block_id'].astype(str).str.split('.').str[0].str.strip().eq('6800')
                   & (df_curr['block_group'] != 'Опер площадь')]
+    lr_op = df_curr[df_curr['block_group'] == 'Опер площадь'].groupby('reason')['loss_sum'].sum().sort_values(ascending=False)
+    if not lr_op.empty:
+        st.info("LR внутри «Опер площадь». Если какой-то из них на деле сборка — добавьте его в ASSEMBLY_LR (utils.py):")
+        st.dataframe(lr_op.rename("Сумма (₽)").reset_index().rename(columns={'reason': 'LR'}), hide_index=True, use_container_width=True)
     if other_st.empty and unk_blocks.empty and chk.empty:
         st.success("Все статусы и блоки распознаны.")
     if not other_st.empty:
@@ -70,36 +74,30 @@ def build(dc, dp, key):
 
 
 def sum_badge(label, value):
-    st.markdown(f"""<div style="display:flex;align-items:center;margin:10px 0 20px 0;">
-    <span style="font-size:16px;font-weight:600;margin-right:15px;">{label}</span>
-    <span style="background-color:rgba(0,191,255,0.1);color:#00BFFF;border:1.5px solid #00BFFF;padding:6px 16px;
-    border-radius:20px;font-size:24px;font-weight:700;font-family:monospace;">{fmt_rub(value)}</span></div>""",
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="sub">{label}</div><div class="big-sum">{fmt_rub(value)}</div>', unsafe_allow_html=True)
 
 
 def render_cards(g, next_view, prefix, share_label):
-    """Рамка карточки: красная — потери выросли на 20% и больше, зелёная — снизились на 20% и больше."""
+    """Рамка: красная — потери выросли на 20% и больше, зелёная — снизились на 20% и больше."""
     cols = st.columns(4)
     for i, row in g.iterrows():
-        growth = (row['loss_sum'] - row['prev_sum']) / row['prev_sum'] * 100 if row['prev_sum'] > 0 else None
-        color = "blue"
-        if growth is not None and growth >= 20:
-            color = "red"
-        elif growth is not None and growth <= -20:
-            color = "green"
+        diff = row['loss_sum'] - row['prev_sum']
+        growth = diff / row['prev_sum'] * 100 if row['prev_sum'] > 0 else None
+        color = "red" if growth is not None and growth >= 20 else "green" if growth is not None and growth <= -20 else "plain"
+        chip = ""
+        if has_prev:
+            if growth is None:
+                chip = '<span class="chip chip-n">нет данных для сравнения</span>'
+            else:
+                cls, arrow = ("chip-r", "▲") if growth > 0 else ("chip-g", "▼") if growth < 0 else ("chip-n", "•")
+                chip = f'<span class="chip {cls}">{arrow} {abs(growth):.1f}% · {diff:+,.0f} ₽</span>'.replace(",", " ")
         pct_text = "< 0.1%" if 0 < row['pct'] < 0.1 else f"{row['pct']:.1f}%"
         with cols[i % 4]:
             with st.container(key=f"card-{color}-{prefix}-{i}", border=True):
-                st.markdown(f"**{row['name']}**")
-                st.markdown(f"### {fmt_rub(row['loss_sum'])}")
-                st.caption(f"{pct_text} {share_label}")
-                if has_prev:
-                    if growth is None:
-                        st.caption("к прошлому периоду: нет данных")
-                    else:
-                        arrow = "🔺" if growth > 0 else "🔻" if growth < 0 else "▫️"
-                        st.caption(f"{arrow} {growth:+.1f}% ({row['loss_sum'] - row['prev_sum']:+,.0f} ₽)".replace(",", " "))
-                if st.button("Подробнее", key=f"btn_{prefix}_{i}", use_container_width=True):
+                st.markdown(f'<div class="c-name">{row["name"]}</div><div class="c-sum">{fmt_rub(row["loss_sum"])}</div>{chip}'
+                            f'<div class="bar"><div style="width:{min(row["pct"], 100):.1f}%"></div></div>'
+                            f'<div class="c-share">{pct_text} {share_label}</div>', unsafe_allow_html=True)
+                if st.button("Открыть →", key=f"btn_{prefix}_{i}", use_container_width=True):
                     if next_view == 'group':
                         st.session_state.selected_group = row['name']
                     else:
@@ -122,6 +120,20 @@ if view == 'dashboard':
     delta = utils.get_delta_text(total, qty, df_prev['loss_sum'].sum(), df_prev['loss_qty'].sum()) if has_prev else None
     st.markdown("### Общие списания за период")
     st.metric("Сумма", f"{total:,.2f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
+    n_days = (end_date - start_date).days + 1
+    if n_days > 1:
+        def daily(d, s, last):
+            idx = pd.date_range(s, periods=n_days)
+            if d.empty:
+                return pd.Series(0.0, index=idx).where(idx <= pd.Timestamp(last)).values
+            v = d.groupby(d['loss_date'].dt.normalize())['loss_sum'].sum().reindex(idx, fill_value=0)
+            return v.where(idx <= pd.Timestamp(last)).values
+        trend = pd.DataFrame({"Текущий период": daily(df_curr, start_date, end_date)}, index=range(1, n_days + 1))
+        if has_prev:
+            trend["Прошлый период"] = daily(df_prev, prev_start, prev_end)
+        st.markdown("#### Динамика по дням")
+        st.line_chart(trend, height=220, color=["#4C9AFF", "#8b95a5"][:trend.shape[1]])
+        st.caption("По горизонтали — номер дня периода.")
     st.markdown("---")
     st.subheader("Разделение по потокам:")
 
