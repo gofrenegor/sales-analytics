@@ -16,21 +16,24 @@ if df_curr.empty and df_prev.empty:
     st.warning("⚠️ Нет данных за этот период.")
     st.stop()
 
+# Статусы вне потоков («Другое») временно исключены из итогов и экранов — показываются отдельной строкой
+other_curr, other_prev = df_curr[df_curr['flow'] == 'Другое'], df_prev[df_prev['flow'] == 'Другое']
+df_curr, df_prev = df_curr[df_curr['flow'] != 'Другое'], df_prev[df_prev['flow'] != 'Другое']
 has_prev = not df_prev.empty
 if not has_prev:
     st.caption("ℹ️ За период сравнения в базе данных нет — динамика не показывается.")
 
 # --- Проверка качества данных: что не распознано ---
 with st.expander("🔍 Проверка данных (что не распознано)"):
-    other_st = df_curr[df_curr['flow'] == 'Другое'].groupby('status_before')['loss_sum'].sum().sort_values(ascending=False)
-    unk_blocks = df_curr[(df_curr['block_group'] == 'Другое')].groupby('block_name')['loss_sum'].sum().sort_values(ascending=False)
+    other_st = other_curr.groupby('status_before')['loss_sum'].sum().sort_values(ascending=False)
+    unk_blocks = df_curr[df_curr['block_group'] == utils.FOREIGN_GROUP].groupby('block_name')['loss_sum'].sum().sort_values(ascending=False).head(15)
     # Списания в блоке 6800 вне оперки — только для сверки, на расчёт не влияет
     chk = df_curr[df_curr['status_block_id'].astype(str).str.split('.').str[0].str.strip().eq('6800')
                   & (df_curr['block_group'] != 'Опер площадь') & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
     out_op = df_curr[df_curr['status_before'].isin(utils.OPERKA_STATUSES) & (df_curr['block_group'] != 'Опер площадь')
                      & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
     if not out_op.empty:
-        st.info("Статусы оперки вне блока 6800 (в оперку не попали, учтены в своих блоках). По «ID блока перед списанием»:")
+        st.info("Статусы оперки вне блока 6800 — в оперку не попали (наши площадки учтены в своих блоках, остальные в «Другие логобъекты»). По «ID блока перед списанием»:")
         ids = out_op['status_block_id'].astype(str).str.split('.').str[0].str.strip()
         st.dataframe(out_op.groupby(ids)['loss_sum'].sum().sort_values(ascending=False).rename("Сумма (₽)").reset_index()
                      .rename(columns={'status_block_id': 'ID блока'}), hide_index=True, use_container_width=True)
@@ -41,10 +44,10 @@ with st.expander("🔍 Проверка данных (что не распозн
     if other_st.empty and unk_blocks.empty and chk.empty:
         st.success("Все статусы и блоки распознаны.")
     if not other_st.empty:
-        st.warning("Статусы вне потоков («Другое»):")
+        st.warning("Статусы вне потоков — временно исключены из итогов:")
         st.dataframe(other_st.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True)
     if not unk_blocks.empty:
-        st.warning("Блоки, которых нет в BLOCK_MAPPING (в группе «Другое»):")
+        st.warning("Блоки не из BLOCK_MAPPING (учтены в «Другие логобъекты»; топ-15). Если среди них наша площадка — добавьте её в BLOCK_MAPPING (utils.py):")
         st.dataframe(unk_blocks.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True)
     if not chk.empty:
         st.info(f"Для сверки: {len(chk)} строк с ID блока 6800 не попали в оперку (статусы: "
@@ -79,6 +82,14 @@ def build(dc, dp, key):
     total = g['loss_sum'].sum()
     g['pct'] = g['loss_sum'] / total * 100 if total > 0 else 0.0
     return g.sort_values('loss_sum', ascending=False).reset_index(drop=True)
+
+
+def ensure(g, names):
+    """Добавляет нулевые карточки для позиций, которых нет в данных, — структура видна всегда."""
+    miss = [n for n in names if n not in set(g['name'])]
+    if miss:
+        g = pd.concat([g, pd.DataFrame({'name': miss, 'loss_sum': 0.0, 'prev_sum': 0.0, 'pct': 0.0})], ignore_index=True)
+    return g.sort_values('loss_sum', ascending=False, kind='stable').reset_index(drop=True)
 
 
 def sum_badge(label, value):
@@ -162,10 +173,11 @@ if view == 'dashboard':
                       delta=flow_delta(name), delta_color="inverse")
     with c3:
         st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
-        st.metric("Прочие причины (Другое)", f"{sl(df_curr, 'Другое')['loss_sum'].sum():,.2f} ₽".replace(",", " "),
-                  delta=flow_delta('Другое'), delta_color="inverse")
-    if (df_curr['flow'] == 'Другое').any():
-        st.warning("⚠️ Часть списаний попала в «Другое» — см. «Проверку данных» выше.")
+        st.metric("Вне потоков (не входит в итог)", f"{other_curr['loss_sum'].sum():,.2f} ₽".replace(",", " "),
+                  delta=utils.get_delta_text(other_curr['loss_sum'].sum(), other_curr['loss_qty'].sum(), other_prev['loss_sum'].sum(),
+                                             other_prev['loss_qty'].sum()) if not other_prev.empty else None, delta_color="off")
+    if not other_curr.empty:
+        st.caption("ℹ️ Статусы вне потоков временно исключены из итогов — список в «Проверке данных» выше.")
 
 # ===== 2. ЭКРАН ПОТОКА =====
 elif view == 'flow':
@@ -173,16 +185,11 @@ elif view == 'flow':
     flow = FLOW_NAMES[st.session_state.selected_flow]
     st.subheader(f"Выбран: {flow}")
     dc, dp = sl(df_curr, flow), sl(df_prev, flow)
-    if dc.empty:
-        st.info("Нет данных по этому потоку за выбранный период.")
-    else:
-        sum_badge("Общая сумма списаний по потоку:", dc['loss_sum'].sum())
-        st.markdown("---")
-        st.markdown("### Выберите блок для детализации:")
-        g = build(dc, dp, 'block_group')
-        if flow == 'Исходящий поток' and 'Опер площадь' not in g['name'].values:  # оперка видна всегда, даже при нуле
-            g = pd.concat([g, pd.DataFrame([{'name': 'Опер площадь', 'loss_sum': 0.0, 'prev_sum': 0.0, 'pct': 0.0}])], ignore_index=True)
-        render_cards(g, 'group', 'flow', "от потока")
+    sum_badge("Общая сумма списаний по потоку:", dc['loss_sum'].sum())
+    st.markdown("---")
+    st.markdown("### Выберите блок для детализации:")
+    names = utils.ALL_BLOCKS + (['Опер площадь'] if flow == 'Исходящий поток' else []) + [utils.FOREIGN_GROUP]  # все блоки и оперка видны всегда
+    render_cards(ensure(build(dc, dp, 'block_group'), names), 'group', 'flow', "от потока")
 
 # ===== 3. ЭКРАН БЛОКА =====
 elif view == 'group':
@@ -190,23 +197,40 @@ elif view == 'group':
     flow, group = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group
     st.subheader(f"Блок: {group} ({flow})")
     dc, dp = sl(df_curr, flow, group), sl(df_prev, flow, group)
-    if dc.empty:
-        st.info("Нет данных по этому блоку.")
+    sum_badge("Общая сумма списаний по блоку:", dc['loss_sum'].sum())
+    st.markdown("---")
+    if group == 'Опер площадь':
+        st.markdown("### Выберите этап для детализации:")
+        render_cards(ensure(build(dc, dp, 'process_stage'), ['Сортировка', 'Предсортировка', 'Отгрузка']),
+                     'block_detail', 'group', "от блока")
+    elif group == utils.PICKMISS_GROUP:
+        st.markdown("### Выберите площадку для детализации:")
+        g_all = build(dc, dp, 'block_name')
+        known = set()
+        for bi, b in enumerate(utils.ALL_BLOCKS):  # все 4 блока с площадками — всегда, даже пустые
+            known |= set(utils.PLATFORMS[b])
+            st.markdown(f"#### {b}")
+            render_cards(ensure(g_all[g_all['name'].isin(utils.PLATFORMS[b])], utils.PLATFORMS[b]),
+                         'block_detail', f'group{bi}', "от блока")
+        rest = g_all[~g_all['name'].isin(known)]
+        if not rest.empty:
+            st.markdown("#### Другое")
+            render_cards(rest.reset_index(drop=True), 'block_detail', 'groupx', "от блока")
+    elif group == utils.FOREIGN_GROUP:
+        st.markdown("### Выберите статус для детализации:")
+        render_cards(build(dc, dp, 'status_before'), 'block_detail', 'group', "от блока")
     else:
-        sum_badge("Общая сумма списаний по блоку:", dc['loss_sum'].sum())
-        st.markdown("---")
-        by_stage = group == 'Опер площадь'
-        st.markdown("### Выберите этап для детализации:" if by_stage else "### Выберите площадку для детализации:")
-        render_cards(build(dc, dp, 'process_stage' if by_stage else 'block_name'), 'block_detail', 'group', "от блока")
+        st.markdown("### Выберите площадку для детализации:")
+        render_cards(ensure(build(dc, dp, 'block_name'), utils.PLATFORMS.get(group, [])), 'block_detail', 'group', "от блока")
 
 # ===== 4. ЭКРАН ПЛОЩАДКИ (детализация по LR) =====
 elif view == 'block_detail':
     back("⬅️ Назад к площадкам", 'group')
     flow, group, block = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group, st.session_state.selected_block
-    col = 'process_stage' if group == 'Опер площадь' else 'block_name'
+    col = 'process_stage' if group == 'Опер площадь' else 'status_before' if group == utils.FOREIGN_GROUP else 'block_name'
     dc, dp = sl(df_curr, flow, group), sl(df_prev, flow, group)
     dc, dp = dc[dc[col] == block], dp[dp[col] == block]
-    st.subheader(f"{'Этап' if col == 'process_stage' else 'Площадка'}: {block} ({flow}, блок «{group}»)")
+    st.subheader(f"{ {'process_stage': 'Этап', 'status_before': 'Статус'}.get(col, 'Площадка') }: {block} ({flow}, блок «{group}»)")
     delta = utils.get_delta_text(dc['loss_sum'].sum(), dc['loss_qty'].sum(), dp['loss_sum'].sum(), dp['loss_qty'].sum()) if has_prev else None
     st.metric("Сумма списаний по площадке", f"{dc['loss_sum'].sum():,.2f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
     st.markdown("---")
