@@ -23,6 +23,18 @@ def get_db_engine():
 engine = get_db_engine()
 
 
+@st.cache_resource
+def ensure_schema():
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE losses ADD COLUMN IF NOT EXISTS office_id TEXT"))
+    except Exception:
+        pass  # таблицы ещё нет — колонка появится при первой загрузке
+
+
+ensure_schema()
+
+
 def inject_css():
     st.markdown("""
     <style>
@@ -66,7 +78,7 @@ def process_excel(file):
     df.columns = df.columns.astype(str).str.strip()
     cols_map = {
         'ШК': 'barcode', 'Наименование блока': 'block_name', 'ID блока': 'block_id',
-        'ID блока перед списанием': 'status_block_id', 'ID сотрудника статуса перед списан': 'status_employee_id',
+        'ID блока перед списанием': 'status_block_id', 'ID офиса': 'office_id', 'ID сотрудника статуса перед списан': 'status_employee_id',
         'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
         'Дата первого списания': 'loss_date', 'Лостризон первого списания': 'reason',
         'Дата статуса перед списанием': 'status_before_date', 'Статус перед списанием': 'status_before'
@@ -84,6 +96,9 @@ def process_excel(file):
             df[col] = df[col].fillna("Не указано").astype(str).str.replace(r'\*', '', regex=True).str.strip()
             if col == 'reason':
                 df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
+    if 'office_id' in df.columns:
+        raw = df['office_id']
+        df['office_id'] = raw.astype(str).str.replace(r'\.0$', '', regex=True).str.strip().where(raw.notna(), None)
     return df
 
 
@@ -108,6 +123,9 @@ OPERKA_BLOCK_ID = '6800'
 PICKMISS_GROUP = 'Пропуск сборки товара на блоке'
 # Списания других логобъектов (блоков нет в BLOCK_MAPPING) — отдельная группа, внутри делятся по статусам
 FOREIGN_GROUP = 'Другие логобъекты'
+# Наш логобъект: блоки 6800–6826 и офис 301760. Всё, что вне этого, — другие ЛО.
+OWN_BLOCK_RANGE = (6800, 6826)
+OWN_OFFICE_ID = '301760'
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -128,22 +146,27 @@ ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
 PLATFORMS = {b: [n for n, v in BLOCK_MAPPING.items() if v == b] for b in ALL_BLOCKS}
 
 COLS = ['loss_date', 'barcode', 'block_name', 'status_block_id', 'loss_sum', 'loss_qty', 'reason',
-        'status_before_date', 'status_before', 'flow', 'process_stage', 'block_group']
+        'status_before_date', 'status_before', 'office_id', 'flow', 'process_stage', 'block_group']
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_data(start, end):
-    query = text("""
-        SELECT loss_date, barcode, block_name, status_block_id, loss_sum, loss_qty, reason,
-               status_before_date, status_before
-        FROM losses WHERE loss_date >= :start AND loss_date < :end
-    """)
+    base = ("loss_date, barcode, block_name, status_block_id, loss_sum, loss_qty, reason, "
+            "status_before_date, status_before")
     end_excl = (end + timedelta(days=1)).isoformat()
-    try:
-        df = pd.read_sql(query, engine, params={"start": start.isoformat(), "end": end_excl})
-    except Exception as e:
-        st.error(f"Не удалось получить данные из базы: {e}")
+    df, err = None, None
+    for cols in (base + ", office_id", base):  # если колонки office_id в базе ещё нет — читаем без неё
+        try:
+            df = pd.read_sql(text(f"SELECT {cols} FROM losses WHERE loss_date >= :start AND loss_date < :end"),
+                             engine, params={"start": start.isoformat(), "end": end_excl})
+            break
+        except Exception as e:
+            err = e
+    if df is None:
+        st.error(f"Не удалось получить данные из базы: {err}")
         return pd.DataFrame(columns=COLS)
+    if 'office_id' not in df.columns:
+        df['office_id'] = None
     if df.empty:
         return pd.DataFrame(columns=COLS)
 
@@ -163,8 +186,13 @@ def load_data(start, end):
     is_pickmiss = (b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR)
     is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
     # Правила идут по приоритету, срабатывает ПОСЛЕДНЕЕ в цепочке (сильнейшее): так они не конфликтуют.
-    # слабейшее: чужой логобъект -> наш блок по названию -> оперка -> пропуск сборки на 6800
-    df['block_group'] = own.fillna(FOREIGN_GROUP).mask(is_operka, 'Опер площадь').mask(is_pickmiss, PICKMISS_GROUP)
+    # слабейшее: нет в BLOCK_MAPPING -> наш блок по названию -> оперка -> пропуск сборки на 6800 -> чужой ЛО (по блоку/офису)
+    b_num = pd.to_numeric(b_id, errors='coerce')
+    off = df['office_id'].fillna('').astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
+    is_foreign = (b_num.notna() & ((b_num < OWN_BLOCK_RANGE[0]) | (b_num > OWN_BLOCK_RANGE[1]))) \
+                 | ((off != '') & (off.str.lower() != 'nan') & (off != OWN_OFFICE_ID))  # блок статуса вне 6800–6826 или офис не наш
+    df['block_group'] = (own.fillna(FOREIGN_GROUP).mask(is_operka, 'Опер площадь')
+                         .mask(is_pickmiss, PICKMISS_GROUP).mask(is_foreign, FOREIGN_GROUP))
     return df
 
 
