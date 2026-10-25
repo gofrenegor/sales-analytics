@@ -26,13 +26,28 @@ engine = get_db_engine()
 def inject_css():
     st.markdown("""
     <style>
-    .st-key-btn_inbound button { background-color: #2e7d32 !important; color: white !important; border: 1px solid #2e7d32 !important; }
-    .st-key-btn_inbound button:hover { background-color: #1b5e20 !important; }
-    .st-key-btn_outbound button { background-color: #1565c0 !important; color: white !important; border: 1px solid #1565c0 !important; }
-    .st-key-btn_outbound button:hover { background-color: #0d47a1 !important; }
-    div[class*="st-key-card-blue-"] { border: 1.5px solid #00BFFF !important; border-radius: 8px; }
-    div[class*="st-key-card-red-"] { border: 2px solid #FF4B4B !important; border-radius: 8px; box-shadow: 0 0 8px rgba(255,75,75,0.3); }
-    div[class*="st-key-card-green-"] { border: 1.5px solid #2e9d4f !important; border-radius: 8px; }
+    .block-container { padding-top: 2rem; max-width: 1400px; }
+    h1 { font-weight: 700; letter-spacing: -0.5px; }
+    div[data-testid="stMetricValue"] { font-weight: 700; }
+    div[class*="st-key-card-"] { border: 1px solid rgba(128,128,128,0.25) !important; border-radius: 12px !important; transition: border-color .15s; }
+    div[class*="st-key-card-"]:hover { border-color: rgba(128,128,128,0.6) !important; }
+    div[class*="st-key-card-red-"] { border-color: rgba(255,75,75,0.65) !important; }
+    div[class*="st-key-card-green-"] { border-color: rgba(46,157,79,0.65) !important; }
+    .c-name { font-size: 14px; opacity: .75; margin-bottom: 2px; }
+    .c-sum { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+    .chip { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 12px; }
+    .chip-r { background: rgba(255,75,75,.14); color: #ff6b6b; }
+    .chip-g { background: rgba(63,185,80,.14); color: #3fb950; }
+    .chip-n { background: rgba(128,128,128,.15); }
+    .bar { height: 4px; background: rgba(128,128,128,.2); border-radius: 2px; margin: 12px 0 4px; }
+    .bar div { height: 100%; background: #4C9AFF; border-radius: 2px; }
+    .c-share { font-size: 12px; opacity: .6; margin-bottom: 6px; }
+    .big-sum { font-size: 34px; font-weight: 700; margin: 2px 0 0; }
+    .sub { font-size: 14px; opacity: .65; }
+    .st-key-btn_inbound button { background: transparent !important; color: #3fb950 !important; border: 1.5px solid #3fb950 !important; font-weight: 600; letter-spacing: .5px; }
+    .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
+    .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
+    .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -85,6 +100,8 @@ STAGE_MAPPING = {
 }
 # Оперплощадь = списание после сортировки, предсортировки или отгрузки. Всё остальное — в блок.
 OPERKA_STAGES = ['Отгрузка', 'Предсортировка', 'Сортировка']
+# LR (лостризоны), которые относятся к сборке (мезонин): такие списания ВСЕГДА идут в блок, даже если статус из оперки.
+ASSEMBLY_LR = ['5']
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -132,7 +149,7 @@ def load_data(start, end):
     df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
 
     df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
-    df.loc[df['process_stage'].isin(OPERKA_STAGES), 'block_group'] = 'Опер площадь'
+    df.loc[df['process_stage'].isin(OPERKA_STAGES) & ~df['reason'].isin(ASSEMBLY_LR), 'block_group'] = 'Опер площадь'
     return df
 
 
