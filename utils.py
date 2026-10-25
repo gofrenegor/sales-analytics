@@ -102,6 +102,8 @@ STAGE_MAPPING = {
 OPERKA_STAGES = ['Отгрузка', 'Предсортировка', 'Сортировка']
 # LR (лостризоны), которые относятся к сборке (мезонин): такие списания ВСЕГДА идут в блок, даже если статус из оперки.
 ASSEMBLY_LR = ['5']
+# ID блока, где расположена оперплощадь (берётся из «ID блока перед списанием»)
+OPERKA_BLOCK_ID = '6800'
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -149,7 +151,10 @@ def load_data(start, end):
     df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
 
     df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
-    df.loc[df['process_stage'].isin(OPERKA_STAGES) & ~df['reason'].isin(ASSEMBLY_LR), 'block_group'] = 'Опер площадь'
+    b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
+    # Оперка = сортировка / предсортировка / отгрузка + блок 6800 + не сборка. Всё остальное — в обычные блоки.
+    is_operka = df['process_stage'].isin(OPERKA_STAGES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
+    df.loc[is_operka, 'block_group'] = 'Опер площадь'
     return df
 
 
