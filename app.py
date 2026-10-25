@@ -26,17 +26,25 @@ if not has_prev:
 # --- Проверка качества данных: что не распознано ---
 with st.expander("🔍 Проверка данных (что не распознано)"):
     other_st = other_curr.groupby('status_before')['loss_sum'].sum().sort_values(ascending=False)
-    unk_blocks = df_curr[df_curr['block_group'] == utils.FOREIGN_GROUP].groupby('block_name')['loss_sum'].sum().sort_values(ascending=False).head(15)
+    unk_blocks = df_curr[(df_curr['block_group'] == utils.FOREIGN_GROUP) & ~df_curr['block_name'].isin(utils.BLOCK_MAPPING)].groupby('block_name')['loss_sum'].sum().sort_values(ascending=False).head(15)
     # Списания в блоке 6800 вне оперки — только для сверки, на расчёт не влияет
     chk = df_curr[df_curr['status_block_id'].astype(str).str.split('.').str[0].str.strip().eq('6800')
                   & (df_curr['block_group'] != 'Опер площадь') & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
     out_op = df_curr[df_curr['status_before'].isin(utils.OPERKA_STATUSES) & (df_curr['block_group'] != 'Опер площадь')
                      & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
     if not out_op.empty:
-        st.info("Статусы оперки вне блока 6800 — в оперку не попали (наши площадки учтены в своих блоках, остальные в «Другие логобъекты»). По «ID блока перед списанием»:")
-        ids = out_op['status_block_id'].astype(str).str.split('.').str[0].str.strip()
-        st.dataframe(out_op.groupby(ids)['loss_sum'].sum().sort_values(ascending=False).rename("Сумма (₽)").reset_index()
-                     .rename(columns={'status_block_id': 'ID блока'}), hide_index=True, use_container_width=True)
+        st.info("Справка: списания со статусом оперки, у которых «ID блока перед списанием» не 6800. Они не потеряны — "
+                "входят в общие списания и показаны в группе из колонки «Куда попали».")
+        oid = out_op['status_block_id'].astype(str).str.split('.').str[0].str.strip().rename('ID блока')
+        tbl = out_op.groupby([oid, out_op['block_group'].rename('Куда попали')])['loss_sum'].sum().sort_values(ascending=False).head(15)
+        st.dataframe(tbl.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True)
+    fr = df_curr[df_curr['block_group'] == utils.FOREIGN_GROUP]
+    if not fr.empty:
+        st.info(f"«{utils.FOREIGN_GROUP}» — топ-15 по «ID блока перед списанием» (наши блоки: {utils.OWN_BLOCK_RANGE[0]}–{utils.OWN_BLOCK_RANGE[1]}, "
+                "диапазон меняется в utils.py, константа OWN_BLOCK_RANGE):")
+        fid = fr['status_block_id'].astype(str).str.split('.').str[0].str.strip().rename('ID блока')
+        st.dataframe(fr.groupby(fid)['loss_sum'].sum().sort_values(ascending=False).head(15).rename("Сумма (₽)").reset_index(),
+                     hide_index=True, use_container_width=True)
     lr_op = df_curr[df_curr['block_group'] == 'Опер площадь'].groupby('reason')['loss_sum'].sum().sort_values(ascending=False)
     if not lr_op.empty:
         st.info("LR внутри «Опер площадь». Если какой-то из них на деле сборка — добавьте его в ASSEMBLY_LR (utils.py):")
