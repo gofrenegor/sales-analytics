@@ -26,11 +26,11 @@ with st.expander("🔍 Проверка данных (что не распозн
     unk_blocks = df_curr[(df_curr['block_group'] == 'Другое')].groupby('block_name')['loss_sum'].sum().sort_values(ascending=False)
     # Списания в блоке 6800 вне оперки — только для сверки, на расчёт не влияет
     chk = df_curr[df_curr['status_block_id'].astype(str).str.split('.').str[0].str.strip().eq('6800')
-                  & (df_curr['block_group'] != 'Опер площадь')]
-    out_op = df_curr[df_curr['process_stage'].isin(utils.OPERKA_STAGES) & (df_curr['block_group'] != 'Опер площадь')
+                  & (df_curr['block_group'] != 'Опер площадь') & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
+    out_op = df_curr[df_curr['status_before'].isin(utils.OPERKA_STATUSES) & (df_curr['block_group'] != 'Опер площадь')
                      & ~df_curr['reason'].isin(utils.ASSEMBLY_LR)]
     if not out_op.empty:
-        st.info("Сортировка / предсортировка / отгрузка вне блока 6800 (в оперку не попали, учтены в своих блоках). По «ID блока перед списанием»:")
+        st.info("Статусы оперки вне блока 6800 (в оперку не попали, учтены в своих блоках). По «ID блока перед списанием»:")
         ids = out_op['status_block_id'].astype(str).str.split('.').str[0].str.strip()
         st.dataframe(out_op.groupby(ids)['loss_sum'].sum().sort_values(ascending=False).rename("Сумма (₽)").reset_index()
                      .rename(columns={'status_block_id': 'ID блока'}), hide_index=True, use_container_width=True)
@@ -71,12 +71,13 @@ def sl(df, flow=None, group=None, block=None):
 
 
 def build(dc, dp, key):
-    """Группировка по key: сумма, доля, сумма за прошлый период. Сортировка по убыванию суммы."""
-    g = dc.groupby(key)['loss_sum'].sum().reset_index().rename(columns={key: 'name'})
-    p = dp.groupby(key)['loss_sum'].sum().rename('prev_sum')
-    g = g.merge(p, left_on='name', right_index=True, how='left').fillna({'prev_sum': 0})
+    """Группировка по key: сумма, доля, сумма за прошлый период (включая позиции, где сейчас 0, а раньше были потери)."""
+    g = pd.concat([dc.groupby(key)['loss_sum'].sum().rename('loss_sum'),
+                   dp.groupby(key)['loss_sum'].sum().rename('prev_sum')], axis=1).fillna(0)
+    g.index.name = 'name'
+    g = g.reset_index()
     total = g['loss_sum'].sum()
-    g['pct'] = g['loss_sum'] / total * 100 if total > 0 else 0
+    g['pct'] = g['loss_sum'] / total * 100 if total > 0 else 0.0
     return g.sort_values('loss_sum', ascending=False).reset_index(drop=True)
 
 
@@ -94,7 +95,7 @@ def render_cards(g, next_view, prefix, share_label):
         chip = ""
         if has_prev:
             if growth is None:
-                chip = '<span class="chip chip-n">нет данных для сравнения</span>'
+                chip = f'<span class="chip chip-n">{"нет списаний" if row["loss_sum"] == 0 else "нет данных для сравнения"}</span>'
             else:
                 cls, arrow = ("chip-r", "▲") if growth > 0 else ("chip-g", "▼") if growth < 0 else ("chip-n", "•")
                 chip = f'<span class="chip {cls}">{arrow} {abs(growth):.1f}% · {diff:+,.0f} ₽</span>'.replace(",", " ")
@@ -178,7 +179,10 @@ elif view == 'flow':
         sum_badge("Общая сумма списаний по потоку:", dc['loss_sum'].sum())
         st.markdown("---")
         st.markdown("### Выберите блок для детализации:")
-        render_cards(build(dc, dp, 'block_group'), 'group', 'flow', "от потока")
+        g = build(dc, dp, 'block_group')
+        if flow == 'Исходящий поток' and 'Опер площадь' not in g['name'].values:  # оперка видна всегда, даже при нуле
+            g = pd.concat([g, pd.DataFrame([{'name': 'Опер площадь', 'loss_sum': 0.0, 'prev_sum': 0.0, 'pct': 0.0}])], ignore_index=True)
+        render_cards(g, 'group', 'flow', "от потока")
 
 # ===== 3. ЭКРАН БЛОКА =====
 elif view == 'group':
