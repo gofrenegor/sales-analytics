@@ -140,17 +140,27 @@ if view == 'dashboard':
     if n_days > 1:
         def daily(d, s, last, label):
             idx = pd.date_range(s, periods=n_days)
-            top = {}
+            top, top_lr, top_blk_lr = {}, {}, {}
             if d.empty:
                 sums = qty = pd.Series(0.0, index=idx)
             else:
-                day = d['loss_date'].dt.normalize()
+                day = d['loss_date'].dt.normalize().rename('day')
                 sums = d.groupby(day)['loss_sum'].sum().reindex(idx, fill_value=0)
                 qty = d.groupby(day)['loss_qty'].sum().reindex(idx, fill_value=0)
                 by_blk = d.groupby([day, d['block_group']])['loss_sum'].sum().sort_values(ascending=False)
-                top = {k[0]: f"{k[1]} · {fmt_rub(v)}" for k, v in by_blk.groupby(level=0).head(1).items()}
+                top_b = by_blk.groupby(level=0).head(1)
+                top = {k[0]: f"{k[1]} · {fmt_rub(v)}" for k, v in top_b.items()}
+                by_lr = d.groupby([day, d['reason']])['loss_sum'].sum().sort_values(ascending=False)
+                top_lr = {k[0]: f"LR {k[1]} · {fmt_rub(v)}" for k, v in by_lr.groupby(level=0).head(1).items()}
+                gl = d.groupby([day, d['block_group'], d['reason']])['loss_sum'].sum().reset_index()
+                gl = gl.merge(top_b.reset_index()[['day', 'block_group']], on=['day', 'block_group'])
+                gl = gl.sort_values('loss_sum', ascending=False).groupby('day').head(1)
+                top_blk_lr = {r.day: f"LR {r.reason} · {fmt_rub(r.loss_sum)}" for r in gl.itertuples()}
             out = pd.DataFrame({'Период': label, 'День': range(1, n_days + 1), 'Дата': [x.strftime('%d.%m.%Y') for x in idx],
-                                'Сумма': sums.values, 'Штуки': qty.values, 'Топ-1 блок': [top.get(x, '—') for x in idx]})
+                                'Топ-1 LR': [top_lr.get(x, '—') for x in idx],
+                                'Сумма': sums.values, 'Штуки': qty.values,
+                                'Топ-1 блок': [top.get(x, '—') for x in idx],
+                                'Топ-1 LR в блоке': [top_blk_lr.get(x, '—') for x in idx]})
             return out[idx <= pd.Timestamp(last)]
         parts = [daily(df_curr, start_date, end_date, 'Текущий период')]
         if has_prev:
@@ -161,10 +171,11 @@ if view == 'dashboard':
             y=alt.Y('Сумма:Q', title=None, axis=alt.Axis(format=',.0f')),
             color=alt.Color('Период:N', scale=alt.Scale(domain=['Текущий период', 'Прошлый период'], range=['#4C9AFF', '#8b95a5']),
                             legend=alt.Legend(orient='bottom', title=None)),
-            tooltip=[alt.Tooltip('Период:N'), alt.Tooltip('Дата:N'), alt.Tooltip('Сумма:Q', title='Сумма, ₽', format=',.0f'),
-                     alt.Tooltip('Штуки:Q', format=',.0f'), alt.Tooltip('Топ-1 блок:N')]
-        ).properties(height=308), use_container_width=True)
-        st.caption("По горизонтали — номер дня в периоде. Наведите курсор на точку: сумма, штуки и топ-1 блок за день.")
+            tooltip=[alt.Tooltip('Период:N'), alt.Tooltip('Дата:N'), alt.Tooltip('Топ-1 LR:N'),
+                     alt.Tooltip('Сумма:Q', title='Сумма, ₽', format=',.0f'), alt.Tooltip('Штуки:Q', format=',.0f'),
+                     alt.Tooltip('Топ-1 блок:N'), alt.Tooltip('Топ-1 LR в блоке:N')]
+        ).properties(height=462), use_container_width=True)
+        st.caption("По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока.")
     st.markdown("---")
     st.subheader("Разделение по потокам:")
 
