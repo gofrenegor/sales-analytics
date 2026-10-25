@@ -106,6 +106,8 @@ ASSEMBLY_LR = ['5']
 OPERKA_BLOCK_ID = '6800'
 # Пропуск сборки (LR из ASSEMBLY_LR) у товара, получившего статус на блоке 6800, — отдельная группа
 PICKMISS_GROUP = 'Пропуск сборки товара на блоке'
+# Списания других логобъектов (блоков нет в BLOCK_MAPPING) — отдельная группа, внутри делятся по статусам
+FOREIGN_GROUP = 'Другие логобъекты'
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -120,6 +122,10 @@ BLOCK_MAPPING = {
     "Рязань 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 4": "Рязань Тюшевское 4"
 }
+
+# Структура: 4 блока и их площадки (из BLOCK_MAPPING) — показываются всегда, даже без потерь
+ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
+PLATFORMS = {b: [n for n, v in BLOCK_MAPPING.items() if v == b] for b in ALL_BLOCKS}
 
 COLS = ['loss_date', 'barcode', 'block_name', 'status_block_id', 'loss_sum', 'loss_qty', 'reason',
         'status_before_date', 'status_before', 'flow', 'process_stage', 'block_group']
@@ -152,12 +158,13 @@ def load_data(start, end):
     df.loc[df['status_before'].isin(OUTBOUND_STATUSES), 'flow'] = 'Исходящий поток'
     df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
 
-    df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
+    own = df['block_name'].map(BLOCK_MAPPING)
     b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
-    # Оперка = статус из OPERKA_STATUSES + блок перед списанием 6800 + не сборка (LR). Всё остальное — в обычные блоки.
+    is_pickmiss = (b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR)
     is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
-    df.loc[is_operka, 'block_group'] = 'Опер площадь'
-    df.loc[(b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR), 'block_group'] = PICKMISS_GROUP
+    # Правила идут по приоритету, срабатывает ПОСЛЕДНЕЕ в цепочке (сильнейшее): так они не конфликтуют.
+    # слабейшее: чужой логобъект -> наш блок по названию -> оперка -> пропуск сборки на 6800
+    df['block_group'] = own.fillna(FOREIGN_GROUP).mask(is_operka, 'Опер площадь').mask(is_pickmiss, PICKMISS_GROUP)
     return df
 
 
