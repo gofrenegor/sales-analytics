@@ -1,10 +1,12 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 import utils
 
 st.set_page_config(page_title="Аналитика списаний", page_icon="📦", layout="wide")
 utils.inject_css()
 utils.render_admin_panel()
+MONEY = {"Сумма (₽)": st.column_config.NumberColumn(format="%.0f ₽")}  # рубли без копеек
 
 st.title("📦 Аналитика списаний")
 
@@ -33,15 +35,17 @@ with st.expander("🔍 Проверка данных (что не распозн
     lr_op = df_curr[df_curr['block_group'] == 'Опер площадь'].groupby('reason')['loss_sum'].sum().sort_values(ascending=False)
     if not lr_op.empty:
         st.info("LR внутри «Опер площадь». Если какой-то из них на деле сборка — добавьте его в ASSEMBLY_LR (utils.py):")
-        st.dataframe(lr_op.rename("Сумма (₽)").reset_index().rename(columns={'reason': 'LR'}), hide_index=True, use_container_width=True)
+        st.dataframe(lr_op.rename("Сумма (₽)").reset_index().rename(columns={'reason': 'LR'}), hide_index=True, use_container_width=True, column_config=MONEY)
     if other_st.empty and unk_blocks.empty and chk.empty:
         st.success("Все статусы и блоки распознаны.")
     if not other_st.empty:
         st.warning("Статусы вне потоков — временно исключены из итогов:")
-        st.dataframe(other_st.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True)
+        tbl = other_curr.groupby(['status_before', 'reason'])['loss_sum'].sum().sort_values(ascending=False).head(15)
+        st.dataframe(tbl.rename("Сумма (₽)").reset_index().rename(columns={'status_before': 'Статус', 'reason': 'LR'}),
+                     hide_index=True, use_container_width=True, column_config=MONEY)
     if not unk_blocks.empty:
         st.warning("Блоки нашего ЛО без маппинга (учтены в группе «Блоки вне маппинга»; топ-15). Добавьте их в BLOCK_MAPPING (utils.py):")
-        st.dataframe(unk_blocks.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True)
+        st.dataframe(unk_blocks.rename("Сумма (₽)").reset_index(), hide_index=True, use_container_width=True, column_config=MONEY)
     if not chk.empty:
         st.info(f"Для сверки: {len(chk)} строк с ID блока 6800 не попали в оперку (статусы: "
                 f"{', '.join(sorted(chk['status_before'].unique())[:10])}), сумма {chk['loss_sum'].sum():,.0f} ₽".replace(",", " "))
@@ -131,21 +135,36 @@ if view == 'dashboard':
     total, qty = df_curr['loss_sum'].sum(), df_curr['loss_qty'].sum()
     delta = utils.get_delta_text(total, qty, df_prev['loss_sum'].sum(), df_prev['loss_qty'].sum()) if has_prev else None
     st.markdown("### Общие списания за период")
-    st.metric("Сумма", f"{total:,.2f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
+    st.metric("Сумма", f"{total:,.0f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
     n_days = (end_date - start_date).days + 1
     if n_days > 1:
-        def daily(d, s, last):
+        def daily(d, s, last, label):
             idx = pd.date_range(s, periods=n_days)
+            top = {}
             if d.empty:
-                return pd.Series(0.0, index=idx).where(idx <= pd.Timestamp(last)).values
-            v = d.groupby(d['loss_date'].dt.normalize())['loss_sum'].sum().reindex(idx, fill_value=0)
-            return v.where(idx <= pd.Timestamp(last)).values
-        trend = pd.DataFrame({"Текущий период": daily(df_curr, start_date, end_date)}, index=range(1, n_days + 1))
+                sums = qty = pd.Series(0.0, index=idx)
+            else:
+                day = d['loss_date'].dt.normalize()
+                sums = d.groupby(day)['loss_sum'].sum().reindex(idx, fill_value=0)
+                qty = d.groupby(day)['loss_qty'].sum().reindex(idx, fill_value=0)
+                by_blk = d.groupby([day, d['block_group']])['loss_sum'].sum().sort_values(ascending=False)
+                top = {k[0]: f"{k[1]} · {fmt_rub(v)}" for k, v in by_blk.groupby(level=0).head(1).items()}
+            out = pd.DataFrame({'Период': label, 'День': range(1, n_days + 1), 'Дата': [x.strftime('%d.%m.%Y') for x in idx],
+                                'Сумма': sums.values, 'Штуки': qty.values, 'Топ-1 блок': [top.get(x, '—') for x in idx]})
+            return out[idx <= pd.Timestamp(last)]
+        parts = [daily(df_curr, start_date, end_date, 'Текущий период')]
         if has_prev:
-            trend["Прошлый период"] = daily(df_prev, prev_start, prev_end)
+            parts.append(daily(df_prev, prev_start, prev_end, 'Прошлый период'))
         st.markdown("#### Динамика по дням")
-        st.line_chart(trend, height=220, color=["#4C9AFF", "#8b95a5"][:trend.shape[1]])
-        st.caption("По горизонтали — номер дня периода.")
+        st.altair_chart(alt.Chart(pd.concat(parts)).mark_line(point=alt.OverlayMarkDef(size=70)).encode(
+            x=alt.X('День:Q', title=None, axis=alt.Axis(tickMinStep=1, grid=False)),
+            y=alt.Y('Сумма:Q', title=None, axis=alt.Axis(format=',.0f')),
+            color=alt.Color('Период:N', scale=alt.Scale(domain=['Текущий период', 'Прошлый период'], range=['#4C9AFF', '#8b95a5']),
+                            legend=alt.Legend(orient='bottom', title=None)),
+            tooltip=[alt.Tooltip('Период:N'), alt.Tooltip('Дата:N'), alt.Tooltip('Сумма:Q', title='Сумма, ₽', format=',.0f'),
+                     alt.Tooltip('Штуки:Q', format=',.0f'), alt.Tooltip('Топ-1 блок:N')]
+        ).properties(height=308), use_container_width=True)
+        st.caption("По горизонтали — номер дня в периоде. Наведите курсор на точку: сумма, штуки и топ-1 блок за день.")
     st.markdown("---")
     st.subheader("Разделение по потокам:")
 
@@ -162,11 +181,11 @@ if view == 'dashboard':
             if st.button(label, use_container_width=True, key=key):
                 st.session_state.selected_flow, st.session_state.view = code, 'flow'
                 st.rerun()
-            st.metric(f"Сумма: {name.lower()}", f"{sl(df_curr, name)['loss_sum'].sum():,.2f} ₽".replace(",", " "),
+            st.metric(f"Сумма: {name.lower()}", f"{sl(df_curr, name)['loss_sum'].sum():,.0f} ₽".replace(",", " "),
                       delta=flow_delta(name), delta_color="inverse")
     with c3:
         st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
-        st.metric("Вне потоков (не входит в итог)", f"{other_curr['loss_sum'].sum():,.2f} ₽".replace(",", " "),
+        st.metric("Вне потоков (не входит в итог)", f"{other_curr['loss_sum'].sum():,.0f} ₽".replace(",", " "),
                   delta=utils.get_delta_text(other_curr['loss_sum'].sum(), other_curr['loss_qty'].sum(), other_prev['loss_sum'].sum(),
                                              other_prev['loss_qty'].sum()) if not other_prev.empty else None, delta_color="off")
     if not other_curr.empty:
@@ -225,12 +244,15 @@ elif view == 'block_detail':
     dc, dp = dc[dc[col] == block], dp[dp[col] == block]
     st.subheader(f"{ {'process_stage': 'Этап', 'status_before': 'Статус'}.get(col, 'Площадка') }: {block} ({flow}, блок «{group}»)")
     delta = utils.get_delta_text(dc['loss_sum'].sum(), dc['loss_qty'].sum(), dp['loss_sum'].sum(), dp['loss_qty'].sum()) if has_prev else None
-    st.metric("Сумма списаний по площадке", f"{dc['loss_sum'].sum():,.2f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
+    st.metric("Сумма списаний по площадке", f"{dc['loss_sum'].sum():,.0f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
     st.markdown("---")
+    oc = other_curr[(other_curr['block_group'] == group) & (other_curr[col] == block)]
+    if not oc.empty:
+        st.caption(f"ℹ️ Не включено: {fmt_rub(oc['loss_sum'].sum())} со статусами вне потоков (какие именно — в «Проверке данных» вверху страницы).")
     st.markdown("#### Детализация по причинам (LR)")
     lr = dc.groupby('reason')[['loss_sum', 'loss_qty']].sum().reset_index()
     lr['Доля'] = lr['loss_sum'] / lr['loss_sum'].sum() * 100 if lr['loss_sum'].sum() > 0 else 0
     lr = lr.sort_values('loss_sum', ascending=False)
     lr.columns = ['Причина (LR)', 'Сумма (₽)', 'Кол-во (шт)', 'Доля (%)']
     st.dataframe(lr, use_container_width=True, hide_index=True,
-                 column_config={"Доля (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100)})
+                 column_config={**MONEY, "Доля (%)": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100)})
