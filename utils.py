@@ -99,11 +99,13 @@ STAGE_MAPPING = {
     'LAM': 'Пропуски сборки'
 }
 # Оперплощадь = списание после сортировки, предсортировки или отгрузки. Всё остальное — в блок.
-OPERKA_STAGES = ['Отгрузка', 'Предсортировка', 'Сортировка']
+OPERKA_STATUSES = ['SMC', 'SPS', 'SAS', 'SAP', 'PAP', 'LSS', 'GWS', 'WMI']
 # LR (лостризоны), которые относятся к сборке (мезонин): такие списания ВСЕГДА идут в блок, даже если статус из оперки.
 ASSEMBLY_LR = ['5']
 # ID блока, где расположена оперплощадь (берётся из «ID блока перед списанием»)
 OPERKA_BLOCK_ID = '6800'
+# Пропуск сборки (LR из ASSEMBLY_LR) у товара, получившего статус на блоке 6800, — отдельная группа
+PICKMISS_GROUP = 'Пропуск сборки товара на блоке'
 
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
@@ -152,9 +154,10 @@ def load_data(start, end):
 
     df['block_group'] = df['block_name'].map(BLOCK_MAPPING).fillna('Другое')
     b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
-    # Оперка = сортировка / предсортировка / отгрузка + блок 6800 + не сборка. Всё остальное — в обычные блоки.
-    is_operka = df['process_stage'].isin(OPERKA_STAGES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
+    # Оперка = статус из OPERKA_STATUSES + блок перед списанием 6800 + не сборка (LR). Всё остальное — в обычные блоки.
+    is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
     df.loc[is_operka, 'block_group'] = 'Опер площадь'
+    df.loc[(b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR), 'block_group'] = PICKMISS_GROUP
     return df
 
 
