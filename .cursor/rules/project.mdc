@@ -1,0 +1,7 @@
+---
+description: Project rules for sales-analytics
+alwaysApply: true
+---
+- This is a Streamlit Python project.
+- Always push changes directly to the `main` branch. 
+- Never create a Pull Request (PR).
