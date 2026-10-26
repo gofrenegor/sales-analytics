@@ -210,28 +210,54 @@ def get_delta_text(curr_sum, curr_qty, prev_sum, prev_qty):
     return f"{sign}{diff_sum:,.0f} ₽{pct} / {sign_q}{diff_qty:,.0f} шт".replace(",", " ")
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def get_max_loss_date():
+    """Последняя дата списания в базе — для стартового периода при первом заходе."""
+    if engine is None:
+        return None
+    try:
+        with engine.connect() as conn:
+            max_date = conn.execute(text("SELECT MAX(loss_date) FROM losses")).scalar()
+        if max_date is None:
+            return None
+        return pd.Timestamp(max_date).date()
+    except Exception:
+        return None
+
+
+def _init_date_selector_defaults():
+    if st.session_state.get("_date_selector_initialized"):
+        return
+    latest = get_max_loss_date()
+    st.session_state.date_mode = "Месяц"
+    st.session_state.date_anchor = latest or date.today()
+    st.session_state._date_selector_initialized = True
+
+
 def render_date_selector():
     """Возвращает: начало, конец, начало и конец периода сравнения.
-    Неделя и месяц сравниваются по одинаковому числу дней (текущий период обрезается по сегодняшнюю дату)."""
-    mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True)
+    Неделя и месяц сравниваются по одинаковому числу дней (текущий период обрезается по сегодняшнюю дату).
+    При первом заходе: разрез «Месяц» и дата последней выгрузки в базе."""
+    _init_date_selector_defaults()
     today = date.today()
     fmt = lambda d: d.strftime('%d.%m.%Y')
+    mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True, key="date_mode")
 
     if mode == "День":
-        t = st.date_input("Выберите дату", value=today)
+        t = st.date_input("Выберите дату", key="date_anchor")
         start, end = t, t
         p_start = p_end = t - timedelta(days=1)
         st.info(f"Выбран день: **{fmt(start)}** | Сравнение: **{fmt(p_start)}**")
         return start, end, p_start, p_end
 
     if mode == "Неделя":
-        t = st.date_input("Выберите любой день нужной недели", value=today)
+        t = st.date_input("Выберите любой день нужной недели", key="date_anchor")
         start = t - timedelta(days=t.weekday())
         end = min(start + timedelta(days=6), today)
         p_start = start - timedelta(days=7)
         p_end = p_start + (end - start)
     else:
-        t = st.date_input("Выберите любой день нужного месяца", value=today)
+        t = st.date_input("Выберите любой день нужного месяца", key="date_anchor")
         start = t.replace(day=1)
         end = min(t.replace(day=calendar.monthrange(t.year, t.month)[1]), today)
         p_start = start - relativedelta(months=1)
