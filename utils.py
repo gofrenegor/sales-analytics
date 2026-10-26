@@ -60,6 +60,29 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
+    /* Vega/Altair tooltip («Динамика по дням»): ~2× default (11px / 8px padding) */
+    #vg-tooltip-element {
+        font-size: 22px !important;
+        padding: 16px !important;
+        border-radius: 6px !important;
+        line-height: 1.45 !important;
+    }
+    #vg-tooltip-element h2 {
+        font-size: 26px !important;
+        margin-bottom: 20px !important;
+    }
+    #vg-tooltip-element table tr td {
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+    }
+    #vg-tooltip-element table tr td.key {
+        max-width: 300px !important;
+        padding-right: 8px !important;
+    }
+    #vg-tooltip-element table tr td.value {
+        max-width: 600px !important;
+        max-height: 14em !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
