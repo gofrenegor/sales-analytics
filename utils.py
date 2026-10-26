@@ -140,10 +140,11 @@ INBOUND_LR = '27'
 OPERKA_BLOCK_ID = '6800'
 # Пропуск сборки (LR из ASSEMBLY_LR) у товара, получившего статус на блоке 6800, — отдельная группа
 PICKMISS_GROUP = 'Пропуск сборки товара на блоке'
-# Списания других логобъектов (блоков нет в BLOCK_MAPPING) — отдельная группа, внутри делятся по статусам
+# Списания других логобъектов — отдельная группа, внутри делятся по статусам
 FOREIGN_GROUP = 'Другие логобъекты'
 UNMAPPED_GROUP = 'Блоки вне маппинга'  # наше списание, но названия блока нет в BLOCK_MAPPING
-# Наш логобъект: блоки 6800–6826 (по «ID блока» МЕСТА списания) и офис 301760. Списание на другом ЛО — в группу «Другие логобъекты».
+# Наш логобъект: блоки 6800–6826 (по «ID блока» МЕСТА списания) и офис 301760.
+# «Другие логобъекты» — только если И блок, И офис не наши (списание упало целиком не на нас).
 OWN_BLOCK_RANGE = (6800, 6826)
 OWN_OFFICE_ID = '301760'
 
@@ -215,14 +216,17 @@ def load_data(start, end):
     is_operka = (df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID)
                  & ~df['reason'].isin(ASSEMBLY_LR) & ~is_inbound_lr)
     # Правила идут по приоритету, срабатывает ПОСЛЕДНЕЕ в цепочке (сильнейшее): так они не конфликтуют.
-    # слабейшее: блок вне маппинга -> наш блок по названию -> оперка -> пропуск сборки на 6800 -> чужой ЛО (по блоку/офису)
-    # Чужой ЛО определяется по МЕСТУ списания, а не по тому, где был последний статус:
-    # блок списания вне 6800–6826 или офис не наш. Если места списания в данных нет — судим по названию блока.
+    # слабейшее: блок вне маппинга -> наш блок по названию -> оперка -> пропуск сборки на 6800 -> чужой ЛО
+    # Чужой ЛО определяется по МЕСТУ списания, а не по тому, где был последний статус.
+    # Списание чужое, только если И блок списания, И офис не наши: наш блок (6800–6826) или наш офис (301760) — списание наше.
+    # Если одного из значений в данных нет, оно «нашим» не считается; если нет обоих — судим по названию блока.
     loss_blk = pd.to_numeric(df['block_id'].astype(str).str.split('.').str[0], errors='coerce')
     off = df['office_id'].fillna('').astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
-    foreign_blk = loss_blk.notna() & ((loss_blk < OWN_BLOCK_RANGE[0]) | (loss_blk > OWN_BLOCK_RANGE[1]))
-    foreign_off = (off != '') & (off.str.lower() != 'nan') & (off != OWN_OFFICE_ID)
-    is_foreign = foreign_blk | foreign_off | (loss_blk.isna() & (off == '') & own.isna())
+    blk_known = loss_blk.notna()
+    off_known = (off != '') & (off.str.lower() != 'nan')
+    blk_ours = blk_known & (loss_blk >= OWN_BLOCK_RANGE[0]) & (loss_blk <= OWN_BLOCK_RANGE[1])
+    off_ours = off == OWN_OFFICE_ID
+    is_foreign = ~blk_ours & ~off_ours & (blk_known | off_known | own.isna())
     df['block_group'] = (own.fillna(UNMAPPED_GROUP).mask(is_operka, 'Опер площадь')
                          .mask(is_pickmiss, PICKMISS_GROUP).mask(is_foreign, FOREIGN_GROUP))
     return df
