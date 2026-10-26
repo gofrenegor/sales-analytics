@@ -129,7 +129,7 @@ def back(label, target):
 
 
 def open_flow(code):
-    """Кружок потока на диаграмме ведёт на выбор блоков этого потока."""
+    """Строка потока на главной ведёт на выбор блоков этого потока."""
     st.session_state.selected_flow = code
     st.session_state.selected_group = None
     st.session_state.selected_block = None
@@ -144,8 +144,8 @@ def render_flow_hero(in_sum, out_sum):
         st.markdown(utils.build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)), unsafe_allow_html=True)
     with side:
         for code, title, amount, key in (
-            ("in", "Вход", in_sum, "pick_in"),
-            ("out", "Исход", out_sum, "pick_out"),
+            ("in", "входящий поток", in_sum, "pick_in"),
+            ("out", "исходящий поток", out_sum, "pick_out"),
         ):
             help_text = "Открыть блоки входящего потока" if code == "in" else "Открыть блоки исходящего потока"
             if st.button(f"{title}  **{fmt_rub(amount)}**", key=key, width="stretch", help=help_text):

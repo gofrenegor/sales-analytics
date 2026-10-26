@@ -63,9 +63,9 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
-    .loss-figure { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
-    .loss-figure svg { width: min(100%, 420px); height: auto; overflow: visible; display: block; }
-    .loss-pct { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1; min-width: 4.6em; font-variant-numeric: tabular-nums; }
+    .loss-figure { display: flex; align-items: center; justify-content: center; gap: 2px; width: 100%; }
+    .loss-figure svg { width: min(100%, 420px); height: auto; overflow: visible; display: block; flex: 0 1 auto; }
+    .loss-pct { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1; min-width: 3.4em; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
     .loss-pct-in { text-align: right; color: light-dark(#2A36C0, #A8B0FF); }
     .loss-pct-out { text-align: left; color: light-dark(#9E1028, #FF8B9A); }
     .st-key-pick_in button,
@@ -74,61 +74,39 @@ def inject_css():
         display: flex !important;
         align-items: center !important;
         justify-content: flex-start !important;
-        min-height: 112px !important;
-        padding: 16px 58px 16px 124px !important;
-        border-radius: 24px !important;
-        border: 1px solid transparent !important;
+        min-height: 72px !important;
+        padding: 14px 44px 14px 18px !important;
+        border-radius: 16px !important;
+        border: 1px solid rgba(128,128,128,0.22) !important;
         background: transparent !important;
         box-shadow: none !important;
         color: inherit !important;
         transition: background .16s ease, border-color .16s ease !important;
     }
     .st-key-pick_in button:hover {
-        background: rgba(68, 83, 232, 0.10) !important;
-        border-color: rgba(68, 83, 232, 0.55) !important;
+        background: rgba(63, 185, 80, 0.14) !important;
+        border-color: rgba(63, 185, 80, 0.55) !important;
     }
     .st-key-pick_out button:hover {
-        background: rgba(196, 22, 52, 0.12) !important;
-        border-color: rgba(196, 22, 52, 0.55) !important;
+        background: rgba(76, 154, 255, 0.14) !important;
+        border-color: rgba(76, 154, 255, 0.55) !important;
     }
     .st-key-pick_in button:focus, .st-key-pick_out button:focus { box-shadow: none !important; }
-    .st-key-pick_in button:focus-visible { outline: 2px solid #4453E8 !important; outline-offset: 3px !important; }
-    .st-key-pick_out button:focus-visible { outline: 2px solid #C41634 !important; outline-offset: 3px !important; }
-    .st-key-pick_in button::before,
-    .st-key-pick_out button::before {
-        content: "";
-        position: absolute;
-        left: 16px;
-        top: 50%;
-        width: 86px;
-        height: 86px;
-        transform: translateY(-50%);
-        border-radius: 50%;
-        transition: transform .16s ease;
-    }
-    .st-key-pick_in button:hover::before,
-    .st-key-pick_out button:hover::before { transform: translateY(-50%) scale(1.06); }
-    .st-key-pick_in button::before {
-        background: radial-gradient(circle at 34% 30%, #9aa6ff 0%, #4453E8 52%, #241e86 100%);
-        box-shadow: 0 12px 26px rgba(68, 83, 232, 0.42), inset 0 1px 0 rgba(255,255,255,.38);
-    }
-    .st-key-pick_out button::before {
-        background: radial-gradient(circle at 34% 30%, #ff7386 0%, #C41634 50%, #6e0a18 100%);
-        box-shadow: 0 12px 26px rgba(196, 22, 52, 0.42), inset 0 1px 0 rgba(255,255,255,.32);
-    }
+    .st-key-pick_in button:focus-visible { outline: 2px solid #3fb950 !important; outline-offset: 3px !important; }
+    .st-key-pick_out button:focus-visible { outline: 2px solid #4C9AFF !important; outline-offset: 3px !important; }
     .st-key-pick_in button::after,
     .st-key-pick_out button::after {
         content: "→";
         position: absolute;
-        right: 20px;
+        right: 16px;
         top: 50%;
         transform: translateY(-50%);
-        font-size: 22px;
+        font-size: 20px;
         font-weight: 600;
-        opacity: .55;
+        opacity: .45;
     }
-    .st-key-pick_in button::after { color: #8D98FF; }
-    .st-key-pick_out button::after { color: #FF7A8C; }
+    .st-key-pick_in button::after { color: #3fb950; }
+    .st-key-pick_out button::after { color: #4C9AFF; }
     .st-key-pick_in button:hover::after,
     .st-key-pick_out button:hover::after { opacity: 1; }
     .st-key-pick_in button p,
@@ -136,22 +114,23 @@ def inject_css():
         margin: 0 !important;
         width: 100%;
         display: flex !important;
+        flex-wrap: wrap !important;
         align-items: baseline !important;
         justify-content: space-between !important;
-        gap: 16px !important;
-        font-size: 20px !important;
+        gap: 8px 16px !important;
+        font-size: 17px !important;
         font-weight: 600 !important;
-        line-height: 1.1 !important;
+        line-height: 1.25 !important;
         text-align: left !important;
         color: inherit !important;
-        white-space: nowrap !important;
     }
     .st-key-pick_in button strong,
     .st-key-pick_out button strong {
-        font-size: 28px !important;
+        font-size: 26px !important;
         font-weight: 700 !important;
         letter-spacing: -0.5px !important;
         font-variant-numeric: tabular-nums;
+        margin-left: auto !important;
     }
     .st-key-pick_out { margin-top: 8px !important; }
     /* Vega/Altair tooltip («Динамика по дням»): −24% от прежних 22px / 16px padding */
