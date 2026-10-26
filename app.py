@@ -166,6 +166,8 @@ if view == 'dashboard':
         if has_prev:
             parts.append(daily(df_prev, prev_start, prev_end, 'Прошлый период'))
         st.markdown("#### Динамика по дням")
+        hoverlabel = dict(font_size=17, padding=12)  # −24% от 22px / 16px
+        utils.inject_daily_dynamics_tooltip_css(hoverlabel)
         st.altair_chart(alt.Chart(pd.concat(parts)).mark_line(point=alt.OverlayMarkDef(size=70)).encode(
             x=alt.X('День:Q', title=None, axis=alt.Axis(tickMinStep=1, grid=False)),
             y=alt.Y('Сумма:Q', title=None, axis=alt.Axis(format=',.0f')),

@@ -60,29 +60,42 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
-    /* Vega/Altair tooltip («Динамика по дням»): ~2× default (11px / 8px padding) */
-    #vg-tooltip-element {
-        font-size: 22px !important;
-        padding: 16px !important;
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def inject_daily_dynamics_tooltip_css(hoverlabel):
+    """Vega/Altair tooltip для графика «Динамика по дням» (font_size, padding в hoverlabel)."""
+    fs, pad = hoverlabel["font_size"], hoverlabel["padding"]
+    scale = fs / 22
+    h2 = round(26 * scale)
+    mb = round(20 * scale)
+    cell_pad = max(1, round(4 * scale))
+    key_pad = max(1, round(8 * scale))
+    st.markdown(f"""
+    <style>
+    #vg-tooltip-element {{
+        font-size: {fs}px !important;
+        padding: {pad}px !important;
         border-radius: 6px !important;
         line-height: 1.45 !important;
-    }
-    #vg-tooltip-element h2 {
-        font-size: 26px !important;
-        margin-bottom: 20px !important;
-    }
-    #vg-tooltip-element table tr td {
-        padding-top: 4px !important;
-        padding-bottom: 4px !important;
-    }
-    #vg-tooltip-element table tr td.key {
+    }}
+    #vg-tooltip-element h2 {{
+        font-size: {h2}px !important;
+        margin-bottom: {mb}px !important;
+    }}
+    #vg-tooltip-element table tr td {{
+        padding-top: {cell_pad}px !important;
+        padding-bottom: {cell_pad}px !important;
+    }}
+    #vg-tooltip-element table tr td.key {{
         max-width: 300px !important;
-        padding-right: 8px !important;
-    }
-    #vg-tooltip-element table tr td.value {
+        padding-right: {key_pad}px !important;
+    }}
+    #vg-tooltip-element table tr td.value {{
         max-width: 600px !important;
         max-height: 14em !important;
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
 
