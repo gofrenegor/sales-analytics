@@ -63,11 +63,25 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
-    .loss-figure { display: flex; align-items: center; justify-content: center; gap: 2px; width: 100%; }
-    .loss-figure svg { width: min(100%, 420px); height: auto; overflow: visible; display: block; flex: 0 1 auto; }
-    .loss-pct { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1; min-width: 3.4em; font-variant-numeric: tabular-nums; flex: 0 0 auto; }
-    .loss-pct-in { text-align: right; color: light-dark(#2A36C0, #A8B0FF); }
-    .loss-pct-out { text-align: left; color: light-dark(#9E1028, #FF8B9A); }
+    .loss-stack { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
+    .loss-figure { display: flex; align-items: center; justify-content: center; gap: 0; width: 100%; }
+    .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; flex: 0 1 auto; max-width: 420px; pointer-events: none; }
+    a.loss-pct {
+        font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1;
+        min-width: 2.6em; font-variant-numeric: tabular-nums; flex: 0 0 auto;
+        text-decoration: none; cursor: pointer; position: relative; z-index: 4;
+    }
+    a.loss-pct:hover { text-decoration: underline; text-underline-offset: 3px; }
+    a.loss-pct-in { text-align: right; color: light-dark(#1a7f37, #3fb950); margin-right: -20px; padding-right: 0; }
+    a.loss-pct-out { text-align: left; color: light-dark(#0969da, #4C9AFF); margin-left: -20px; padding-left: 0; }
+    a.loss-hit {
+        position: absolute; top: 4%; height: 92%; z-index: 3; cursor: pointer;
+        border-radius: 999px; opacity: 0; transition: opacity .14s ease;
+    }
+    a.loss-hit-in { left: 8%; width: 38%; }
+    a.loss-hit-out { right: 8%; width: 44%; }
+    a.loss-hit-in:hover { opacity: 1; background: linear-gradient(90deg, rgba(63,185,80,.22), transparent 75%); }
+    a.loss-hit-out:hover { opacity: 1; background: linear-gradient(270deg, rgba(76,154,255,.24), transparent 75%); }
     .st-key-pick_in button,
     .st-key-pick_out button {
         position: relative !important;
@@ -160,9 +174,9 @@ def inject_css():
     """, unsafe_allow_html=True)
 
 
-# Цвета со скетча главной: синий — вход, бордо — исход. Чуть ярче, чтобы кольцо читалось на тёмной теме.
-FLOW_IN_COLOR = "#4453E8"
-FLOW_OUT_COLOR = "#C41634"
+# Кольцо: входящий — зелёный, исходящий — синий (как подсветка строк справа).
+FLOW_IN_COLOR = "#3fb950"
+FLOW_OUT_COLOR = "#4C9AFF"
 
 
 def _fmt_share(pct):
@@ -174,13 +188,13 @@ def _fmt_share(pct):
 
 
 def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color):
-    """Дуга кольца. 0° — 3 часа, дальше по часовой. Путь, не dasharray: так доля не съезжает."""
+    """Дуга кольца. 0° — 3 часа, дальше по часовой."""
     if span_deg <= 0.4:
         return ""
     if span_deg >= 359.2:
         return (
             f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
-            f'stroke-width="{sw}" />'
+            f'stroke-width="{sw}" class="loss-arc-seg" />'
         )
     end = start_deg + span_deg
     large = 1 if span_deg > 180 else 0
@@ -190,8 +204,17 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color):
     y2 = cy + r * math.sin(math.radians(end))
     return (
         f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
-        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" />'
+        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="loss-arc-seg" />'
     )
+
+
+def flow_share_labels(in_sum, out_sum):
+    """Доли потоков для подписей у кольца."""
+    in_sum = max(float(in_sum or 0), 0.0)
+    out_sum = max(float(out_sum or 0), 0.0)
+    total = in_sum + out_sum
+    in_pct = (in_sum / total * 100) if total else 0.0
+    return _fmt_share(in_pct), _fmt_share(100.0 - in_pct if total else 0.0)
 
 
 def build_loss_donut_svg(in_sum, out_sum, center_text):
@@ -214,10 +237,9 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
         return raw
 
     in_span, out_span = span_of(in_pct), span_of(out_pct)
-    # Синий вход стоит слева (центр 180°), бордо исход — справа (центр 0°).
+    # Входящий слева (центр 180°), исходящий справа (центр 0°).
     in_start = (180 - in_span / 2) % 360
     out_start = (0 - out_span / 2) % 360
-
     n = len(center_text)
     sum_size = 24 if n <= 12 else 21 if n <= 14 else 17 if n <= 17 else 14
     label = escape(center_text)
@@ -225,12 +247,16 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
         f"Диаграмма потерь. Полная сумма списаний {center_text}. "
         f"Вход {_fmt_share(in_pct)}, исход {_fmt_share(out_pct)}."
     )
+    in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
+    in_share, out_share = escape(in_lbl), escape(out_lbl)
     arcs = (
         _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR)
         + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR)
     )
-    return f'''<div class="loss-figure">
-<div class="loss-pct loss-pct-in">{escape(_fmt_share(in_pct))}</div>
+    return f'''<div class="loss-stack">
+<div class="loss-figure">
+<a href="?flow=in" class="loss-pct loss-pct-in" title="входящий поток">{in_share}</a>
+<div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {arcs}
@@ -238,7 +264,11 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
   <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
   <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700">{label}</text>
 </svg>
-<div class="loss-pct loss-pct-out">{escape(_fmt_share(out_pct))}</div>
+</div>
+<a href="?flow=out" class="loss-pct loss-pct-out" title="исходящий поток">{out_share}</a>
+</div>
+<a href="?flow=in" class="loss-hit loss-hit-in" title="входящий поток" aria-label="входящий поток"></a>
+<a href="?flow=out" class="loss-hit loss-hit-out" title="исходящий поток" aria-label="исходящий поток"></a>
 </div>'''
 
 

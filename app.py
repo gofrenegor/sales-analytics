@@ -55,6 +55,16 @@ st.divider()
 for k, v in {'view': 'dashboard', 'selected_flow': None, 'selected_group': None, 'selected_block': None}.items():
     st.session_state.setdefault(k, v)
 
+_flow_qp = st.query_params.get("flow")
+if _flow_qp in ("in", "out"):
+    st.session_state.selected_flow = _flow_qp
+    st.session_state.selected_group = None
+    st.session_state.selected_block = None
+    st.session_state.view = "flow"
+    st.session_state.pop("loss_donut_click", None)
+    del st.query_params["flow"]
+    st.rerun()
+
 FLOW_NAMES = {"in": "Входящий поток", "out": "Исходящий поток"}
 fmt_rub = lambda x: f"{x:,.0f} ₽".replace(",", " ")
 
@@ -125,6 +135,7 @@ def render_cards(g, next_view, prefix, share_label):
 def back(label, target):
     if st.button(label):
         st.session_state.view = target
+        st.session_state.pop("loss_donut_click", None)
         st.rerun()
 
 
@@ -141,7 +152,10 @@ def render_flow_hero(in_sum, out_sum):
     """Кольцо потерь и два кликабельных потока справа."""
     chart, side = st.columns([1.25, 1], vertical_alignment="center", gap="large")
     with chart:
-        st.markdown(utils.build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)), unsafe_allow_html=True)
+        st.markdown(
+            utils.build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
+            unsafe_allow_html=True,
+        )
     with side:
         for code, title, amount, key in (
             ("in", "входящий поток", in_sum, "pick_in"),
@@ -150,7 +164,7 @@ def render_flow_hero(in_sum, out_sum):
             help_text = "Открыть блоки входящего потока" if code == "in" else "Открыть блоки исходящего потока"
             if st.button(f"{title}  **{fmt_rub(amount)}**", key=key, width="stretch", help=help_text):
                 open_flow(code)
-        st.caption("Нажмите на поток — откроется выбор блоков.")
+        st.caption("Клик по сегменту кольца или строке потока откроет выбор блоков.")
 
 
 view = st.session_state.view
