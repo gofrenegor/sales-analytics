@@ -28,8 +28,9 @@ def ensure_schema():
     try:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE losses ADD COLUMN IF NOT EXISTS office_id TEXT"))
+            conn.execute(text("ALTER TABLE losses ADD COLUMN IF NOT EXISTS last_reason TEXT"))
     except Exception:
-        pass  # таблицы ещё нет — колонка появится при первой загрузке
+        pass  # таблицы ещё нет — колонки появятся при первой загрузке
 
 
 ensure_schema()
@@ -38,27 +39,38 @@ ensure_schema()
 def inject_css():
     st.markdown("""
     <style>
-    .block-container { padding-top: 2rem; max-width: 1400px; }
-    h1 { font-weight: 700; letter-spacing: -0.5px; }
-    div[data-testid="stMetricValue"] { font-weight: 700; }
-    div[class*="st-key-card-"] { border: 1px solid rgba(128,128,128,0.25) !important; border-radius: 12px !important; transition: border-color .15s; }
-    div[class*="st-key-card-"]:hover { border-color: rgba(128,128,128,0.6) !important; }
-    div[class*="st-key-card-red-"] { border-color: rgba(255,75,75,0.65) !important; }
-    div[class*="st-key-card-green-"] { border-color: rgba(46,157,79,0.65) !important; }
-    .c-name { font-size: 14px; opacity: .75; margin-bottom: 2px; }
-    .c-sum { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
-    .chip { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 12px; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    html, body, .stApp { font-family: 'Inter', -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    .block-container { padding-top: 2.2rem; max-width: 1400px; }
+    h1 { font-weight: 700; letter-spacing: -0.6px; font-size: 2rem; }
+    h2, h3, h4 { font-weight: 600; letter-spacing: -0.2px; }
+    hr { opacity: .15; }
+    footer { visibility: hidden; }
+    div[data-testid="stMetric"] { background: rgba(128,128,128,.06); border: 1px solid rgba(128,128,128,.18); border-radius: 14px; padding: 14px 18px; }
+    div[data-testid="stMetricValue"] { font-weight: 700; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+    div[data-testid="stMetricLabel"] { opacity: .7; }
+    div[data-testid="stAlert"] { border-radius: 12px; }
+    div[data-testid="stDataFrame"] { border-radius: 12px; overflow: hidden; }
+    div[class*="st-key-card-"] { border: 1px solid rgba(128,128,128,0.22) !important; border-radius: 14px !important; transition: border-color .15s, box-shadow .15s, transform .15s; }
+    div[class*="st-key-card-"]:hover { border-color: rgba(128,128,128,0.55) !important; box-shadow: 0 6px 20px rgba(0,0,0,.12); transform: translateY(-1px); }
+    div[class*="st-key-card-red-"] { border-color: rgba(255,75,75,0.6) !important; }
+    div[class*="st-key-card-green-"] { border-color: rgba(46,157,79,0.6) !important; }
+    div[class*="st-key-card-"] button { background: transparent; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; font-size: 13px; font-weight: 500; }
+    div[class*="st-key-card-"] button:hover { border-color: #4C9AFF; color: #4C9AFF; }
+    .c-name { font-size: 13px; opacity: .7; margin-bottom: 4px; letter-spacing: .2px; }
+    .c-sum { font-size: 26px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; }
+    .chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; font-variant-numeric: tabular-nums; }
     .chip-r { background: rgba(255,75,75,.14); color: #ff6b6b; }
     .chip-g { background: rgba(63,185,80,.14); color: #3fb950; }
     .chip-n { background: rgba(128,128,128,.15); }
-    .bar { height: 4px; background: rgba(128,128,128,.2); border-radius: 2px; margin: 12px 0 4px; }
-    .bar div { height: 100%; background: #4C9AFF; border-radius: 2px; }
-    .c-share { font-size: 12px; opacity: .6; margin-bottom: 6px; }
-    .big-sum { font-size: 34px; font-weight: 700; margin: 2px 0 0; }
-    .sub { font-size: 14px; opacity: .65; }
-    .st-key-btn_inbound button { background: transparent !important; color: #3fb950 !important; border: 1.5px solid #3fb950 !important; font-weight: 600; letter-spacing: .5px; }
+    .bar { height: 5px; background: rgba(128,128,128,.18); border-radius: 3px; margin: 14px 0 6px; }
+    .bar div { height: 100%; background: linear-gradient(90deg, #4C9AFF, #7DB8FF); border-radius: 3px; }
+    .c-share { font-size: 12px; opacity: .55; margin-bottom: 8px; }
+    .big-sum { font-size: 36px; font-weight: 700; margin: 2px 0 0; letter-spacing: -1px; font-variant-numeric: tabular-nums; }
+    .sub { font-size: 13px; opacity: .6; }
+    .st-key-btn_inbound button { background: transparent !important; color: #3fb950 !important; border: 1.5px solid #3fb950 !important; border-radius: 12px !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
-    .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
+    .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; border-radius: 12px !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
     </style>
     """, unsafe_allow_html=True)
@@ -81,6 +93,7 @@ def process_excel(file):
         'ID блока перед списанием': 'status_block_id', 'ID офиса': 'office_id', 'ID сотрудника статуса перед списан': 'status_employee_id',
         'Сумма списания': 'loss_sum', 'Кол-во лог объектов для списания': 'loss_qty',
         'Дата первого списания': 'loss_date', 'Лостризон первого списания': 'reason',
+        'Лостризон последнего списания': 'last_reason',
         'Дата статуса перед списанием': 'status_before_date', 'Статус перед списанием': 'status_before'
     }
     existing_cols = [c for c in cols_map if c in df.columns]
@@ -96,6 +109,9 @@ def process_excel(file):
             df[col] = df[col].fillna("Не указано").astype(str).str.replace(r'\*', '', regex=True).str.strip()
             if col == 'reason':
                 df[col] = df[col].str.replace(r'\.0$', '', regex=True).str.strip()
+    if 'last_reason' in df.columns:
+        df['last_reason'] = (df['last_reason'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                             .replace({'nan': '', 'None': '', '<NA>': ''}))
     if 'office_id' in df.columns:
         raw = df['office_id']
         df['office_id'] = raw.astype(str).str.replace(r'\.0$', '', regex=True).str.strip().where(raw.notna(), None)
@@ -117,6 +133,9 @@ STAGE_MAPPING = {
 OPERKA_STATUSES = ['SMC', 'SPS', 'SAS', 'SAP', 'PAP', 'LSS', 'GWS', 'WMI']
 # LR (лостризоны), которые относятся к сборке (мезонин): такие списания ВСЕГДА идут в блок, даже если статус из оперки.
 ASSEMBLY_LR = ['5']
+# LR 27 = неразложка на блоке: всегда входящий поток (и когда он первый, и когда последний LR у товара).
+# Дальше работает обычная логика места списания: наш блок -> списания блока, чужой ЛО -> «Другие логобъекты».
+INBOUND_LR = '27'
 # ID блока, где расположена оперплощадь (берётся из «ID блока перед списанием»)
 OPERKA_BLOCK_ID = '6800'
 # Пропуск сборки (LR из ASSEMBLY_LR) у товара, получившего статус на блоке 6800, — отдельная группа
@@ -147,7 +166,7 @@ ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
 PLATFORMS = {b: [n for n, v in BLOCK_MAPPING.items() if v == b] for b in ALL_BLOCKS}
 
 COLS = ['loss_date', 'barcode', 'block_name', 'status_block_id', 'loss_sum', 'loss_qty', 'reason',
-        'status_before_date', 'status_before', 'block_id', 'office_id', 'flow', 'process_stage', 'block_group']
+        'status_before_date', 'status_before', 'block_id', 'office_id', 'last_reason', 'flow', 'process_stage', 'block_group']
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -156,7 +175,8 @@ def load_data(start, end):
             "status_before_date, status_before")
     end_excl = (end + timedelta(days=1)).isoformat()
     df, err = None, None
-    for cols in (base + ", block_id, office_id", base + ", block_id", base):  # если колонки office_id в базе ещё нет — читаем без неё
+    # если новых колонок в базе ещё нет — читаем без них
+    for cols in (base + ", block_id, office_id, last_reason", base + ", block_id, office_id", base + ", block_id", base):
         try:
             df = pd.read_sql(text(f"SELECT {cols} FROM losses WHERE loss_date >= :start AND loss_date < :end"),
                              engine, params={"start": start.isoformat(), "end": end_excl})
@@ -166,7 +186,7 @@ def load_data(start, end):
     if df is None:
         st.error(f"Не удалось получить данные из базы: {err}")
         return pd.DataFrame(columns=COLS)
-    for c in ('block_id', 'office_id'):
+    for c in ('block_id', 'office_id', 'last_reason'):
         if c not in df.columns:
             df[c] = None
     if df.empty:
@@ -183,10 +203,17 @@ def load_data(start, end):
     df.loc[df['status_before'].isin(OUTBOUND_STATUSES), 'flow'] = 'Исходящий поток'
     df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
 
+    # LR 27 (неразложка) — всегда входящий поток, независимо от статуса; сумма и период по-прежнему по первому списанию
+    last_lr = df['last_reason'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+    is_inbound_lr = (df['reason'] == INBOUND_LR) | (last_lr == INBOUND_LR)
+    df.loc[is_inbound_lr, 'flow'] = 'Входящий поток'
+
     own = df['block_name'].map(BLOCK_MAPPING)
     b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
-    is_pickmiss = (b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR)
-    is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
+    # для LR 27 оперка и «пропуск сборки» не применяются: это списание блока (или другого ЛО, см. ниже)
+    is_pickmiss = (b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR) & ~is_inbound_lr
+    is_operka = (df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID)
+                 & ~df['reason'].isin(ASSEMBLY_LR) & ~is_inbound_lr)
     # Правила идут по приоритету, срабатывает ПОСЛЕДНЕЕ в цепочке (сильнейшее): так они не конфликтуют.
     # слабейшее: блок вне маппинга -> наш блок по названию -> оперка -> пропуск сборки на 6800 -> чужой ЛО (по блоку/офису)
     # Чужой ЛО определяется по МЕСТУ списания, а не по тому, где был последний статус:
@@ -287,6 +314,8 @@ def render_admin_panel():
                         st.warning(f"Пропущено строк без даты: {n_no_date}")
                     if n_dups:
                         st.warning(f"Удалено дублей по ШК: {n_dups}")
+                    if 'last_reason' not in df_new.columns:
+                        st.warning("В файле нет колонки «Лостризон последнего списания» — правило LR 27 по последнему LR не сработает.")
                     st.caption("⚠️ Загрузка заменит ВСЕ данные в этом периоде. Файл должен покрывать период полностью.")
                     if st.button("💾 ВЫГРУЗИТЬ В БАЗУ", use_container_width=True, type="primary"):
                         with st.spinner("Загрузка..."):
