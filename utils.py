@@ -1,3 +1,6 @@
+import math
+from html import escape
+
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
@@ -60,6 +63,97 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
+    .loss-figure { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
+    .loss-figure svg { width: min(100%, 420px); height: auto; overflow: visible; display: block; }
+    .loss-pct { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1; min-width: 4.6em; font-variant-numeric: tabular-nums; }
+    .loss-pct-in { text-align: right; color: light-dark(#2A36C0, #A8B0FF); }
+    .loss-pct-out { text-align: left; color: light-dark(#9E1028, #FF8B9A); }
+    .st-key-pick_in button,
+    .st-key-pick_out button {
+        position: relative !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: flex-start !important;
+        min-height: 112px !important;
+        padding: 16px 58px 16px 124px !important;
+        border-radius: 24px !important;
+        border: 1px solid transparent !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        color: inherit !important;
+        transition: background .16s ease, border-color .16s ease !important;
+    }
+    .st-key-pick_in button:hover {
+        background: rgba(68, 83, 232, 0.10) !important;
+        border-color: rgba(68, 83, 232, 0.55) !important;
+    }
+    .st-key-pick_out button:hover {
+        background: rgba(196, 22, 52, 0.12) !important;
+        border-color: rgba(196, 22, 52, 0.55) !important;
+    }
+    .st-key-pick_in button:focus, .st-key-pick_out button:focus { box-shadow: none !important; }
+    .st-key-pick_in button:focus-visible { outline: 2px solid #4453E8 !important; outline-offset: 3px !important; }
+    .st-key-pick_out button:focus-visible { outline: 2px solid #C41634 !important; outline-offset: 3px !important; }
+    .st-key-pick_in button::before,
+    .st-key-pick_out button::before {
+        content: "";
+        position: absolute;
+        left: 16px;
+        top: 50%;
+        width: 86px;
+        height: 86px;
+        transform: translateY(-50%);
+        border-radius: 50%;
+        transition: transform .16s ease;
+    }
+    .st-key-pick_in button:hover::before,
+    .st-key-pick_out button:hover::before { transform: translateY(-50%) scale(1.06); }
+    .st-key-pick_in button::before {
+        background: radial-gradient(circle at 34% 30%, #9aa6ff 0%, #4453E8 52%, #241e86 100%);
+        box-shadow: 0 12px 26px rgba(68, 83, 232, 0.42), inset 0 1px 0 rgba(255,255,255,.38);
+    }
+    .st-key-pick_out button::before {
+        background: radial-gradient(circle at 34% 30%, #ff7386 0%, #C41634 50%, #6e0a18 100%);
+        box-shadow: 0 12px 26px rgba(196, 22, 52, 0.42), inset 0 1px 0 rgba(255,255,255,.32);
+    }
+    .st-key-pick_in button::after,
+    .st-key-pick_out button::after {
+        content: "→";
+        position: absolute;
+        right: 20px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 22px;
+        font-weight: 600;
+        opacity: .55;
+    }
+    .st-key-pick_in button::after { color: #8D98FF; }
+    .st-key-pick_out button::after { color: #FF7A8C; }
+    .st-key-pick_in button:hover::after,
+    .st-key-pick_out button:hover::after { opacity: 1; }
+    .st-key-pick_in button p,
+    .st-key-pick_out button p {
+        margin: 0 !important;
+        width: 100%;
+        display: flex !important;
+        align-items: baseline !important;
+        justify-content: space-between !important;
+        gap: 16px !important;
+        font-size: 20px !important;
+        font-weight: 600 !important;
+        line-height: 1.1 !important;
+        text-align: left !important;
+        color: inherit !important;
+        white-space: nowrap !important;
+    }
+    .st-key-pick_in button strong,
+    .st-key-pick_out button strong {
+        font-size: 28px !important;
+        font-weight: 700 !important;
+        letter-spacing: -0.5px !important;
+        font-variant-numeric: tabular-nums;
+    }
+    .st-key-pick_out { margin-top: 8px !important; }
     /* Vega/Altair tooltip («Динамика по дням»): −24% от прежних 22px / 16px padding */
     #vg-tooltip-element {
         font-size: 17px !important;
@@ -85,6 +179,88 @@ def inject_css():
     }
     </style>
     """, unsafe_allow_html=True)
+
+
+# Цвета со скетча главной: синий — вход, бордо — исход. Чуть ярче, чтобы кольцо читалось на тёмной теме.
+FLOW_IN_COLOR = "#4453E8"
+FLOW_OUT_COLOR = "#C41634"
+
+
+def _fmt_share(pct):
+    if pct <= 0:
+        return "0%"
+    if pct < 0.1:
+        return "<\u00a00.1%"
+    return f"{pct:.1f}%"
+
+
+def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color):
+    """Дуга кольца. 0° — 3 часа, дальше по часовой. Путь, не dasharray: так доля не съезжает."""
+    if span_deg <= 0.4:
+        return ""
+    if span_deg >= 359.2:
+        return (
+            f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
+            f'stroke-width="{sw}" />'
+        )
+    end = start_deg + span_deg
+    large = 1 if span_deg > 180 else 0
+    x1 = cx + r * math.cos(math.radians(start_deg))
+    y1 = cy + r * math.sin(math.radians(start_deg))
+    x2 = cx + r * math.cos(math.radians(end))
+    y2 = cy + r * math.sin(math.radians(end))
+    return (
+        f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
+        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" />'
+    )
+
+
+def build_loss_donut_svg(in_sum, out_sum, center_text):
+    """Кольцо потерь: вход слева, исход справа, в центре полная сумма, доли чуть сбоку."""
+    in_sum = max(float(in_sum or 0), 0.0)
+    out_sum = max(float(out_sum or 0), 0.0)
+    total = in_sum + out_sum
+    in_pct = (in_sum / total * 100) if total else 0.0
+    out_pct = (100.0 - in_pct) if total else 0.0
+
+    cx, cy, r, sw = 200, 200, 112, 50
+    gap = 5.0 if in_pct > 1 and out_pct > 1 else 0.0
+
+    def span_of(pct):
+        raw = pct / 100 * 360
+        if raw <= 0:
+            return 0.0
+        if gap and raw > gap + 1:
+            return raw - gap
+        return raw
+
+    in_span, out_span = span_of(in_pct), span_of(out_pct)
+    # Синий вход стоит слева (центр 180°), бордо исход — справа (центр 0°).
+    in_start = (180 - in_span / 2) % 360
+    out_start = (0 - out_span / 2) % 360
+
+    n = len(center_text)
+    sum_size = 24 if n <= 12 else 21 if n <= 14 else 17 if n <= 17 else 14
+    label = escape(center_text)
+    aria = escape(
+        f"Диаграмма потерь. Полная сумма списаний {center_text}. "
+        f"Вход {_fmt_share(in_pct)}, исход {_fmt_share(out_pct)}."
+    )
+    arcs = (
+        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR)
+        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR)
+    )
+    return f'''<div class="loss-figure">
+<div class="loss-pct loss-pct-in">{escape(_fmt_share(in_pct))}</div>
+<svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
+  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
+  {arcs}
+  <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
+  <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
+  <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700">{label}</text>
+</svg>
+<div class="loss-pct loss-pct-out">{escape(_fmt_share(out_pct))}</div>
+</div>'''
 
 
 def clean_date_col(series):

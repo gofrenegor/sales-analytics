@@ -128,14 +128,53 @@ def back(label, target):
         st.rerun()
 
 
+def open_flow(code):
+    """Кружок потока на диаграмме ведёт на выбор блоков этого потока."""
+    st.session_state.selected_flow = code
+    st.session_state.selected_group = None
+    st.session_state.selected_block = None
+    st.session_state.view = "flow"
+    st.rerun()
+
+
+def render_flow_hero(in_sum, out_sum):
+    """Кольцо потерь и два кликабельных потока справа."""
+    chart, side = st.columns([1.25, 1], vertical_alignment="center", gap="large")
+    with chart:
+        st.markdown(utils.build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)), unsafe_allow_html=True)
+    with side:
+        for code, title, amount, key in (
+            ("in", "Вход", in_sum, "pick_in"),
+            ("out", "Исход", out_sum, "pick_out"),
+        ):
+            help_text = "Открыть блоки входящего потока" if code == "in" else "Открыть блоки исходящего потока"
+            if st.button(f"{title}  **{fmt_rub(amount)}**", key=key, width="stretch", help=help_text):
+                open_flow(code)
+        st.caption("Нажмите на поток — откроется выбор блоков.")
+
+
 view = st.session_state.view
 
 # ===== 1. ГЛАВНЫЙ ЭКРАН =====
 if view == 'dashboard':
-    total, qty = df_curr['loss_sum'].sum(), df_curr['loss_qty'].sum()
-    delta = utils.get_delta_text(total, qty, df_prev['loss_sum'].sum(), df_prev['loss_qty'].sum()) if has_prev else None
-    st.markdown("### Общие списания за период")
-    st.metric("Сумма", f"{total:,.0f} ₽".replace(",", " "), delta=delta, delta_color="inverse")
+    in_sum = sl(df_curr, "Входящий поток")["loss_sum"].sum()
+    out_sum = sl(df_curr, "Исходящий поток")["loss_sum"].sum()
+    render_flow_hero(in_sum, out_sum)
+    if has_prev:
+        st.caption("К прошлому периоду: " + utils.get_delta_text(
+            df_curr["loss_sum"].sum(), df_curr["loss_qty"].sum(),
+            df_prev["loss_sum"].sum(), df_prev["loss_qty"].sum()))
+    other_sum = other_curr["loss_sum"].sum()
+    if other_sum or not other_prev.empty:
+        st.metric(
+            "Вне потоков (не входит в диаграмму)",
+            fmt_rub(other_sum),
+            delta=utils.get_delta_text(other_sum, other_curr["loss_qty"].sum(), other_prev["loss_sum"].sum(), other_prev["loss_qty"].sum())
+            if not other_prev.empty else None,
+            delta_color="off",
+        )
+    if not other_curr.empty:
+        st.caption("Статусы вне потоков временно исключены из диаграммы и итогов — список в «Проверке данных» выше.")
     n_days = (end_date - start_date).days + 1
     if n_days > 1:
         def daily(d, s, last, label):
@@ -176,31 +215,6 @@ if view == 'dashboard':
                      alt.Tooltip('Топ-1 блок:N'), alt.Tooltip('Топ-1 LR в блоке:N')]
         ).properties(height=462), use_container_width=True)
         st.caption("По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока.")
-    st.markdown("---")
-    st.subheader("Разделение по потокам:")
-
-    def flow_delta(name):
-        if not has_prev:
-            return None
-        c, p = sl(df_curr, name), sl(df_prev, name)
-        return utils.get_delta_text(c['loss_sum'].sum(), c['loss_qty'].sum(), p['loss_sum'].sum(), p['loss_qty'].sum())
-
-    c1, c2, c3 = st.columns(3)
-    for col, key, label, name, code in [(c1, "btn_inbound", "ВХОДЯЩИЙ ПОТОК", "Входящий поток", "in"),
-                                        (c2, "btn_outbound", "ИСХОДЯЩИЙ ПОТОК", "Исходящий поток", "out")]:
-        with col:
-            if st.button(label, use_container_width=True, key=key):
-                st.session_state.selected_flow, st.session_state.view = code, 'flow'
-                st.rerun()
-            st.metric(f"Сумма: {name.lower()}", f"{sl(df_curr, name)['loss_sum'].sum():,.0f} ₽".replace(",", " "),
-                      delta=flow_delta(name), delta_color="inverse")
-    with c3:
-        st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
-        st.metric("Вне потоков (не входит в итог)", f"{other_curr['loss_sum'].sum():,.0f} ₽".replace(",", " "),
-                  delta=utils.get_delta_text(other_curr['loss_sum'].sum(), other_curr['loss_qty'].sum(), other_prev['loss_sum'].sum(),
-                                             other_prev['loss_qty'].sum()) if not other_prev.empty else None, delta_color="off")
-    if not other_curr.empty:
-        st.caption("ℹ️ Статусы вне потоков временно исключены из итогов — список в «Проверке данных» выше.")
 
 # ===== 2. ЭКРАН ПОТОКА =====
 elif view == 'flow':
