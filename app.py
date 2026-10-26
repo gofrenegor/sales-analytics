@@ -211,7 +211,8 @@ elif view == 'flow':
     sum_badge("Общая сумма списаний по потоку:", dc['loss_sum'].sum())
     st.markdown("---")
     st.markdown("### Выберите блок для детализации:")
-    names = utils.ALL_BLOCKS + (['Опер площадь'] if flow == 'Исходящий поток' else []) + [utils.FOREIGN_GROUP]  # все блоки и оперка видны всегда
+    # все блоки и оперка видны всегда; «Другие логобъекты» — только когда по ним есть списания
+    names = utils.ALL_BLOCKS + (['Опер площадь'] if flow == 'Исходящий поток' else [])
     render_cards(ensure(build(dc, dp, 'block_group'), names), 'group', 'flow', "от потока")
 
 # ===== 3. ЭКРАН БЛОКА =====
