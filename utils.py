@@ -312,6 +312,9 @@ def process_excel(file):
 
 INBOUND_STATUSES = ['ANV', 'EPR', 'IPS', 'ORG', 'PVP', 'RGP', 'RNP', 'RSP', 'RWP', 'TWR', 'WDC', 'WWE', 'WIJ', 'WPT', 'WPU', 'SGR']
 OUTBOUND_STATUSES = ['GWS', 'IKZ', 'IPG', 'ISB', 'LAM', 'LIO', 'LIP', 'LPG', 'LSS', 'OPS', 'OSE', 'OSR', 'PAP', 'PWT', 'SAP', 'SAS', 'SBN', 'SMC', 'SPM', 'SPS', 'SSG', 'WLI', 'WLN', 'WLR', 'WLT', 'WMI']
+# Брак во входящем потоке. SDI и SDL по одному разу.
+DEFECT_GROUP = 'Брак'
+DEFECT_STATUSES = ['SDL', 'WSC', 'WDV', 'SDI', 'WSR', 'SGP', 'DAP']
 
 STAGE_MAPPING = {
     'GWS': 'Отгрузка', 'LSS': 'Отгрузка', 'LIO': 'Отгрузка', 'LIP': 'Отгрузка', 'LPG': 'Отгрузка', 'SAP': 'Отгрузка',
@@ -323,11 +326,12 @@ STAGE_MAPPING = {
 }
 # Оперплощадь = списание после сортировки, предсортировки или отгрузки. Всё остальное — в блок.
 OPERKA_STATUSES = ['SMC', 'SPS', 'SAS', 'SAP', 'PAP', 'LSS', 'GWS', 'WMI']
-# LR (лостризоны), которые относятся к сборке (мезонин): такие списания ВСЕГДА идут в блок, даже если статус из оперки.
+# LR сборки (мезонин). Всегда исходящий поток и блок места списания,
+# даже если статус не из исходящего (например CTS) и даже если статус снят на 6800.
 ASSEMBLY_LR = ['5']
 # ID блока, где расположена оперплощадь (берётся из «ID блока перед списанием»)
 OPERKA_BLOCK_ID = '6800'
-# Пропуск сборки (LR из ASSEMBLY_LR) у товара, получившего статус на блоке 6800, — отдельная группа
+# Больше не наполняется: LR сборки идёт в блок места списания, не в отдельную группу.
 PICKMISS_GROUP = 'Пропуск сборки товара на блоке'
 # Списания других логобъектов (блоков нет в BLOCK_MAPPING) — отдельная группа, внутри делятся по статусам
 FOREIGN_GROUP = 'Другие логобъекты'
@@ -386,26 +390,41 @@ def load_data(start, end):
     df['status_before'] = df['status_before'].fillna('').astype(str).str.upper().str.replace(r'[^A-Z]', '', regex=True)
     df.loc[df['status_before'] == '', 'status_before'] = 'НЕ УКАЗАНО'
 
+    return classify_losses(df)
+
+
+def classify_losses(df):
+    """flow, process_stage, block_group.
+
+    reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
+    Приоритет блока, от слабого к сильному: свой блок по названию места списания,
+    оперка, чужой ЛО, брак. LR сборки не попадает ни в оперку, ни в брак:
+    исход и блок места потери.
+    """
     df['flow'] = 'Другое'
     df.loc[df['status_before'].isin(INBOUND_STATUSES), 'flow'] = 'Входящий поток'
     df.loc[df['status_before'].isin(OUTBOUND_STATUSES), 'flow'] = 'Исходящий поток'
+    is_assembly = df['reason'].isin(ASSEMBLY_LR)
+    is_defect = df['status_before'].isin(DEFECT_STATUSES) & ~is_assembly
+    df.loc[is_defect, 'flow'] = 'Входящий поток'
+    df.loc[is_assembly, 'flow'] = 'Исходящий поток'
+
     df['process_stage'] = df['status_before'].map(STAGE_MAPPING).fillna('Другое')
+    df.loc[is_defect, 'process_stage'] = DEFECT_GROUP
+    df.loc[is_assembly, 'process_stage'] = 'Сборка'
 
     own = df['block_name'].map(BLOCK_MAPPING)
     b_id = df['status_block_id'].astype(str).str.strip().str.split('.').str[0]
-    is_pickmiss = (b_id == OPERKA_BLOCK_ID) & df['reason'].isin(ASSEMBLY_LR)
-    is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~df['reason'].isin(ASSEMBLY_LR)
-    # Правила идут по приоритету, срабатывает ПОСЛЕДНЕЕ в цепочке (сильнейшее): так они не конфликтуют.
-    # слабейшее: блок вне маппинга -> наш блок по названию -> оперка -> пропуск сборки на 6800 -> чужой ЛО (по блоку/офису)
-    # Чужой ЛО определяется по МЕСТУ списания, а не по тому, где был последний статус:
-    # блок списания вне 6800–6826 или офис не наш. Если места списания в данных нет — судим по названию блока.
+    is_operka = df['status_before'].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~is_assembly
+    # Чужой ЛО — по МЕСТУ списания, не по блоку последнего статуса:
+    # блок списания вне 6800–6826 или офис не наш. Места нет — судим по названию блока.
     loss_blk = pd.to_numeric(df['block_id'].astype(str).str.split('.').str[0], errors='coerce')
     off = df['office_id'].fillna('').astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
     foreign_blk = loss_blk.notna() & ((loss_blk < OWN_BLOCK_RANGE[0]) | (loss_blk > OWN_BLOCK_RANGE[1]))
     foreign_off = (off != '') & (off.str.lower() != 'nan') & (off != OWN_OFFICE_ID)
     is_foreign = foreign_blk | foreign_off | (loss_blk.isna() & (off == '') & own.isna())
     df['block_group'] = (own.fillna(UNMAPPED_GROUP).mask(is_operka, 'Опер площадь')
-                         .mask(is_pickmiss, PICKMISS_GROUP).mask(is_foreign, FOREIGN_GROUP))
+                         .mask(is_foreign, FOREIGN_GROUP).mask(is_defect, DEFECT_GROUP))
     return df
 
 

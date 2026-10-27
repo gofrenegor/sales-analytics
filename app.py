@@ -239,7 +239,10 @@ elif view == 'flow':
     sum_badge("Общая сумма списаний по потоку:", dc['loss_sum'].sum())
     st.markdown("---")
     st.markdown("### Выберите блок для детализации:")
-    names = utils.ALL_BLOCKS + (['Опер площадь'] if flow == 'Исходящий поток' else []) + [utils.FOREIGN_GROUP]  # все блоки и оперка видны всегда
+    # Вход: физические блоки + «Брак». Исход: физические блоки + оперка. Чужой ЛО в обоих.
+    names = utils.ALL_BLOCKS + (
+        [utils.DEFECT_GROUP] if flow == 'Входящий поток' else ['Опер площадь']
+    ) + [utils.FOREIGN_GROUP]
     render_cards(ensure(build(dc, dp, 'block_group'), names), 'group', 'flow', "от потока")
 
 # ===== 3. ЭКРАН БЛОКА =====
@@ -270,6 +273,10 @@ elif view == 'group':
     elif group == utils.FOREIGN_GROUP:
         st.markdown("### Выберите статус для детализации:")
         render_cards(build(dc, dp, 'status_before'), 'block_detail', 'group', "от блока")
+    elif group == utils.DEFECT_GROUP:
+        st.markdown("### Выберите статус для детализации:")
+        render_cards(ensure(build(dc, dp, 'status_before'), utils.DEFECT_STATUSES),
+                     'block_detail', 'group', "от блока")
     else:
         st.markdown("### Выберите площадку для детализации:")
         render_cards(ensure(build(dc, dp, 'block_name'), utils.PLATFORMS.get(group, [])), 'block_detail', 'group', "от блока")
@@ -278,7 +285,9 @@ elif view == 'group':
 elif view == 'block_detail':
     back("⬅️ Назад к площадкам", 'group')
     flow, group, block = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group, st.session_state.selected_block
-    col = 'process_stage' if group == 'Опер площадь' else 'status_before' if group == utils.FOREIGN_GROUP else 'block_name'
+    col = ('process_stage' if group == 'Опер площадь'
+           else 'status_before' if group in (utils.FOREIGN_GROUP, utils.DEFECT_GROUP)
+           else 'block_name')
     dc, dp = sl(df_curr, flow, group), sl(df_prev, flow, group)
     dc, dp = dc[dc[col] == block], dp[dp[col] == block]
     st.subheader(f"{ {'process_stage': 'Этап', 'status_before': 'Статус'}.get(col, 'Площадка') }: {block} ({flow}, блок «{group}»)")
