@@ -63,25 +63,26 @@ def inject_css():
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_outbound button:hover { background: rgba(76,154,255,.12) !important; }
-    .loss-stack { position: relative; width: 100%; max-width: 480px; margin: 0 auto; }
+    .loss-stack { position: relative; width: 100%; max-width: 560px; margin: 0 auto; }
     .loss-figure { display: flex; align-items: center; justify-content: center; gap: 0; width: 100%; }
-    .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; flex: 0 1 auto; max-width: 420px; pointer-events: none; }
-    a.loss-pct {
+    .loss-donut-wrap { flex: 0 0 auto; width: 345px; max-width: 100%; }
+    .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; pointer-events: none; }
+    .loss-pct {
         font-size: 28px; font-weight: 700; letter-spacing: -0.4px; line-height: 1;
         min-width: 2.6em; font-variant-numeric: tabular-nums; flex: 0 0 auto;
-        text-decoration: none; cursor: pointer; position: relative; z-index: 4;
+        position: relative; z-index: 4; pointer-events: none; user-select: none;
     }
-    a.loss-pct:hover { text-decoration: underline; text-underline-offset: 3px; }
-    a.loss-pct-in { text-align: right; color: light-dark(#1a7f37, #3fb950); margin-right: -20px; padding-right: 0; }
-    a.loss-pct-out { text-align: left; color: light-dark(#0969da, #4C9AFF); margin-left: -20px; padding-left: 0; }
-    a.loss-hit {
-        position: absolute; top: 4%; height: 92%; z-index: 3; cursor: pointer;
-        border-radius: 999px; opacity: 0; transition: opacity .14s ease;
+    .loss-pct-in { text-align: right; color: light-dark(#1a7f37, #3fb950); margin-right: -20px; padding-right: 0; }
+    .loss-pct-out { text-align: left; color: light-dark(#0969da, #4C9AFF); margin-left: -20px; padding-left: 0; }
+    .loss-donut .loss-seg-hit {
+        fill: none; stroke: transparent; pointer-events: stroke; cursor: pointer;
+        transition: stroke .14s ease;
     }
-    a.loss-hit-in { left: 8%; width: 38%; }
-    a.loss-hit-out { right: 8%; width: 44%; }
-    a.loss-hit-in:hover { opacity: 1; background: linear-gradient(90deg, rgba(63,185,80,.22), transparent 75%); }
-    a.loss-hit-out:hover { opacity: 1; background: linear-gradient(270deg, rgba(76,154,255,.24), transparent 75%); }
+    .loss-donut a.loss-seg-in:hover .loss-seg-hit,
+    .loss-donut a.loss-seg-in:focus-visible .loss-seg-hit { stroke: rgba(63, 185, 80, 0.5); }
+    .loss-donut a.loss-seg-out:hover .loss-seg-hit,
+    .loss-donut a.loss-seg-out:focus-visible .loss-seg-hit { stroke: rgba(76, 154, 255, 0.5); }
+    .loss-donut a.loss-seg:focus { outline: none; }
     .st-key-pick_in button,
     .st-key-pick_out button {
         position: relative !important;
@@ -187,14 +188,14 @@ def _fmt_share(pct):
     return f"{pct:.1f}%"
 
 
-def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color):
+def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-seg"):
     """Дуга кольца. 0° — 3 часа, дальше по часовой."""
     if span_deg <= 0.4:
         return ""
     if span_deg >= 359.2:
         return (
             f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
-            f'stroke-width="{sw}" class="loss-arc-seg" />'
+            f'stroke-width="{sw}" class="{css_class}" />'
         )
     end = start_deg + span_deg
     large = 1 if span_deg > 180 else 0
@@ -204,7 +205,7 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color):
     y2 = cy + r * math.sin(math.radians(end))
     return (
         f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
-        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="loss-arc-seg" />'
+        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="{css_class}" />'
     )
 
 
@@ -226,6 +227,10 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     out_pct = (100.0 - in_pct) if total else 0.0
 
     cx, cy, r, sw = 200, 200, 112, 50
+    # Клик по самой дуге и на 8 ед. viewBox за внешний край (~7px при ширине 345).
+    outer, inner, outset = r + sw / 2, r - sw / 2, 8
+    hit_r = (outer + outset + inner) / 2
+    hit_sw = outer + outset - inner
     gap = 5.0 if in_pct > 1 and out_pct > 1 else 0.0
 
     def span_of(pct):
@@ -253,22 +258,32 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
         _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR)
         + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR)
     )
+    def _seg_link(flow, start, span):
+        arc = _donut_arc(cx, cy, hit_r, hit_sw, start, span, "transparent", "loss-seg-hit")
+        if not arc:
+            return ""
+        name = "входящий поток" if flow == "in" else "исходящий поток"
+        return (
+            f'<a href="?flow={flow}" class="loss-seg loss-seg-{flow}" aria-label="{name}">'
+            f"<title>{name}</title>{arc}</a>"
+        )
+
+    hits = _seg_link("in", in_start, in_span) + _seg_link("out", out_start, out_span)
     return f'''<div class="loss-stack">
 <div class="loss-figure">
-<a href="?flow=in" class="loss-pct loss-pct-in" title="входящий поток">{in_share}</a>
+<span class="loss-pct loss-pct-in">{in_share}</span>
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {arcs}
+  {hits}
   <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
   <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
   <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700">{label}</text>
 </svg>
 </div>
-<a href="?flow=out" class="loss-pct loss-pct-out" title="исходящий поток">{out_share}</a>
+<span class="loss-pct loss-pct-out">{out_share}</span>
 </div>
-<a href="?flow=in" class="loss-hit loss-hit-in" title="входящий поток" aria-label="входящий поток"></a>
-<a href="?flow=out" class="loss-hit loss-hit-out" title="исходящий поток" aria-label="исходящий поток"></a>
 </div>'''
 
 
