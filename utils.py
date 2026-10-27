@@ -41,15 +41,98 @@ ensure_schema()
 def inject_css():
     st.markdown("""
     <style>
-    .block-container { padding-top: 2rem; max-width: 1400px; }
-    h1 { font-weight: 700; letter-spacing: -0.5px; }
-    div[data-testid="stMetricValue"] { font-weight: 700; }
-    div[class*="st-key-card-"] { border: 1px solid rgba(128,128,128,0.25) !important; border-radius: 12px !important; transition: border-color .15s; }
-    div[class*="st-key-card-"]:hover { border-color: rgba(128,128,128,0.6) !important; }
+    [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(920px 380px at 8% -12%, light-dark(rgba(9,105,218,0.07), rgba(76,154,255,0.09)), transparent 58%),
+            radial-gradient(680px 320px at 100% -8%, light-dark(rgba(26,127,55,0.05), rgba(63,185,80,0.06)), transparent 52%),
+            light-dark(#f4f6f9, #0c0f14);
+    }
+    header[data-testid="stHeader"] {
+        background: light-dark(rgba(244,246,249,0.9), rgba(12,15,20,0.88)) !important;
+        backdrop-filter: blur(12px);
+    }
+    footer { display: none; }
+    .block-container { padding-top: 1.35rem; max-width: 1180px; }
+    h1 { font-weight: 650; letter-spacing: -0.035em; margin-bottom: 0.45rem !important; }
+    h2, h3, h4 { letter-spacing: -0.025em; }
+    div[data-testid="stMetricValue"] { font-weight: 650; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+    div[data-testid="stMetricLabel"] { opacity: .72; }
+    hr { margin: 1rem 0 !important; border-color: light-dark(rgba(15,23,42,0.08), rgba(255,255,255,0.08)) !important; }
+    div[data-testid="stCaptionContainer"] { opacity: .78; }
+    .st-key-date_mode [data-testid="stWidgetLabel"] p,
+    [data-testid="stDateInput"] [data-testid="stWidgetLabel"] p {
+        font-size: 0.84rem; opacity: .68; font-weight: 600; letter-spacing: .01em;
+    }
+    .period-note {
+        margin: 0.15rem 0 0.1rem;
+        padding: 0.62rem 0.9rem;
+        border-radius: 12px;
+        border: 1px solid light-dark(rgba(9,105,218,0.16), rgba(76,154,255,0.26));
+        background: light-dark(rgba(9,105,218,0.06), rgba(76,154,255,0.1));
+        color: light-dark(#1a3654, #d7e6ff);
+        font-size: 0.94rem;
+        line-height: 1.45;
+    }
+    .period-note strong { font-weight: 700; color: light-dark(#102033, #f4f8ff); }
+    .delta-line { margin: 0.7rem 0 0.15rem; font-size: 0.9rem; opacity: .68; }
+    .aside-metric {
+        margin: 0.15rem 0 0.35rem;
+        display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.85rem;
+    }
+    .aside-label { font-size: 0.9rem; opacity: .7; }
+    .aside-label span { opacity: .8; }
+    .aside-value {
+        font-size: 1.28rem; font-weight: 700; letter-spacing: -0.03em;
+        font-variant-numeric: tabular-nums;
+    }
+    .aside-delta { font-size: 0.84rem; opacity: .6; font-variant-numeric: tabular-nums; }
+    h4.section-title { margin: 1.15rem 0 0.2rem; }
+    div[class*="st-key-card-"] {
+        border: 1px solid light-dark(rgba(15,23,42,0.1), rgba(255,255,255,0.08)) !important;
+        border-radius: 14px !important;
+        background: light-dark(rgba(255,255,255,0.72), rgba(255,255,255,0.025)) !important;
+        transition: border-color .15s, background .15s;
+    }
+    div[class*="st-key-card-"]:hover {
+        border-color: light-dark(rgba(15,23,42,0.22), rgba(255,255,255,0.2)) !important;
+        background: light-dark(#fff, rgba(255,255,255,0.04)) !important;
+    }
     div[class*="st-key-card-red-"] { border-color: rgba(255,75,75,0.65) !important; }
     div[class*="st-key-card-green-"] { border-color: rgba(46,157,79,0.65) !important; }
-    .c-name { font-size: 14px; opacity: .75; margin-bottom: 2px; }
-    .c-sum { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+    .c-name { font-size: 13.5px; opacity: .78; margin-bottom: 2px; letter-spacing: -0.01em; }
+    .c-sum { font-size: 25px; font-weight: 700; margin-bottom: 6px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+    div[class*="st-key-card-"] .stButton button {
+        min-height: 2rem !important;
+        margin-top: 0.15rem !important;
+        background: transparent !important;
+        border: none !important;
+        border-top: 1px solid light-dark(rgba(15,23,42,0.08), rgba(255,255,255,0.08)) !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        color: light-dark(#0969da, #9ec0ff) !important;
+        font-weight: 600 !important;
+        padding: 0.4rem 0.1rem 0.05rem !important;
+    }
+    div[class*="st-key-card-"] .stButton button:hover {
+        background: transparent !important;
+        color: light-dark(#0550ae, #d6e6ff) !important;
+        border-top-color: light-dark(rgba(9,105,218,0.35), rgba(76,154,255,0.45)) !important;
+    }
+    div[class*="st-key-card-"] .stButton button:focus { box-shadow: none !important; }
+    .st-key-nav_back button {
+        background: transparent !important;
+        border: 1px solid light-dark(rgba(15,23,42,0.12), rgba(255,255,255,0.12)) !important;
+        color: inherit !important;
+        font-weight: 600 !important;
+        padding: 0.28rem 0.75rem !important;
+        min-height: 2.15rem !important;
+    }
+    .st-key-nav_back button:hover {
+        border-color: light-dark(rgba(9,105,218,0.45), rgba(76,154,255,0.5)) !important;
+        background: light-dark(rgba(9,105,218,0.06), rgba(76,154,255,0.1)) !important;
+        color: inherit !important;
+    }
+    .st-key-nav_back button:focus { box-shadow: none !important; }
     .chip { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 12px; }
     .chip-r { background: rgba(255,75,75,.14); color: #ff6b6b; }
     .chip-g { background: rgba(63,185,80,.14); color: #3fb950; }
@@ -57,8 +140,8 @@ def inject_css():
     .bar { height: 4px; background: rgba(128,128,128,.2); border-radius: 2px; margin: 12px 0 4px; }
     .bar div { height: 100%; background: #4C9AFF; border-radius: 2px; }
     .c-share { font-size: 12px; opacity: .6; margin-bottom: 6px; }
-    .big-sum { font-size: 34px; font-weight: 700; margin: 2px 0 0; }
-    .sub { font-size: 14px; opacity: .65; }
+    .big-sum { font-size: 32px; font-weight: 700; margin: 2px 0 0; letter-spacing: -0.035em; font-variant-numeric: tabular-nums; }
+    .sub { font-size: 13.5px; opacity: .62; letter-spacing: .01em; }
     .st-key-btn_inbound button { background: transparent !important; color: #3fb950 !important; border: 1.5px solid #3fb950 !important; font-weight: 600; letter-spacing: .5px; }
     .st-key-btn_inbound button:hover { background: rgba(63,185,80,.12) !important; }
     .st-key-btn_outbound button { background: transparent !important; color: #4C9AFF !important; border: 1.5px solid #4C9AFF !important; font-weight: 600; letter-spacing: .5px; }
@@ -92,21 +175,26 @@ def inject_css():
         min-height: 72px !important;
         padding: 14px 44px 14px 18px !important;
         border-radius: 16px !important;
-        border: 1px solid rgba(128,128,128,0.22) !important;
-        background: transparent !important;
+        border: 1px solid light-dark(rgba(15,23,42,0.1), rgba(255,255,255,0.1)) !important;
+        background: light-dark(rgba(255,255,255,0.72), rgba(255,255,255,0.025)) !important;
         box-shadow: none !important;
         color: inherit !important;
         transition: background .16s ease, border-color .16s ease !important;
     }
+    .st-key-pick_in button { box-shadow: inset 3px 0 0 light-dark(#1a7f37, #3fb950) !important; }
+    .st-key-pick_out button { box-shadow: inset 3px 0 0 light-dark(#0969da, #4C9AFF) !important; }
     .st-key-pick_in button:hover {
-        background: rgba(63, 185, 80, 0.14) !important;
-        border-color: rgba(63, 185, 80, 0.55) !important;
+        background: light-dark(rgba(26,127,55,0.08), rgba(63,185,80,0.12)) !important;
+        border-color: rgba(63, 185, 80, 0.45) !important;
+        box-shadow: inset 3px 0 0 light-dark(#1a7f37, #3fb950) !important;
     }
     .st-key-pick_out button:hover {
-        background: rgba(76, 154, 255, 0.14) !important;
-        border-color: rgba(76, 154, 255, 0.55) !important;
+        background: light-dark(rgba(9,105,218,0.08), rgba(76,154,255,0.12)) !important;
+        border-color: rgba(76, 154, 255, 0.45) !important;
+        box-shadow: inset 3px 0 0 light-dark(#0969da, #4C9AFF) !important;
     }
-    .st-key-pick_in button:focus, .st-key-pick_out button:focus { box-shadow: none !important; }
+    .st-key-pick_in button:focus { box-shadow: inset 3px 0 0 light-dark(#1a7f37, #3fb950) !important; }
+    .st-key-pick_out button:focus { box-shadow: inset 3px 0 0 light-dark(#0969da, #4C9AFF) !important; }
     .st-key-pick_in button:focus-visible { outline: 2px solid #3fb950 !important; outline-offset: 3px !important; }
     .st-key-pick_out button:focus-visible { outline: 2px solid #4C9AFF !important; outline-offset: 3px !important; }
     .st-key-pick_in button::after,
@@ -143,17 +231,22 @@ def inject_css():
     .st-key-pick_out button strong {
         font-size: 26px !important;
         font-weight: 700 !important;
-        letter-spacing: -0.5px !important;
+        letter-spacing: -0.03em !important;
         font-variant-numeric: tabular-nums;
         margin-left: auto !important;
     }
+    .st-key-pick_in button strong { color: light-dark(#1a7f37, #3fb950) !important; }
+    .st-key-pick_out button strong { color: light-dark(#0969da, #4C9AFF) !important; }
     .st-key-pick_out { margin-top: 8px !important; }
     /* Vega/Altair tooltip («Динамика по дням»): −24% от прежних 22px / 16px padding */
     #vg-tooltip-element {
+        font-family: Manrope, sans-serif !important;
         font-size: 17px !important;
         padding: 12px !important;
-        border-radius: 6px !important;
+        border-radius: 10px !important;
         line-height: 1.45 !important;
+        border: 1px solid light-dark(rgba(15,23,42,0.08), rgba(255,255,255,0.1)) !important;
+        box-shadow: 0 10px 28px light-dark(rgba(15,23,42,0.12), rgba(0,0,0,0.35)) !important;
     }
     #vg-tooltip-element h2 {
         font-size: 20px !important;
@@ -170,6 +263,14 @@ def inject_css():
     #vg-tooltip-element table tr td.value {
         max-width: 600px !important;
         max-height: 14em !important;
+    }
+    [data-testid="stExpander"] details {
+        background: light-dark(rgba(255,255,255,0.62), rgba(255,255,255,0.02));
+        border-color: light-dark(rgba(15,23,42,0.08), rgba(255,255,255,0.08)) !important;
+    }
+    section[data-testid="stSidebar"] h2 { letter-spacing: -0.03em; }
+    [data-testid="stFileUploaderDropzone"] {
+        background: light-dark(rgba(15,23,42,0.02), rgba(255,255,255,0.02));
     }
     </style>
     """, unsafe_allow_html=True)
@@ -279,7 +380,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
   {hits}
   <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
   <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
-  <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700">{label}</text>
+  <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700" style="font-variant-numeric:tabular-nums">{label}</text>
 </svg>
 </div>
 <span class="loss-pct loss-pct-out">{out_share}</span>
@@ -476,6 +577,10 @@ def _init_date_selector_defaults():
     st.session_state._date_selector_initialized = True
 
 
+def _period_note(html):
+    st.markdown(f'<div class="period-note">{html}</div>', unsafe_allow_html=True)
+
+
 def render_date_selector():
     """Возвращает: начало, конец, начало и конец периода сравнения.
     Неделя и месяц сравниваются по одинаковому числу дней (текущий период обрезается по сегодняшнюю дату).
@@ -483,23 +588,30 @@ def render_date_selector():
     _init_date_selector_defaults()
     today = date.today()
     fmt = lambda d: d.strftime('%d.%m.%Y')
-    mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True, key="date_mode")
+    cut, when = st.columns([1.05, 1.35], vertical_alignment="bottom", gap="medium")
+    with cut:
+        mode = st.radio("Выберите разрез:", ["День", "Неделя", "Месяц"], horizontal=True, key="date_mode")
+    with when:
+        if mode == "День":
+            label = "Выберите дату"
+        elif mode == "Неделя":
+            label = "Выберите любой день нужной недели"
+        else:
+            label = "Выберите любой день нужного месяца"
+        t = st.date_input(label, key="date_anchor")
 
     if mode == "День":
-        t = st.date_input("Выберите дату", key="date_anchor")
         start, end = t, t
         p_start = p_end = t - timedelta(days=1)
-        st.info(f"Выбран день: **{fmt(start)}** | Сравнение: **{fmt(p_start)}**")
+        _period_note(f"Выбран день: <strong>{fmt(start)}</strong> · сравнение: <strong>{fmt(p_start)}</strong>")
         return start, end, p_start, p_end
 
     if mode == "Неделя":
-        t = st.date_input("Выберите любой день нужной недели", key="date_anchor")
         start = t - timedelta(days=t.weekday())
         end = min(start + timedelta(days=6), today)
         p_start = start - timedelta(days=7)
         p_end = p_start + (end - start)
     else:
-        t = st.date_input("Выберите любой день нужного месяца", key="date_anchor")
         start = t.replace(day=1)
         end = min(t.replace(day=calendar.monthrange(t.year, t.month)[1]), today)
         p_start = start - relativedelta(months=1)
@@ -507,7 +619,10 @@ def render_date_selector():
         p_end = min(p_start + (end - start), p_last)
 
     days = (end - start).days + 1
-    st.info(f"Период: **{fmt(start)} — {fmt(end)}** ({days} дн.) | Сравнение с теми же днями: **{fmt(p_start)} — {fmt(p_end)}**")
+    _period_note(
+        f"Период: <strong>{fmt(start)} — {fmt(end)}</strong> ({days} дн.) · "
+        f"сравнение с теми же днями: <strong>{fmt(p_start)} — {fmt(p_end)}</strong>"
+    )
     return start, end, p_start, p_end
 
 

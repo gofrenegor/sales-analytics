@@ -1,3 +1,5 @@
+from html import escape
+
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -133,7 +135,7 @@ def render_cards(g, next_view, prefix, share_label):
 
 
 def back(label, target):
-    if st.button(label):
+    if st.button(label, key="nav_back"):
         st.session_state.view = target
         st.session_state.pop("loss_donut_click", None)
         st.rerun()
@@ -175,17 +177,30 @@ if view == 'dashboard':
     out_sum = sl(df_curr, "Исходящий поток")["loss_sum"].sum()
     render_flow_hero(in_sum, out_sum)
     if has_prev:
-        st.caption("К прошлому периоду: " + utils.get_delta_text(
-            df_curr["loss_sum"].sum(), df_curr["loss_qty"].sum(),
-            df_prev["loss_sum"].sum(), df_prev["loss_qty"].sum()))
+        st.markdown(
+            '<p class="delta-line">К прошлому периоду · '
+            + escape(utils.get_delta_text(
+                df_curr["loss_sum"].sum(), df_curr["loss_qty"].sum(),
+                df_prev["loss_sum"].sum(), df_prev["loss_qty"].sum()))
+            + "</p>",
+            unsafe_allow_html=True,
+        )
     other_sum = other_curr["loss_sum"].sum()
     if other_sum or not other_prev.empty:
-        st.metric(
-            "Вне потоков (не входит в диаграмму)",
-            fmt_rub(other_sum),
-            delta=utils.get_delta_text(other_sum, other_curr["loss_qty"].sum(), other_prev["loss_sum"].sum(), other_prev["loss_qty"].sum())
-            if not other_prev.empty else None,
-            delta_color="off",
+        delta_html = ""
+        if not other_prev.empty:
+            delta_html = (
+                '<div class="aside-delta">'
+                + escape(utils.get_delta_text(
+                    other_sum, other_curr["loss_qty"].sum(),
+                    other_prev["loss_sum"].sum(), other_prev["loss_qty"].sum()))
+                + "</div>"
+            )
+        st.markdown(
+            '<div class="aside-metric"><div class="aside-label">Вне потоков '
+            '<span>· не входит в диаграмму</span></div>'
+            f'<div class="aside-value">{fmt_rub(other_sum)}</div>{delta_html}</div>',
+            unsafe_allow_html=True,
         )
     if not other_curr.empty:
         st.caption("Статусы вне потоков временно исключены из диаграммы и итогов — список в «Проверке данных» выше.")
@@ -209,30 +224,66 @@ if view == 'dashboard':
                 gl = gl.merge(top_b.reset_index()[['day', 'block_group']], on=['day', 'block_group'])
                 gl = gl.sort_values('loss_sum', ascending=False).groupby('day').head(1)
                 top_blk_lr = {r.day: f"LR {r.reason} · {fmt_rub(r.loss_sum)}" for r in gl.itertuples()}
+            grp = lambda vals: [f"{v:,.0f}".replace(",", " ") for v in vals]
             out = pd.DataFrame({'Период': label, 'День': range(1, n_days + 1), 'Дата': [x.strftime('%d.%m.%Y') for x in idx],
                                 'Топ-1 LR': [top_lr.get(x, '—') for x in idx],
                                 'Сумма': sums.values, 'Штуки': qty.values,
+                                'Сумма, ₽': grp(sums.values), 'Штуки, шт': grp(qty.values),
                                 'Топ-1 блок': [top.get(x, '—') for x in idx],
                                 'Топ-1 LR в блоке': [top_blk_lr.get(x, '—') for x in idx]})
             return out[idx <= pd.Timestamp(last)]
         parts = [daily(df_curr, start_date, end_date, 'Текущий период')]
         if has_prev:
             parts.append(daily(df_prev, prev_start, prev_end, 'Прошлый период'))
-        st.markdown("#### Динамика по дням")
-        st.altair_chart(alt.Chart(pd.concat(parts)).mark_line(point=alt.OverlayMarkDef(size=70)).encode(
-            x=alt.X('День:Q', title=None, axis=alt.Axis(tickMinStep=1, grid=False)),
-            y=alt.Y('Сумма:Q', title=None, axis=alt.Axis(format=',.0f')),
-            color=alt.Color('Период:N', scale=alt.Scale(domain=['Текущий период', 'Прошлый период'], range=['#4C9AFF', '#8b95a5']),
-                            legend=alt.Legend(orient='bottom', title=None)),
-            tooltip=[alt.Tooltip('Период:N'), alt.Tooltip('Дата:N'), alt.Tooltip('Топ-1 LR:N'),
-                     alt.Tooltip('Сумма:Q', title='Сумма, ₽', format=',.0f'), alt.Tooltip('Штуки:Q', format=',.0f'),
-                     alt.Tooltip('Топ-1 блок:N'), alt.Tooltip('Топ-1 LR в блоке:N')]
-        ).properties(height=462), use_container_width=True)
+        st.markdown('<h4 class="section-title">Динамика по дням</h4>', unsafe_allow_html=True)
+        chart_df = pd.concat(parts)
+        x_enc = alt.X('День:Q', title=None, axis=alt.Axis(
+            tickMinStep=1, grid=False, labelColor='#7d8794', labelFontSize=12, labelPadding=6,
+            domainColor='rgba(128,128,128,0.35)', tickColor='rgba(128,128,128,0.35)',
+        ))
+        y_enc = alt.Y('Сумма:Q', title=None, axis=alt.Axis(
+            tickCount=4, grid=True, gridColor='rgba(128,128,128,0.16)', gridDash=[3, 4],
+            labelColor='#7d8794', labelFontSize=12, labelPadding=8, domain=False, ticks=False,
+            labelExpr="replace(format(datum.value, ',.0f'), ',', '\\u00a0')",
+        ))
+        tip = [
+            alt.Tooltip('Период:N'), alt.Tooltip('Дата:N'), alt.Tooltip('Топ-1 LR:N'),
+            alt.Tooltip('Сумма, ₽:N'), alt.Tooltip('Штуки, шт:N'),
+            alt.Tooltip('Топ-1 блок:N'), alt.Tooltip('Топ-1 LR в блоке:N'),
+        ]
+        color_enc = alt.Color(
+            'Период:N',
+            scale=alt.Scale(domain=['Текущий период', 'Прошлый период'], range=['#4C9AFF', '#8b95a5']),
+            legend=alt.Legend(orient='bottom', title=None, labelFontSize=13, labelColor='#7d8794', symbolStrokeWidth=3, padding=8),
+        )
+        dash_enc = alt.StrokeDash(
+            'Период:N',
+            scale=alt.Scale(domain=['Текущий период', 'Прошлый период'], range=[[1, 0], [5, 4]]),
+            legend=None,
+        )
+        area = (
+            alt.Chart(chart_df)
+            .transform_filter(alt.datum.Период == 'Текущий период')
+            .mark_area(color='#4C9AFF', opacity=0.13, interpolate='linear')
+            .encode(x=x_enc, y=y_enc, tooltip=tip)
+        )
+        line = (
+            alt.Chart(chart_df)
+            .mark_line(strokeWidth=2.25, interpolate='linear', point=alt.OverlayMarkDef(size=36, filled=True))
+            .encode(x=x_enc, y=y_enc, color=color_enc, strokeDash=dash_enc, tooltip=tip)
+        )
+        daily_chart = (
+            (area + line)
+            .properties(height=400)
+            .configure_view(stroke=None)
+            .configure(background='transparent', font='Manrope, sans-serif')
+        )
+        st.altair_chart(daily_chart, use_container_width=True)
         st.caption("По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока.")
 
 # ===== 2. ЭКРАН ПОТОКА =====
 elif view == 'flow':
-    back("⬅️ Назад на главную", 'dashboard')
+    back("← Назад на главную", 'dashboard')
     flow = FLOW_NAMES[st.session_state.selected_flow]
     st.subheader(f"Выбран: {flow}")
     dc, dp = sl(df_curr, flow), sl(df_prev, flow)
@@ -247,7 +298,7 @@ elif view == 'flow':
 
 # ===== 3. ЭКРАН БЛОКА =====
 elif view == 'group':
-    back("⬅️ Назад к потокам", 'flow')
+    back("← Назад к потокам", 'flow')
     flow, group = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group
     st.subheader(f"Блок: {group} ({flow})")
     dc, dp = sl(df_curr, flow, group), sl(df_prev, flow, group)
@@ -283,7 +334,7 @@ elif view == 'group':
 
 # ===== 4. ЭКРАН ПЛОЩАДКИ (детализация по LR) =====
 elif view == 'block_detail':
-    back("⬅️ Назад к площадкам", 'group')
+    back("← Назад к площадкам", 'group')
     flow, group, block = FLOW_NAMES[st.session_state.selected_flow], st.session_state.selected_group, st.session_state.selected_block
     col = ('process_stage' if group == 'Опер площадь'
            else 'status_before' if group in (utils.FOREIGN_GROUP, utils.DEFECT_GROUP)
