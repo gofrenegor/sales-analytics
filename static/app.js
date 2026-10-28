@@ -709,17 +709,22 @@ function wireAdmin() {
   });
 }
 
-function wireChrome() {
+function setAdminOpen(open) {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("backdrop");
-  document.getElementById("menu").addEventListener("click", () => {
-    sidebar.classList.toggle("open");
-    backdrop.classList.toggle("show");
+  const toggle = document.getElementById("admin-toggle");
+  sidebar.classList.toggle("open", open);
+  backdrop.classList.toggle("show", open);
+  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function wireChrome() {
+  const backdrop = document.getElementById("backdrop");
+  document.getElementById("admin-toggle").addEventListener("click", () => {
+    const sidebar = document.getElementById("sidebar");
+    setAdminOpen(!sidebar.classList.contains("open"));
   });
-  backdrop.addEventListener("click", () => {
-    sidebar.classList.remove("open");
-    backdrop.classList.remove("show");
-  });
+  backdrop.addEventListener("click", () => setAdminOpen(false));
   document.getElementById("theme").addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
