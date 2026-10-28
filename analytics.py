@@ -74,10 +74,6 @@ GROUP_PROMPTS = {
     "platforms": "Выберите площадку для детализации:",
 }
 
-FLOW_IN_COLOR = "#3fb950"
-FLOW_OUT_COLOR = "#4C9AFF"
-
-
 def business_today():
     """«Сегодня» для обрезки недели и месяца. По умолчанию — календарь Москвы."""
     raw = os.environ.get("APP_TODAY", "").strip()
@@ -120,8 +116,51 @@ def _fmt_share(pct):
     return f"{pct:.1f}%"
 
 
+def _fmt_n(value):
+    return f"{value:.2f}"
+
+
+def _ring_point(cx, cy, r, deg):
+    rad = math.radians(deg)
+    return cx + r * math.cos(rad), cy + r * math.sin(rad)
+
+
+def _annulus_path(cx, cy, inner, outer, start_deg, span_deg):
+    """Залитый сектор кольца. 0° — 3 часа, дальше по часовой.
+
+    Заливка вместо толстого stroke: край остаётся ровным и не сыпется
+    в радиальные полосы, когда сектор крутят перерисовкой.
+    """
+    if span_deg <= 0.4:
+        return ""
+    if span_deg >= 359.2:
+        # Две полуокружности через диаметр. Точки почти в одном месте
+        # раздувают дугу и рисуют кольцо не там.
+        return " ".join([
+            f"M {_fmt_n(cx - outer)} {_fmt_n(cy)}",
+            f"A {_fmt_n(outer)} {_fmt_n(outer)} 0 1 1 {_fmt_n(cx + outer)} {_fmt_n(cy)}",
+            f"A {_fmt_n(outer)} {_fmt_n(outer)} 0 1 1 {_fmt_n(cx - outer)} {_fmt_n(cy)}",
+            f"M {_fmt_n(cx - inner)} {_fmt_n(cy)}",
+            f"A {_fmt_n(inner)} {_fmt_n(inner)} 0 1 0 {_fmt_n(cx + inner)} {_fmt_n(cy)}",
+            f"A {_fmt_n(inner)} {_fmt_n(inner)} 0 1 0 {_fmt_n(cx - inner)} {_fmt_n(cy)}",
+            "Z",
+        ])
+    end = start_deg + span_deg
+    large = 1 if span_deg > 180 else 0
+    x1, y1 = _ring_point(cx, cy, outer, start_deg)
+    x2, y2 = _ring_point(cx, cy, outer, end)
+    x3, y3 = _ring_point(cx, cy, inner, end)
+    x4, y4 = _ring_point(cx, cy, inner, start_deg)
+    return (
+        f"M {_fmt_n(x1)} {_fmt_n(y1)} "
+        f"A {_fmt_n(outer)} {_fmt_n(outer)} 0 {large} 1 {_fmt_n(x2)} {_fmt_n(y2)} "
+        f"L {_fmt_n(x3)} {_fmt_n(y3)} "
+        f"A {_fmt_n(inner)} {_fmt_n(inner)} 0 {large} 0 {_fmt_n(x4)} {_fmt_n(y4)} Z"
+    )
+
+
 def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-seg"):
-    """Дуга кольца. 0° — 3 часа, дальше по часовой."""
+    """Невидимая дуга-хит. 0° — 3 часа, дальше по часовой."""
     if span_deg <= 0.4:
         return ""
     if span_deg >= 359.2:
@@ -131,10 +170,8 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-se
         )
     end = start_deg + span_deg
     large = 1 if span_deg > 180 else 0
-    x1 = cx + r * math.cos(math.radians(start_deg))
-    y1 = cy + r * math.sin(math.radians(start_deg))
-    x2 = cx + r * math.cos(math.radians(end))
-    y2 = cy + r * math.sin(math.radians(end))
+    x1, y1 = _ring_point(cx, cy, r, start_deg)
+    x2, y2 = _ring_point(cx, cy, r, end)
     return (
         f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
         f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="{css_class}" />'
@@ -158,7 +195,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     out_pct = (100.0 - in_pct) if total else 0.0
 
     cx, cy, r, sw = 200, 200, 112, 50
-    outer, inner, outset = r + sw / 2, r - sw / 2, 8
+    inner, outer, outset = r - sw / 2, r + sw / 2, 8
     hit_r = (outer + outset + inner) / 2
     hit_sw = outer + outset - inner
     gap = 5.0 if in_pct > 1 and out_pct > 1 else 0.0
@@ -183,9 +220,10 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     )
     in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
     in_share, out_share = escape(in_lbl), escape(out_lbl)
+    track = _annulus_path(cx, cy, inner, outer, 0, 360)
     arcs = (
-        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR)
-        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR)
+        f'<path class="loss-arc loss-arc-in" fill="var(--green)" fill-rule="evenodd" d="{_annulus_path(cx, cy, inner, outer, in_start, in_span)}" />'
+        + f'<path class="loss-arc loss-arc-out" fill="var(--blue)" fill-rule="evenodd" d="{_annulus_path(cx, cy, inner, outer, out_start, out_span)}" />'
     )
 
     def _seg_link(flow, start, span):
@@ -204,13 +242,17 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
 <span class="loss-pct loss-pct-in">{in_share}</span>
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
-  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
-  {arcs}
+  <g class="loss-ring" data-cx="{cx}" data-cy="{cy}" data-inner="{_fmt_n(inner)}" data-outer="{_fmt_n(outer)}" data-in-pct="{in_pct:.6f}" data-out-pct="{out_pct:.6f}" data-gap="{gap:.1f}">
+    <path class="loss-track" fill="var(--donut-track)" fill-rule="evenodd" d="{track}" />
+    {arcs}
+    <path class="loss-arc-cover" fill="var(--donut-purple)" fill-rule="evenodd" opacity="0" d="{track}" />
+  </g>
   {hits}
-  <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
-  <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
-  <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700" style="font-variant-numeric:tabular-nums">{label}</text>
 </svg>
+<div class="loss-center" aria-hidden="true">
+  <div class="loss-caption"><span>Полная сумма</span><span>списаний</span></div>
+  <div class="loss-sum" style="--sum-units: {sum_size}">{label}</div>
+</div>
 </div>
 <span class="loss-pct loss-pct-out">{out_share}</span>
 </div>

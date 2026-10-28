@@ -154,6 +154,173 @@ function onControlsChange() {
   loadReport({ spin: true });
 }
 
+const DONUT_SPIN_MS = 1200;
+
+function wrapDeg(deg) {
+  return ((deg % 360) + 360) % 360;
+}
+
+function smooth01(value) {
+  const t = Math.max(0, Math.min(1, value));
+  return t * t * (3 - 2 * t);
+}
+
+function donutMorph(progress) {
+  if (progress <= 0.3) return smooth01(progress / 0.3);
+  if (progress < 0.4) return 1;
+  if (progress < 0.65) return 1 - smooth01((progress - 0.4) / 0.25);
+  return 0;
+}
+
+function donutSpan(pct, gap) {
+  const raw = (pct / 100) * 360;
+  if (raw <= 0) return 0;
+  if (gap && raw > gap + 1) return raw - gap;
+  return raw;
+}
+
+function parseCssColor(value) {
+  const text = String(value || "").trim();
+  const hex = text.match(/^#([0-9a-f]{6})$/i);
+  if (hex) {
+    const n = parseInt(hex[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  const rgb = text.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+  if (rgb) return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])];
+  return [196, 181, 253];
+}
+
+function mixRgb(from, to, t) {
+  const channel = (index) => Math.round(from[index] + (to[index] - from[index]) * t);
+  return `rgb(${channel(0)}, ${channel(1)}, ${channel(2)})`;
+}
+
+function ringPoint(cx, cy, radius, deg) {
+  const rad = (deg * Math.PI) / 180;
+  return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+}
+
+function fmtCoord(value) {
+  return value.toFixed(2);
+}
+
+function donutAnnulusPath(cx, cy, inner, outer, startDeg, spanDeg) {
+  if (spanDeg <= 0.4) return "";
+  if (spanDeg >= 359.2) {
+    return [
+      `M ${fmtCoord(cx - outer)} ${fmtCoord(cy)}`,
+      `A ${fmtCoord(outer)} ${fmtCoord(outer)} 0 1 1 ${fmtCoord(cx + outer)} ${fmtCoord(cy)}`,
+      `A ${fmtCoord(outer)} ${fmtCoord(outer)} 0 1 1 ${fmtCoord(cx - outer)} ${fmtCoord(cy)}`,
+      `M ${fmtCoord(cx - inner)} ${fmtCoord(cy)}`,
+      `A ${fmtCoord(inner)} ${fmtCoord(inner)} 0 1 0 ${fmtCoord(cx + inner)} ${fmtCoord(cy)}`,
+      `A ${fmtCoord(inner)} ${fmtCoord(inner)} 0 1 0 ${fmtCoord(cx - inner)} ${fmtCoord(cy)}`,
+      "Z",
+    ].join(" ");
+  }
+  const end = startDeg + spanDeg;
+  const large = spanDeg > 180 ? 1 : 0;
+  const [x1, y1] = ringPoint(cx, cy, outer, startDeg);
+  const [x2, y2] = ringPoint(cx, cy, outer, end);
+  const [x3, y3] = ringPoint(cx, cy, inner, end);
+  const [x4, y4] = ringPoint(cx, cy, inner, startDeg);
+  return [
+    `M ${fmtCoord(x1)} ${fmtCoord(y1)}`,
+    `A ${fmtCoord(outer)} ${fmtCoord(outer)} 0 ${large} 1 ${fmtCoord(x2)} ${fmtCoord(y2)}`,
+    `L ${fmtCoord(x3)} ${fmtCoord(y3)}`,
+    `A ${fmtCoord(inner)} ${fmtCoord(inner)} 0 ${large} 0 ${fmtCoord(x4)} ${fmtCoord(y4)} Z`,
+  ].join(" ");
+}
+
+function readDonutPalette() {
+  const style = getComputedStyle(document.documentElement);
+  return {
+    inn: parseCssColor(style.getPropertyValue("--green")),
+    out: parseCssColor(style.getPropertyValue("--blue")),
+    purple: parseCssColor(style.getPropertyValue("--donut-purple")),
+  };
+}
+
+function paintDonutProgress(ring, progress, palette) {
+  const colors = palette || readDonutPalette();
+  const cx = Number(ring.dataset.cx);
+  const cy = Number(ring.dataset.cy);
+  const inner = Number(ring.dataset.inner);
+  const outer = Number(ring.dataset.outer);
+  const inPct = Number(ring.dataset.inPct);
+  const outPct = Number(ring.dataset.outPct);
+  const baseGap = Number(ring.dataset.gap) || 0;
+  const morph = donutMorph(progress);
+  const rot = progress * 360;
+  const gap = baseGap * (1 - morph);
+  const inSpan = donutSpan(inPct, gap);
+  const outSpan = donutSpan(outPct, gap);
+  const overlap = gap < 0.8 ? 0.55 : 0;
+  const inStart = wrapDeg(180 - inSpan / 2 + rot - overlap / 2);
+  const outStart = wrapDeg(0 - outSpan / 2 + rot - overlap / 2);
+  const inArc = ring.querySelector(".loss-arc-in");
+  const outArc = ring.querySelector(".loss-arc-out");
+  const cover = ring.querySelector(".loss-arc-cover");
+  if (inArc) {
+    inArc.setAttribute("d", donutAnnulusPath(cx, cy, inner, outer, inStart, inSpan + overlap));
+    inArc.setAttribute("fill", mixRgb(colors.inn, colors.purple, morph));
+  }
+  if (outArc) {
+    outArc.setAttribute("d", donutAnnulusPath(cx, cy, inner, outer, outStart, outSpan + overlap));
+    outArc.setAttribute("fill", mixRgb(colors.out, colors.purple, morph));
+  }
+  if (cover) {
+    const coverOpacity = morph <= 0.78 ? 0 : (morph - 0.78) / 0.22;
+    cover.setAttribute("opacity", coverOpacity.toFixed(3));
+  }
+}
+
+function animateDonutRing(ring) {
+  if (!ring) return { stop() {} };
+  const saved = [...ring.querySelectorAll(".loss-arc-in, .loss-arc-out")].map((node) => ({
+    node,
+    d: node.getAttribute("d"),
+    fill: node.getAttribute("fill"),
+  }));
+  const cover = ring.querySelector(".loss-arc-cover");
+  const coverOpacity = cover ? cover.getAttribute("opacity") : null;
+  const palette = readDonutPalette();
+  let frame = 0;
+  let stopped = false;
+  const restore = () => {
+    for (const item of saved) {
+      if (item.d == null) item.node.removeAttribute("d");
+      else item.node.setAttribute("d", item.d);
+      if (item.fill == null) item.node.removeAttribute("fill");
+      else item.node.setAttribute("fill", item.fill);
+    }
+    if (cover) {
+      if (coverOpacity == null) cover.removeAttribute("opacity");
+      else cover.setAttribute("opacity", coverOpacity);
+    }
+  };
+  const t0 = performance.now();
+  const tick = (now) => {
+    if (stopped || !ring.isConnected) return;
+    const progress = Math.min(1, (now - t0) / DONUT_SPIN_MS);
+    paintDonutProgress(ring, progress, palette);
+    if (progress >= 1) {
+      restore();
+      return;
+    }
+    frame = requestAnimationFrame(tick);
+  };
+  frame = requestAnimationFrame(tick);
+  return {
+    stop() {
+      if (stopped) return;
+      stopped = true;
+      cancelAnimationFrame(frame);
+      if (ring.isConnected) restore();
+    },
+  };
+}
+
 function spinVisibleDonut(seq) {
   if (reducedMotion()) return Promise.resolve();
   const node = document.querySelector("#screen .loss-donut-wrap");
@@ -162,14 +329,17 @@ function spinVisibleDonut(seq) {
   node.classList.remove("spin-once");
   void node.offsetWidth;
   node.classList.add("spin-once");
+  const motion = animateDonutRing(node.querySelector(".loss-ring"));
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
+      motion.stop();
+      if (gen === spinGen && node.isConnected) node.classList.remove("spin-once");
       resolve();
     };
-    const timer = window.setTimeout(finish, 860);
+    const timer = window.setTimeout(finish, DONUT_SPIN_MS + 180);
     const watch = window.setInterval(() => {
       if (gen !== spinGen || seq !== loadSeq || !node.isConnected) {
         window.clearInterval(watch);
@@ -178,11 +348,10 @@ function spinVisibleDonut(seq) {
       }
     }, 48);
     node.addEventListener("animationend", function onEnd(event) {
-      if (event.target !== node || event.animationName !== "donut-spin") return;
+      if (!event.target.classList?.contains("loss-caption") || event.animationName !== "caption-breathe") return;
       node.removeEventListener("animationend", onEnd);
       window.clearInterval(watch);
       window.clearTimeout(timer);
-      if (gen === spinGen) node.classList.remove("spin-once");
       finish();
     });
   });

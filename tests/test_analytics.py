@@ -111,6 +111,21 @@ def test_delta_and_donut():
     assert "5 000 ₽" in svg
     assert "30.0%" in svg
     assert "70.0%" in svg
+    assert 'data-in-pct="30.000000"' in svg
+    assert 'data-out-pct="70.000000"' in svg
+    assert 'data-gap="5.0"' in svg
+    assert 'fill="var(--green)"' in svg
+    assert 'fill="var(--blue)"' in svg
+    assert 'class="loss-arc-cover"' in svg
+    assert svg.find("</svg>") < svg.find('class="loss-caption"')
+    assert 'class="loss-caption"' in svg
+    assert ">Полная сумма</span>" in svg
+    assert ">списаний</span>" in svg
+    solo = build_loss_donut_svg(5000, 0, fmt_rub(5000))
+    assert 'data-gap="0.0"' in solo
+    assert 'data-in-pct="100.000000"' in solo
+    assert 'data-out-pct="0.000000"' in solo
+    assert 'd="M 63.00 200.00 A 137.00 137.00 0 1 1 337.00 200.00' in solo
 
 
 def test_structure_and_quality():
