@@ -8,6 +8,11 @@ const state = {
   report: null,
 };
 
+const VIEW_DEPTH = { dashboard: 0, flow: 1, group: 2, block_detail: 3 };
+let screenMotion = "";
+let animating = 0;
+let spinGen = 0;
+
 const ANCHOR_LABELS = {
   "День": "Выберите дату",
   "Неделя": "Выберите любой день нужной недели",
@@ -102,8 +107,22 @@ function writeUrl(push) {
   else history.replaceState(null, "", url);
 }
 
+function viewKey() {
+  return [state.view, state.flow, state.group, state.block].join("\0");
+}
+
+function reducedMotion() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 function go(patch, push = true) {
+  const prevDepth = VIEW_DEPTH[state.view] ?? 0;
+  const prevKey = viewKey();
   Object.assign(state, patch);
+  if (viewKey() !== prevKey) {
+    const nextDepth = VIEW_DEPTH[state.view] ?? 0;
+    screenMotion = nextDepth < prevDepth ? "back" : "forward";
+  }
   writeUrl(push);
   render();
 }
@@ -132,12 +151,56 @@ function onControlsChange() {
   state.mode = mode;
   state.anchor = anchor;
   writeUrl(false);
-  loadReport();
+  loadReport({ spin: true });
+}
+
+function spinVisibleDonut(seq) {
+  if (reducedMotion()) return Promise.resolve();
+  const node = document.querySelector("#screen .loss-donut-wrap");
+  if (!node) return Promise.resolve();
+  const gen = ++spinGen;
+  node.classList.remove("spin-once");
+  void node.offsetWidth;
+  node.classList.add("spin-once");
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timer = window.setTimeout(finish, 860);
+    const watch = window.setInterval(() => {
+      if (gen !== spinGen || seq !== loadSeq || !node.isConnected) {
+        window.clearInterval(watch);
+        window.clearTimeout(timer);
+        finish();
+      }
+    }, 48);
+    node.addEventListener("animationend", function onEnd(event) {
+      if (event.target !== node || event.animationName !== "donut-spin") return;
+      node.removeEventListener("animationend", onEnd);
+      window.clearInterval(watch);
+      window.clearTimeout(timer);
+      if (gen === spinGen) node.classList.remove("spin-once");
+      finish();
+    });
+  });
+}
+
+async function waitAnimating() {
+  const start = performance.now();
+  while (animating > 0 && performance.now() - start < 1400) {
+    await new Promise((resolve) => window.setTimeout(resolve, 32));
+  }
 }
 
 let loadSeq = 0;
-async function loadReport() {
+async function loadReport(options = {}) {
   const seq = ++loadSeq;
+  const spin = options.spin ? spinVisibleDonut(seq) : null;
+  const screen = document.getElementById("screen");
+  if (screen) screen.setAttribute("aria-busy", "true");
   setStatus("Обновление…");
   setBanner("");
   try {
@@ -146,14 +209,23 @@ async function loadReport() {
     const data = await response.json();
     if (seq !== loadSeq) return;
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    if (spin) await spin;
+    if (seq !== loadSeq) return;
+    await waitAnimating();
+    if (seq !== loadSeq) return;
     state.report = data;
+    if (options.spin && !screenMotion) screenMotion = "settle";
     render();
     setStatus("");
   } catch (error) {
     if (seq !== loadSeq) return;
+    if (spin) await spin;
+    if (seq !== loadSeq) return;
     setBanner(error.message);
     setStatus("");
     render();
+  } finally {
+    if (seq === loadSeq && screen) screen.removeAttribute("aria-busy");
   }
 }
 
@@ -164,6 +236,7 @@ function strong(text) {
 function renderNotes() {
   const note = document.getElementById("period-note");
   const report = state.report;
+  const prevText = note.textContent;
   note.replaceChildren();
   if (!report || !report.period) {
     note.hidden = true;
@@ -182,6 +255,11 @@ function renderNotes() {
   const showCompare = report && !report.empty && !report.has_prev;
   compare.hidden = !showCompare;
   compare.textContent = showCompare ? "ℹ️ За период сравнения в базе данных нет — динамика не показывается." : "";
+  if (prevText && note.textContent !== prevText && !reducedMotion()) {
+    note.classList.remove("note-swap");
+    void note.offsetWidth;
+    note.classList.add("note-swap");
+  }
 }
 
 function moneyTable(headers, records) {
@@ -573,8 +651,12 @@ function renderDetail(screen) {
 }
 
 function renderScreen() {
-  const screen = document.getElementById("screen");
-  screen.replaceChildren();
+  const pane = el("div", { class: "screen-pane" });
+  fillScreen(pane);
+  presentScreen(pane);
+}
+
+function fillScreen(screen) {
   const report = state.report;
   if (!report) {
     screen.append(el("p", { class: "hint" }, "Загрузка…"));
@@ -588,6 +670,56 @@ function renderScreen() {
   else if (state.view === "group") renderGroup(screen);
   else if (state.view === "block_detail") renderDetail(screen);
   else renderDashboard(screen);
+}
+
+function presentScreen(pane) {
+  const host = document.getElementById("screen");
+  const motion = screenMotion;
+  screenMotion = "";
+  const stale = [...host.querySelectorAll(":scope > .screen-pane")];
+  const outgoing = stale.pop() || null;
+  stale.forEach((node) => node.remove());
+  const reduced = reducedMotion();
+  const kind = outgoing && !reduced ? motion : "";
+  if (!kind) {
+    if (motion === "settle" && !reduced) {
+      pane.classList.add("reveal");
+      pane.querySelectorAll(".chart-wrap").forEach((node) => node.classList.add("draw-once"));
+    }
+    host.replaceChildren(pane);
+    host.style.minHeight = "";
+    host.classList.remove("moving");
+    return;
+  }
+  const outClass = kind === "forward" ? "leave-left" : kind === "back" ? "leave-right" : "leave-fade";
+  const inClass = kind === "forward" ? "enter-right" : kind === "back" ? "enter-left" : "reveal";
+  const inName = kind === "forward" ? "pane-enter-right" : kind === "back" ? "pane-enter-left" : "pane-reveal";
+  outgoing.classList.remove("enter-right", "enter-left", "reveal", "leave-left", "leave-right", "leave-fade");
+  outgoing.classList.add(outClass);
+  pane.classList.add(inClass);
+  host.classList.add("moving");
+  if (kind === "settle") pane.querySelectorAll(".chart-wrap").forEach((node) => node.classList.add("draw-once"));
+  host.append(pane);
+  host.style.minHeight = `${Math.max(outgoing.offsetHeight, pane.offsetHeight)}px`;
+  animating += 1;
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    animating = Math.max(0, animating - 1);
+    if (!pane.isConnected || host.lastElementChild !== pane) return;
+    pane.classList.remove(inClass);
+    host.replaceChildren(pane);
+    host.style.minHeight = "";
+    host.classList.remove("moving");
+  };
+  pane.addEventListener("animationend", (event) => {
+    if (event.target === pane && event.animationName === inName) close();
+  });
+  window.setTimeout(close, kind === "settle" ? 480 : 560);
+  if (kind !== "settle" && host.getBoundingClientRect().top < 8) {
+    host.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 }
 
 function render() {
@@ -757,10 +889,16 @@ function wireChrome() {
   document.getElementById("dates").addEventListener("submit", (event) => event.preventDefault());
   document.getElementById("dates").addEventListener("change", onControlsChange);
   window.addEventListener("popstate", () => {
-    const key = `${state.mode}|${state.anchor}`;
+    const prevDepth = VIEW_DEPTH[state.view] ?? 0;
+    const prevKey = viewKey();
+    const period = `${state.mode}|${state.anchor}`;
     readUrl();
     syncForm();
-    if (key !== `${state.mode}|${state.anchor}`) loadReport();
+    if (viewKey() !== prevKey) {
+      const nextDepth = VIEW_DEPTH[state.view] ?? 0;
+      screenMotion = nextDepth < prevDepth ? "back" : nextDepth > prevDepth ? "forward" : "back";
+    }
+    if (period !== `${state.mode}|${state.anchor}`) loadReport({ spin: true });
     else render();
   });
 }

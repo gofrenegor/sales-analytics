@@ -249,6 +249,12 @@ input[type="date"], input[type="file"] {
   border: 1px solid var(--line-strong);
   border-radius: 10px;
   padding: 0.45rem 0.65rem;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+input[type="date"]:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-dim);
+  outline: none;
 }
 .anchor { min-width: min(100%, 280px); }
 
@@ -364,7 +370,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   text-align: left;
   font-size: 17px;
   font-weight: 650;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
+.flow-btn:active { transform: scale(0.985); }
 .flow-btn.in { box-shadow: inset 3px 0 0 var(--green); }
 .flow-btn.out { box-shadow: inset 3px 0 0 var(--blue); }
 .flow-btn.in:hover { background: var(--green-dim); }
@@ -425,8 +433,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--card);
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
 }
 .card:hover { background: var(--card-hover); }
+.card:active { transform: scale(0.985); }
 .card.red { border-color: color-mix(in srgb, var(--red) 65%, transparent); }
 .card.green { border-color: color-mix(in srgb, var(--green) 65%, transparent); }
 .c-name { font-size: 13.5px; color: var(--muted); }
@@ -509,4 +519,98 @@ td.num, th.num { text-align: right; }
   .loss-pct { font-size: 18px; }
   .loss-pct-in { margin-right: 0; }
   .loss-pct-out { margin-left: 0; }
+}
+
+#screen { position: relative; }
+#screen.moving { overflow: hidden; }
+.screen-pane { width: 100%; }
+.screen-pane.leave-left,
+.screen-pane.leave-right,
+.screen-pane.leave-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+}
+.screen-pane.enter-right,
+.screen-pane.enter-left,
+.screen-pane.reveal { position: relative; z-index: 1; }
+.screen-pane.leave-left { animation: pane-leave-left 0.44s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.screen-pane.enter-right { animation: pane-enter-right 0.44s cubic-bezier(0.22, 1, 0.36, 1); }
+.screen-pane.leave-right { animation: pane-leave-right 0.44s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+.screen-pane.enter-left { animation: pane-enter-left 0.44s cubic-bezier(0.22, 1, 0.36, 1); }
+.screen-pane.leave-fade { animation: pane-fade-out 0.28s ease forwards; }
+.screen-pane.reveal { animation: pane-reveal 0.36s cubic-bezier(0.22, 0.8, 0.24, 1); }
+button.back { transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease; }
+button.back:active { transform: translateX(-3px); }
+
+@keyframes pane-leave-left {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-100%, 0, 0); }
+}
+@keyframes pane-enter-right {
+  from { transform: translate3d(100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+@keyframes pane-leave-right {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(100%, 0, 0); }
+}
+@keyframes pane-enter-left {
+  from { transform: translate3d(-100%, 0, 0); }
+  to { transform: translate3d(0, 0, 0); }
+}
+@keyframes pane-fade-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.985); }
+}
+@keyframes pane-reveal {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+.loss-donut-wrap.spin-once {
+  animation: donut-spin 0.74s cubic-bezier(0.45, 0.02, 0.18, 1);
+  transform-origin: center center;
+  pointer-events: none;
+  will-change: transform;
+}
+@keyframes donut-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.loss-figure:has(.spin-once) .loss-pct { animation: pct-dim 0.74s ease; }
+@keyframes pct-dim {
+  0%, 100% { opacity: 1; }
+  42% { opacity: 0.28; }
+}
+.period-note.note-swap { animation: note-swap 0.35s ease; }
+@keyframes note-swap {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.chart-wrap.draw-once { animation: chart-wipe 0.64s cubic-bezier(0.22, 0.8, 0.24, 1); }
+@keyframes chart-wipe {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-pane.leave-left,
+  .screen-pane.leave-right,
+  .screen-pane.enter-right,
+  .screen-pane.enter-left,
+  .screen-pane.leave-fade,
+  .screen-pane.reveal,
+  .loss-donut-wrap.spin-once,
+  .loss-figure:has(.spin-once) .loss-pct,
+  .period-note.note-swap,
+  .chart-wrap.draw-once,
+  .flow-btn,
+  .card,
+  button.back {
+    animation: none !important;
+    transition: none !important;
+  }
 }
