@@ -807,3 +807,41 @@ def build_report(df_curr, df_prev, period):
         "show_daily": show_daily,
         "flows": flows,
     }
+
+
+def handoff_to_fastapi():
+    """Отдать порт серверу FastAPI.
+
+    Боевой процесс всё ещё запускает `streamlit run analytics.py`. Streamlit
+    выполняет этот файл как __main__, виджетов здесь нет, страница остаётся
+    белой. Сокеты Streamlit закрываем и подменяем процесс на uvicorn.
+    """
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    os.chdir(root)
+    try:
+        import server  # noqa: F401
+    except Exception as exc:
+        raise RuntimeError(f"FastAPI не стартует: {exc}") from exc
+    print("analytics.py: Streamlit-вход пустой, запускаю FastAPI", flush=True)
+    try:
+        open_fds = [int(name) for name in os.listdir("/proc/self/fd")]
+    except OSError:
+        open_fds = list(range(3, 256))
+    for fd in open_fds:
+        if fd > 2:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    port = os.environ.get("PORT", "8501")
+    os.execv(
+        sys.executable,
+        [sys.executable, "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", port],
+    )
+
+
+if __name__ == "__main__":
+    handoff_to_fastapi()
