@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Аналитика списаний</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📦%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/styles.css?v=1">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem("theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div class="layout">
+    <aside id="sidebar">
+      <h2>👤 Админ-панель</h2>
+      <button type="button" id="cache-btn" class="wide ghost">🔄 Сбросить кэш данных</button>
+      <p id="admin-status" class="hint" hidden></p>
+      <details class="panel" open>
+        <summary>📥 Загрузка данных</summary>
+        <label class="file">
+          <span>Excel файлы (.xlsx)</span>
+          <input id="files" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple>
+        </label>
+        <div id="upload-preview"></div>
+      </details>
+      <details class="panel">
+        <summary>ℹ️ Что в базе</summary>
+        <div id="db-summary"></div>
+        <hr>
+        <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всё</label>
+        <button type="button" id="wipe" class="wide danger" disabled>🗑️ Очистить базу</button>
+      </details>
+    </aside>
+    <div id="backdrop"></div>
+    <main>
+      <header class="top">
+        <button type="button" id="menu" aria-controls="sidebar">Меню</button>
+        <h1>📦 Аналитика списаний</h1>
+        <button type="button" id="theme">Тема</button>
+      </header>
+      <p id="banner" class="box bad" hidden role="alert"></p>
+      <p id="status" class="status" hidden role="status"></p>
+      <form id="dates" class="dates">
+        <fieldset>
+          <legend>Выберите разрез:</legend>
+          <div class="modes">
+            <label><input type="radio" name="mode" value="День"> День</label>
+            <label><input type="radio" name="mode" value="Неделя"> Неделя</label>
+            <label><input type="radio" name="mode" value="Месяц" checked> Месяц</label>
+          </div>
+        </fieldset>
+        <label class="anchor">
+          <span id="anchor-label">Выберите любой день нужного месяца</span>
+          <input type="date" id="anchor" required>
+        </label>
+      </form>
+      <div id="period-note" class="period-note" hidden></div>
+      <p id="compare-note" class="hint" hidden></p>
+      <details id="quality" class="panel" hidden>
+        <summary>🔍 Проверка данных (что не распознано)</summary>
+        <div id="quality-body"></div>
+      </details>
+      <div id="screen"></div>
+    </main>
+  </div>
+  <script src="/static/app.js?v=1"></script>
+  <noscript><p class="box warn">Для дашборда нужен JavaScript.</p></noscript>
+</body>
+</html>

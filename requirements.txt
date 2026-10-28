@@ -1,7 +1,9 @@
-streamlit>=1.30
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9
 pandas>=2.0
 numpy>=1.24
-plotly>=5.18
-openpyxl
-sqlalchemy
-psycopg2-binary
+openpyxl>=3.1
+sqlalchemy>=2.0
+psycopg2-binary>=2.9
+python-dateutil>=2.8

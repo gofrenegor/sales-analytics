@@ -1,6 +1,6 @@
 {
   "$schema": "https://www.cursor.com/schemas/environment.schema.json",
-  "name": "streamlit-sales-analytics",
+  "name": "loss-analytics",
   "install": "pip install -r requirements.txt",
-  "start": "streamlit run app.py --server.port 8501 --server.address 0.0.0.0"
+  "start": "sh run.sh"
 }

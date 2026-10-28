@@ -2,6 +2,6 @@
 description: Project rules for sales-analytics
 alwaysApply: true
 ---
-- This is a Streamlit Python project.
-- Always push changes directly to the `main` branch. 
+- This is a FastAPI site with a static frontend (loss analytics). Run: `sh run.sh` (port 8501). Database: `DATABASE_URL` or `.streamlit/secrets.toml` key `[database].connection_string`.
+- Always push changes directly to the `main` branch.
 - Never create a Pull Request (PR).
