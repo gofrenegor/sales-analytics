@@ -1,0 +1,14 @@
+[Unit]
+Description=Loss analytics (FastAPI)
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/var/www/sales-analytics
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
-"""`streamlit run analytics.py` должен поднять FastAPI, а не пустую страницу."""
+"""Точка входа — uvicorn server:app. Streamlit к запуску не нужен."""
 
+import ast
 import os
 import socket
 import subprocess
@@ -9,41 +10,45 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from streamlit.web.server.app_discovery import discover_asgi_app
-
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_streamlit_discovers_fastapi_app():
-    found = discover_asgi_app(ROOT / "analytics.py")
-    assert found.is_asgi_app
-    assert found.import_string == "analytics:app"
+def test_analytics_is_not_an_asgi_app():
+    source = (ROOT / "analytics.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    assigned = set()
+    for node in tree.body:
+        targets = getattr(node, "targets", None)
+        if targets is None and isinstance(getattr(node, "target", None), ast.Name):
+            targets = [node.target]
+        if not targets:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                assigned.add(target.id)
+    assert "app" not in assigned
+    assert "FastAPI" not in source
+    assert "streamlit" not in source.lower()
 
 
-def test_streamlit_run_serves_fastapi():
+def test_uvicorn_serves_site(tmp_path):
     probe = socket.socket()
     probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]
     probe.close()
 
     env = os.environ.copy()
-    env["DATABASE_URL"] = "sqlite:///:memory:"
+    env["DATABASE_URL"] = f"sqlite:///{tmp_path / 'losses.db'}"
     proc = subprocess.Popen(
         [
             sys.executable,
             "-m",
-            "streamlit",
-            "run",
-            "analytics.py",
-            "--server.port",
-            str(port),
-            "--server.address",
+            "uvicorn",
+            "server:app",
+            "--host",
             "127.0.0.1",
-            "--server.headless",
-            "true",
-            "--browser.gatherUsageStats",
-            "false",
+            "--port",
+            str(port),
         ],
         cwd=ROOT,
         env=env,
@@ -59,11 +64,10 @@ def test_streamlit_run_serves_fastapi():
                 break
             try:
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1) as resp:
-                    ctype = resp.headers.get("content-type") or ""
-                    body = resp.read().decode()
-                    if resp.status == 200 and "application/json" in ctype:
-                        health = body
+                    health = resp.read().decode()
+                    if resp.status == 200:
                         break
+                    health = None
             except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
                 last_error = exc
             time.sleep(0.25)

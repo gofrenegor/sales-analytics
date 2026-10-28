@@ -807,34 +807,3 @@ def build_report(df_curr, df_prev, period):
         "show_daily": show_daily,
         "flows": flows,
     }
-
-
-# Streamlit 1.66 (`streamlit run analytics.py`) смотрит исходник и, если видит
-# `app = FastAPI(...)`, сразу отдаёт этот объект через uvicorn. Иначе скрипт
-# молча кончается и в браузере белая страница. Живой app — из server.py.
-from fastapi import FastAPI  # noqa: E402
-
-app = FastAPI(title="Аналитика списаний")
-
-
-def _bind_server_app():
-    import sys
-
-    loaded = sys.modules.get("server")
-    real = getattr(loaded, "app", None) if loaded is not None else None
-    if real is not None:
-        return real
-    if loaded is not None:
-        return app
-    import server
-
-    return server.app
-
-
-app = _bind_server_app()
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8501")))
