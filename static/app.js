@@ -713,18 +713,35 @@ function setAdminOpen(open) {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("backdrop");
   const toggle = document.getElementById("admin-toggle");
-  sidebar.classList.toggle("open", open);
-  backdrop.classList.toggle("show", open);
-  toggle.setAttribute("aria-expanded", open ? "true" : "false");
+  sidebar?.classList.toggle("open", open);
+  backdrop?.classList.toggle("show", open);
+  toggle?.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function wireAdminPanel() {
+  const sidebar = document.getElementById("sidebar");
+  const backdrop = document.getElementById("backdrop");
+  if (!sidebar || !backdrop) return;
+  const toggle = document.getElementById("admin-toggle");
+  if (toggle) {
+    toggle.addEventListener("click", () => setAdminOpen(!sidebar.classList.contains("open")));
+    backdrop.addEventListener("click", () => setAdminOpen(false));
+    return;
+  }
+  const menu = document.getElementById("menu");
+  if (!menu) return;
+  menu.addEventListener("click", () => {
+    sidebar.classList.toggle("open");
+    backdrop.classList.toggle("show");
+  });
+  backdrop.addEventListener("click", () => {
+    sidebar.classList.remove("open");
+    backdrop.classList.remove("show");
+  });
 }
 
 function wireChrome() {
-  const backdrop = document.getElementById("backdrop");
-  document.getElementById("admin-toggle").addEventListener("click", () => {
-    const sidebar = document.getElementById("sidebar");
-    setAdminOpen(!sidebar.classList.contains("open"));
-  });
-  backdrop.addEventListener("click", () => setAdminOpen(false));
+  wireAdminPanel();
   document.getElementById("theme").addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";

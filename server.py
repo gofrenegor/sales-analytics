@@ -1,6 +1,7 @@
 """Аналитика списаний. Запуск: python -m uvicorn server:app --host 0.0.0.0 --port 8501"""
 
 import logging
+import re
 import secrets
 import threading
 import time
@@ -203,9 +204,30 @@ def truncate(body: ConfirmIn):
     return {"ok": True, "message": "База очищена!", "summary": summary}
 
 
+def _static_asset_stamp() -> str:
+    return str(
+        int(
+            max(
+                (STATIC / "app.js").stat().st_mtime,
+                (STATIC / "styles.css").stat().st_mtime,
+            )
+        )
+    )
+
+
+def _index_html() -> str:
+    body = (STATIC / "index.html").read_text(encoding="utf-8")
+    stamp = _static_asset_stamp()
+    return re.sub(r"(\.(?:css|js)\?v=)[^\"']+", rf"\g<1>{stamp}", body)
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+    return Response(
+        content=_index_html(),
+        media_type="text/html; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/favicon.ico", include_in_schema=False)

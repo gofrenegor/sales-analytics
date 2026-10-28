@@ -1,3 +1,4 @@
+import re
 from datetime import date
 from io import BytesIO
 
@@ -119,3 +120,11 @@ def test_bad_upload_and_mode(client):
     assert client.post("/api/admin/preview", files=[("files", ("a.xlsx", missing, MIME))]).status_code == 400
     assert client.get("/api/report", params={"mode": "Год", "anchor": "2026-10-01"}).status_code == 400
     assert client.post("/api/admin/commit", json={"token": "missing"}).status_code == 404
+
+
+def test_index_injects_asset_version(client):
+    html = client.get("/").text
+    assert "admin-toggle" in html
+    match = re.search(r"/static/app\.js\?v=(\d+)", html)
+    assert match
+    assert f'/static/styles.css?v={match.group(1)}' in html
