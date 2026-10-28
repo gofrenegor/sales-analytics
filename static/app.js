@@ -742,7 +742,7 @@ function wireAdminPanel() {
 
 function wireChrome() {
   wireAdminPanel();
-  document.getElementById("theme").addEventListener("click", () => {
+  document.getElementById("theme")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
     if (next === "system") {
