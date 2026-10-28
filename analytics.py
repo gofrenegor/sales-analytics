@@ -809,39 +809,32 @@ def build_report(df_curr, df_prev, period):
     }
 
 
-def handoff_to_fastapi():
-    """Отдать порт серверу FastAPI.
+# Streamlit 1.66 (`streamlit run analytics.py`) смотрит исходник и, если видит
+# `app = FastAPI(...)`, сразу отдаёт этот объект через uvicorn. Иначе скрипт
+# молча кончается и в браузере белая страница. Живой app — из server.py.
+from fastapi import FastAPI  # noqa: E402
 
-    Боевой процесс всё ещё запускает `streamlit run analytics.py`. Streamlit
-    выполняет этот файл как __main__, виджетов здесь нет, страница остаётся
-    белой. Сокеты Streamlit закрываем и подменяем процесс на uvicorn.
-    """
+app = FastAPI(title="Аналитика списаний")
+
+
+def _bind_server_app():
     import sys
-    from pathlib import Path
 
-    root = Path(__file__).resolve().parent
-    os.chdir(root)
-    try:
-        import server  # noqa: F401
-    except Exception as exc:
-        raise RuntimeError(f"FastAPI не стартует: {exc}") from exc
-    print("analytics.py: Streamlit-вход пустой, запускаю FastAPI", flush=True)
-    try:
-        open_fds = [int(name) for name in os.listdir("/proc/self/fd")]
-    except OSError:
-        open_fds = list(range(3, 256))
-    for fd in open_fds:
-        if fd > 2:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-    port = os.environ.get("PORT", "8501")
-    os.execv(
-        sys.executable,
-        [sys.executable, "-m", "uvicorn", "server:app", "--host", "0.0.0.0", "--port", port],
-    )
+    loaded = sys.modules.get("server")
+    real = getattr(loaded, "app", None) if loaded is not None else None
+    if real is not None:
+        return real
+    if loaded is not None:
+        return app
+    import server
+
+    return server.app
+
+
+app = _bind_server_app()
 
 
 if __name__ == "__main__":
-    handoff_to_fastapi()
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8501")))
