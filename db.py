@@ -51,20 +51,23 @@ def normalize_db_url(url):
 
 
 def read_secrets_url():
-    path = ROOT / ".streamlit" / "secrets.toml"
-    if not path.exists():
-        return ""
     import tomllib
-    with path.open("rb") as handle:
-        data = tomllib.load(handle)
-    return str((data.get("database") or {}).get("connection_string") or "").strip()
+    for path in (ROOT / "secrets.toml", ROOT / ".streamlit" / "secrets.toml"):
+        if not path.exists():
+            continue
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+        url = str((data.get("database") or {}).get("connection_string") or "").strip()
+        if url:
+            return url
+    return ""
 
 
 def database_url():
     url = os.environ.get("DATABASE_URL", "").strip() or read_secrets_url()
     if not url:
         raise ConfigError(
-            "Не задана строка подключения. Укажите DATABASE_URL или .streamlit/secrets.toml "
+            "Не задана строка подключения. Укажите DATABASE_URL или secrets.toml "
             "([database] connection_string)."
         )
     return normalize_db_url(url)

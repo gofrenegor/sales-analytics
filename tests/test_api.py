@@ -94,6 +94,24 @@ def test_empty_then_upload_replace_and_wipe(client):
     assert client.get("/api/report", params={"mode": "День", "anchor": today.isoformat()}).json()["empty"] is True
 
 
+def test_secrets_file_order(tmp_path, monkeypatch):
+    import db
+
+    monkeypatch.setattr(db, "ROOT", tmp_path)
+    legacy = tmp_path / ".streamlit"
+    legacy.mkdir()
+    (legacy / "secrets.toml").write_text(
+        '[database]\nconnection_string = "postgresql://legacy"\n',
+        encoding="utf-8",
+    )
+    assert db.read_secrets_url() == "postgresql://legacy"
+    (tmp_path / "secrets.toml").write_text(
+        '[database]\nconnection_string = "postgresql://root"\n',
+        encoding="utf-8",
+    )
+    assert db.read_secrets_url() == "postgresql://root"
+
+
 def test_bad_upload_and_mode(client):
     bad = client.post("/api/admin/preview", files=[("files", ("a.xlsx", b"not-a-zip", MIME))])
     assert bad.status_code == 400
