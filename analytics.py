@@ -124,10 +124,11 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-se
     """Дуга кольца. 0° — 3 часа, дальше по часовой."""
     if span_deg <= 0.4:
         return ""
+    draw = ' pathLength="1"' if css_class.startswith("loss-arc-seg") else ""
     if span_deg >= 359.2:
         return (
             f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="{color}" '
-            f'stroke-width="{sw}" class="{css_class}" />'
+            f'stroke-width="{sw}" class="{css_class}"{draw} />'
         )
     end = start_deg + span_deg
     large = 1 if span_deg > 180 else 0
@@ -137,7 +138,7 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-se
     y2 = cy + r * math.sin(math.radians(end))
     return (
         f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
-        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="{css_class}" />'
+        f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="{css_class}"{draw} />'
     )
 
 
@@ -184,8 +185,8 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
     in_share, out_share = escape(in_lbl), escape(out_lbl)
     arcs = (
-        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR)
-        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR)
+        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR, "loss-arc-seg arc-in")
+        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR, "loss-arc-seg arc-out")
     )
 
     def _seg_link(flow, start, span):

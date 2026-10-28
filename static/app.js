@@ -456,17 +456,22 @@ function renderChart(rows) {
   const previousPts = points(previous);
   if (currentPts.length) {
     const area = `${pathOf(currentPts)} L${currentPts[currentPts.length - 1].x.toFixed(1)} ${y(0).toFixed(1)} L${currentPts[0].x.toFixed(1)} ${y(0).toFixed(1)} Z`;
-    svg.append(svgEl("path", { d: area, fill: colors.current, opacity: "0.13" }));
+    svg.append(svgEl("path", { d: area, class: "chart-area", fill: colors.current, opacity: "0.13" }));
   }
   function line(pts, color, dash) {
     if (!pts.length) return;
-    svg.append(svgEl("path", {
+    const attrs = {
       d: pathOf(pts),
+      class: dash ? "chart-line prev" : "chart-line cur",
       fill: "none",
       stroke: color,
       "stroke-width": "2.25",
-      "stroke-dasharray": dash || "none",
-    }));
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    };
+    if (dash) attrs["stroke-dasharray"] = dash;
+    else attrs.pathLength = "1";
+    svg.append(svgEl("path", attrs));
     for (const point of pts) svg.append(svgEl("circle", { cx: point.x, cy: point.y, r: "3.6", fill: color }));
   }
   line(previousPts, colors.previous, "5 4");
@@ -516,7 +521,13 @@ function renderChart(rows) {
       }
       tip.append(block);
     }
+    const wasHidden = tip.hidden;
     tip.hidden = false;
+    if (wasHidden && !reducedMotion()) {
+      tip.classList.remove("tip-in");
+      void tip.offsetWidth;
+      tip.classList.add("tip-in");
+    }
     const host = wrap.getBoundingClientRect();
     const anchor = svg.createSVGPoint();
     anchor.x = x(best);
@@ -685,6 +696,10 @@ function presentScreen(pane) {
     if (motion === "settle" && !reduced) {
       pane.classList.add("reveal");
       pane.querySelectorAll(".chart-wrap").forEach((node) => node.classList.add("draw-once"));
+    }
+    if (!reduced && !motion && !host.dataset.arrived && state.report) {
+      pane.classList.add("arrive");
+      host.dataset.arrived = "1";
     }
     host.replaceChildren(pane);
     host.style.minHeight = "";
