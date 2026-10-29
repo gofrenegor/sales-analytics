@@ -316,21 +316,58 @@ function tipDayDeltaChip(sum, prevSum) {
 
 const TIP_PERIOD_ORDER = { "Прошлый период": 0, "Текущий период": 1 };
 
+const TIP_FIELDS = [
+  ["Дата", (row) => row.date],
+  ["Топ-1 LR", (row) => row.top_lr],
+  ["Сумма, ₽", (row) => fmtInt(row.sum)],
+  ["Штуки, шт", (row) => fmtInt(row.qty)],
+  ["Топ-1 блок", (row) => row.top_block],
+  ["Топ-1 LR в блоке", (row) => row.top_block_lr],
+];
+
+function tipCellLine(label, value) {
+  return el("div", { class: "tip-line" }, el("span", null, label), el("b", null, value));
+}
+
+function tipDayDeltaSlot(chip) {
+  const slot = el("div", { class: "tip-day-delta" });
+  slot.append(chip || el("span", { class: "tip-day-delta-spacer", "aria-hidden": "true" }, "0 ₽ •"));
+  return slot;
+}
+
 function buildTipBlock(row, dayDeltaChip) {
-  const head = [el("div", { class: "tip-title" }, row.period)];
-  if (dayDeltaChip) head.push(el("div", { class: "tip-day-delta" }, dayDeltaChip));
-  const block = el("div", { class: "tip-block" }, ...head);
-  for (const [key, value] of [
-    ["Дата", row.date],
-    ["Топ-1 LR", row.top_lr],
-    ["Сумма, ₽", fmtInt(row.sum)],
-    ["Штуки, шт", fmtInt(row.qty)],
-    ["Топ-1 блок", row.top_block],
-    ["Топ-1 LR в блоке", row.top_block_lr],
-  ]) {
-    block.append(el("div", { class: "tip-line" }, el("span", null, key), el("b", null, value)));
-  }
+  const block = el("div", { class: "tip-block" }, el("div", { class: "tip-title" }, row.period));
+  if (dayDeltaChip) block.append(el("div", { class: "tip-day-delta" }, dayDeltaChip));
+  for (const [key, pick] of TIP_FIELDS) block.append(tipCellLine(key, pick(row)));
   return block;
+}
+
+function buildCompareTip(sortedRows, prevDayCur) {
+  const prev = sortedRows.find((row) => row.period === "Прошлый период");
+  const cur = sortedRows.find((row) => row.period === "Текущий период");
+  if (!prev || !cur) {
+    const row = sortedRows[0];
+    if (!row) return null;
+    const chip = row.period === "Текущий период" && prevDayCur
+      ? tipDayDeltaChip(row.sum, prevDayCur.sum)
+      : null;
+    return buildTipBlock(row, chip);
+  }
+  const chip = prevDayCur ? tipDayDeltaChip(cur.sum, prevDayCur.sum) : null;
+  const grid = el("div", { class: "tip-compare" });
+  const head = el("div", { class: "tip-compare-row tip-compare-head" });
+  for (const [row, delta] of [[prev, null], [cur, chip]]) {
+    const cell = el("div", { class: "tip-compare-cell" });
+    cell.append(el("div", { class: "tip-title" }, row.period), tipDayDeltaSlot(delta));
+    head.append(cell);
+  }
+  grid.append(head);
+  for (const [label, pick] of TIP_FIELDS) {
+    const rowEl = el("div", { class: "tip-compare-row" });
+    for (const row of [prev, cur]) rowEl.append(el("div", { class: "tip-compare-cell" }, tipCellLine(label, pick(row))));
+    grid.append(rowEl);
+  }
+  return grid;
 }
 
 function lrTable(rows) {
@@ -505,14 +542,8 @@ function renderChart(rows) {
     );
     const prevDayCur = current.find((row) => row.day === best - 1);
     tip.replaceChildren();
-    const columns = el("div", { class: "tip-columns" });
-    for (const row of list) {
-      const chip = row.period === "Текущий период" && prevDayCur
-        ? tipDayDeltaChip(row.sum, prevDayCur.sum)
-        : null;
-      columns.append(buildTipBlock(row, chip));
-    }
-    if (columns.childElementCount) tip.append(columns);
+    const body = buildCompareTip(list, prevDayCur);
+    if (body) tip.append(body);
     const wasHidden = tip.hidden;
     tip.hidden = false;
     if (wasHidden && !reducedMotion()) {

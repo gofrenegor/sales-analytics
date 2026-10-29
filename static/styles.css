@@ -573,22 +573,31 @@ td.num, th.num { text-align: right; }
   font-size: 15px;
 }
 .chart-tip.tip-in { animation: tip-in 0.16s ease; }
-.tip-columns { display: flex; align-items: flex-start; gap: 0; }
-.tip-columns .tip-block { flex: 1 1 0; min-width: 0; }
-.tip-columns .tip-block + .tip-block {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: none;
+.tip-compare { display: flex; flex-direction: column; gap: 2px; }
+.tip-compare-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: stretch;
+}
+.tip-compare-cell { min-width: 0; }
+.tip-compare-row .tip-compare-cell + .tip-compare-cell {
   border-left: 1px solid var(--line);
   padding-left: 12px;
-  margin-left: 12px;
 }
+.tip-compare-head .tip-title { margin-bottom: 0; }
 .tip-title { font-size: 16px; font-weight: 750; margin-bottom: 6px; }
-.tip-day-delta { margin: -2px 0 8px; }
+.tip-day-delta {
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+  margin: 4px 0 6px;
+}
+.tip-day-delta-spacer { visibility: hidden; }
 .tip-day-chip { font-size: 12px; }
-.tip-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
-.tip-line span { color: var(--muted); }
-.tip-line b { font-weight: 650; text-align: right; }
+.tip-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; min-height: 1.35em; }
+.tip-line span { color: var(--muted); flex: 0 0 auto; }
+.tip-line b { font-weight: 650; text-align: right; flex: 1 1 auto; min-width: 0; }
 
 @media (max-width: 1100px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
