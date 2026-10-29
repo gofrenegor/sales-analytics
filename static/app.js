@@ -304,6 +304,35 @@ function deltaNode(text) {
   return el("div", { class: `delta ${kind}` }, text);
 }
 
+function tipDayDeltaChip(sum, prevSum) {
+  if (prevSum == null) return null;
+  const diff = sum - prevSum;
+  if (diff === 0) return el("span", { class: "chip chip-n tip-day-chip" }, "0 ₽ •");
+  const kind = diff > 0 ? "r" : "g";
+  const arrow = diff > 0 ? "▲" : "▼";
+  const sign = diff > 0 ? "+" : "-";
+  return el("span", { class: `chip chip-${kind} tip-day-chip` }, `${sign}${fmtInt(Math.abs(diff))} ₽ ${arrow}`);
+}
+
+const TIP_PERIOD_ORDER = { "Прошлый период": 0, "Текущий период": 1 };
+
+function buildTipBlock(row, dayDeltaChip) {
+  const head = [el("div", { class: "tip-title" }, row.period)];
+  if (dayDeltaChip) head.push(el("div", { class: "tip-day-delta" }, dayDeltaChip));
+  const block = el("div", { class: "tip-block" }, ...head);
+  for (const [key, value] of [
+    ["Дата", row.date],
+    ["Топ-1 LR", row.top_lr],
+    ["Сумма, ₽", fmtInt(row.sum)],
+    ["Штуки, шт", fmtInt(row.qty)],
+    ["Топ-1 блок", row.top_block],
+    ["Топ-1 LR в блоке", row.top_block_lr],
+  ]) {
+    block.append(el("div", { class: "tip-line" }, el("span", null, key), el("b", null, value)));
+  }
+  return block;
+}
+
 function lrTable(rows) {
   const wrap = el("div", { class: "table-wrap" });
   const table = el("table");
@@ -471,22 +500,19 @@ function renderChart(rows) {
         bestDist = dist;
       }
     }
-    const list = byDay.get(best) || [];
+    const list = (byDay.get(best) || []).slice().sort(
+      (a, b) => (TIP_PERIOD_ORDER[a.period] ?? 0) - (TIP_PERIOD_ORDER[b.period] ?? 0),
+    );
+    const prevDayCur = current.find((row) => row.day === best - 1);
     tip.replaceChildren();
+    const columns = el("div", { class: "tip-columns" });
     for (const row of list) {
-      const block = el("div", { class: "tip-block" }, el("div", { class: "tip-title" }, row.period));
-      for (const [key, value] of [
-        ["Дата", row.date],
-        ["Топ-1 LR", row.top_lr],
-        ["Сумма, ₽", fmtInt(row.sum)],
-        ["Штуки, шт", fmtInt(row.qty)],
-        ["Топ-1 блок", row.top_block],
-        ["Топ-1 LR в блоке", row.top_block_lr],
-      ]) {
-        block.append(el("div", { class: "tip-line" }, el("span", null, key), el("b", null, value)));
-      }
-      tip.append(block);
+      const chip = row.period === "Текущий период" && prevDayCur
+        ? tipDayDeltaChip(row.sum, prevDayCur.sum)
+        : null;
+      columns.append(buildTipBlock(row, chip));
     }
+    if (columns.childElementCount) tip.append(columns);
     const wasHidden = tip.hidden;
     tip.hidden = false;
     if (wasHidden && !reducedMotion()) {

@@ -561,8 +561,8 @@ td.num, th.num { text-align: right; }
 .chart-tip {
   position: absolute;
   z-index: 5;
-  min-width: 240px;
-  max-width: 420px;
+  min-width: 280px;
+  max-width: min(520px, calc(100vw - 24px));
   background: var(--sidebar);
   color: var(--text);
   border: 1px solid var(--line-strong);
@@ -573,8 +573,19 @@ td.num, th.num { text-align: right; }
   font-size: 15px;
 }
 .chart-tip.tip-in { animation: tip-in 0.16s ease; }
+.tip-columns { display: flex; align-items: flex-start; gap: 0; }
+.tip-columns .tip-block { flex: 1 1 0; min-width: 0; }
+.tip-columns .tip-block + .tip-block {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+  border-left: 1px solid var(--line);
+  padding-left: 12px;
+  margin-left: 12px;
+}
 .tip-title { font-size: 16px; font-weight: 750; margin-bottom: 6px; }
-.tip-block + .tip-block { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+.tip-day-delta { margin: -2px 0 8px; }
+.tip-day-chip { font-size: 12px; }
 .tip-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
 .tip-line span { color: var(--muted); }
 .tip-line b { font-weight: 650; text-align: right; }
