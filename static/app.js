@@ -437,7 +437,6 @@ function renderChart(rows) {
       "stroke-linecap": "round",
     };
     if (dash) attrs["stroke-dasharray"] = dash;
-    else attrs.pathLength = "1";
     svg.append(svgEl("path", attrs));
     for (const point of pts) svg.append(svgEl("circle", { cx: point.x, cy: point.y, r: "3.6", fill: color }));
   }
@@ -541,8 +540,20 @@ function renderDashboard(screen) {
       el("strong", null, fmtRub(amount)),
     ));
   }
+  side.className = "hero-side";
   side.append(el("p", { class: "hint" }, "Клик по сегменту кольца или строке потока откроет выбор блоков."));
-  hero.append(chart, side);
+  const donutCol = el("div", { class: "loss-col" });
+  donutCol.append(chart);
+  hero.append(donutCol, side);
+  if (state.report.show_daily) {
+    hero.append(el(
+      "div",
+      { class: "daily-chart" },
+      el("h3", { class: "section-title" }, "Динамика по дням"),
+      renderChart(state.report.daily),
+      el("p", { class: "hint" }, "По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока."),
+    ));
+  }
   screen.append(hero);
   if (dash.delta_text) screen.append(el("p", { class: "delta-line" }, `К прошлому периоду · ${dash.delta_text}`));
   if (dash.other && dash.other.show) {
@@ -554,11 +565,6 @@ function renderDashboard(screen) {
   }
   if (dash.other && dash.other.has_rows) {
     screen.append(el("p", { class: "hint" }, "Статусы вне потоков временно исключены из диаграммы и итогов — список в «Проверке данных» выше."));
-  }
-  if (state.report.show_daily) {
-    screen.append(el("h3", { class: "section-title" }, "Динамика по дням"));
-    screen.append(renderChart(state.report.daily));
-    screen.append(el("p", { class: "hint" }, "По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока."));
   }
 }
 

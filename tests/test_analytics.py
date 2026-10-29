@@ -159,8 +159,10 @@ def test_other_only_keeps_empty_structure():
     current = prepare_losses(pd.DataFrame([row(status_before="ZZZ", loss_sum=5)]))
     report = build_report(current, prepare_losses(pd.DataFrame()), period)
     assert report["empty"] is False
-    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP, FOREIGN_GROUP]
-    assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь", FOREIGN_GROUP]
+    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP]
+    assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь"]
+    assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["in"]["cards"]]
+    assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["out"]["cards"]]
     assert report["dashboard"]["in_sum"] == 0
     assert report["dashboard"]["other"]["sum"] == 5
     assert report["dashboard"]["other"]["show"] is True

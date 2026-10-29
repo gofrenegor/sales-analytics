@@ -205,7 +205,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
 <span class="loss-pct loss-pct-in">{in_share}</span>
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
-  <circle cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
+  <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {arcs}
   {hits}
   <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
@@ -655,12 +655,12 @@ def build_group_view(dc, dp, flow_title, group, other_curr, has_prev):
 def flow_names(flow_title):
     names = list(ALL_BLOCKS)
     names.append(DEFECT_GROUP if flow_title == "Входящий поток" else "Опер площадь")
-    names.append(FOREIGN_GROUP)
     return names
 
 
 def flow_cards(dc, dp, flow_title, has_prev, other_curr):
     grouped = ensure(build(dc, dp, "block_group"), flow_names(flow_title))
+    grouped = grouped[grouped["name"] != FOREIGN_GROUP].reset_index(drop=True)
     cards = []
     for rec in pack_cards(grouped, has_prev):
         gname = rec["name"]
