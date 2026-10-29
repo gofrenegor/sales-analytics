@@ -11,7 +11,6 @@ const state = {
 const VIEW_DEPTH = { dashboard: 0, flow: 1, group: 2, block_detail: 3 };
 let screenMotion = "";
 let animating = 0;
-let spinGen = 0;
 
 const ANCHOR_LABELS = {
   "День": "Выберите дату",
@@ -154,38 +153,11 @@ function onControlsChange() {
   loadReport({ spin: true });
 }
 
-function spinVisibleDonut(seq) {
-  if (reducedMotion()) return Promise.resolve();
+function beginLoadSpin() {
+  if (reducedMotion()) return;
   const node = document.querySelector("#screen .loss-donut-wrap");
-  if (!node) return Promise.resolve();
-  const gen = ++spinGen;
-  node.classList.remove("spin-once");
-  void node.offsetWidth;
-  node.classList.add("spin-once");
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      resolve();
-    };
-    const timer = window.setTimeout(finish, 860);
-    const watch = window.setInterval(() => {
-      if (gen !== spinGen || seq !== loadSeq || !node.isConnected) {
-        window.clearInterval(watch);
-        window.clearTimeout(timer);
-        finish();
-      }
-    }, 48);
-    node.addEventListener("animationend", function onEnd(event) {
-      if (event.target !== node || event.animationName !== "donut-spin") return;
-      node.removeEventListener("animationend", onEnd);
-      window.clearInterval(watch);
-      window.clearTimeout(timer);
-      if (gen === spinGen) node.classList.remove("spin-once");
-      finish();
-    });
-  });
+  if (!node) return;
+  node.classList.add("spin-loading");
 }
 
 async function waitAnimating() {
@@ -198,7 +170,7 @@ async function waitAnimating() {
 let loadSeq = 0;
 async function loadReport(options = {}) {
   const seq = ++loadSeq;
-  const spin = options.spin ? spinVisibleDonut(seq) : null;
+  if (options.spin) beginLoadSpin();
   const screen = document.getElementById("screen");
   if (screen) screen.setAttribute("aria-busy", "true");
   setStatus("Обновление…");
@@ -209,17 +181,12 @@ async function loadReport(options = {}) {
     const data = await response.json();
     if (seq !== loadSeq) return;
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
-    if (spin) await spin;
-    if (seq !== loadSeq) return;
     await waitAnimating();
     if (seq !== loadSeq) return;
     state.report = data;
-    if (options.spin && !screenMotion) screenMotion = "settle";
     render();
     setStatus("");
   } catch (error) {
-    if (seq !== loadSeq) return;
-    if (spin) await spin;
     if (seq !== loadSeq) return;
     setBanner(error.message);
     setStatus("");
