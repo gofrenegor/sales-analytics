@@ -17,6 +17,7 @@ INBOUND_STATUSES = [
     "ANV", "EPR", "IPS", "ORG", "PVP", "RGP", "RNP", "RSP", "RWP", "TWR",
     "WDC", "WWE", "WIJ", "WPT", "WPU", "SGR",
     "RNR", "SMS", "OSS",
+    "MRD", "SLT",
 ]
 OUTBOUND_STATUSES = [
     "GWS", "IKZ", "IPG", "ISB", "LAM", "LIO", "LIP", "LPG", "LSS", "OPS",
@@ -25,8 +26,6 @@ OUTBOUND_STATUSES = [
 ]
 DEFECT_GROUP = "Брак"
 DEFECT_STATUSES = ["SDL", "WSC", "WDV", "SDI", "WSR", "SGP", "DAP"]
-LAG_GROUP = "Отставание входа"
-LAG_STATUSES = ["MRD", "SLT"]
 
 STAGE_MAPPING = {
     "GWS": "Отгрузка", "LSS": "Отгрузка", "LIO": "Отгрузка", "LIP": "Отгрузка",
@@ -44,7 +43,8 @@ ASSEMBLY_LR = ["5"]
 # Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
 STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
 # Эти статусы не уходят в оперку и брак. Группа — название места списания.
-PLACE_BY_BLOCK_ID = frozenset({"ORS", "RNR", "OSS"})
+# MRD и SLT — отставание входа: та же группа, без своей карточки.
+PLACE_BY_BLOCK_ID = frozenset({"ORS", "RNR", "OSS", "MRD", "SLT"})
 OPERKA_BLOCK_ID = "6800"
 PICKMISS_GROUP = "Пропуск сборки товара на блоке"
 UNMAPPED_GROUP = "Блоки вне маппинга"
@@ -442,14 +442,13 @@ def classify_losses(df):
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
     ORS всегда LR 5: исходящий поток, этап «Сборка». RNR всегда LR 27: вход.
-    SMS и OSS — вход. ORS, RNR и OSS не уходят в оперку и брак:
-    группа — название места списания.
-    MRD и SLT — группа «Отставание входа» на входящем потоке, мимо блока и брака.
+    SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
+    группа — название места списания, как у OSS. Оперка и брак их не забирают.
     Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
     статус из OPERKA_STATUSES и это не LR сборки. ID блока перед списанием не решает.
     Чужой офис в оперку не попадает и остаётся на названии места.
     Приоритет блока, от слабого к сильному: свой блок по названию
-    места списания, оперка, брак, отставание входа. LR сборки не попадает ни в оперку,
+    места списания, оперка, брак. LR сборки не попадает ни в оперку,
     ни в брак: исход и блок места потери.
     """
     df = df.copy()
@@ -461,18 +460,15 @@ def classify_losses(df):
     df["flow"] = "Другое"
     df.loc[df["status_before"].isin(INBOUND_STATUSES), "flow"] = "Входящий поток"
     df.loc[df["status_before"].isin(OUTBOUND_STATUSES), "flow"] = "Исходящий поток"
-    forced_in = df["status_before"].isin(("RNR", "SMS", "OSS"))
-    is_lag = df["status_before"].isin(LAG_STATUSES)
-    is_assembly = (df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")) & ~forced_in & ~is_lag
-    is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id & ~is_lag
+    forced_in = df["status_before"].isin(("RNR", "SMS", "OSS", "MRD", "SLT"))
+    is_assembly = (df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")) & ~forced_in
+    is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
-    df.loc[is_lag, "flow"] = "Входящий поток"
 
     df["process_stage"] = df["status_before"].map(STAGE_MAPPING).fillna("Другое")
     df.loc[is_defect, "process_stage"] = DEFECT_GROUP
     df.loc[is_assembly, "process_stage"] = "Сборка"
-    df.loc[is_lag, "process_stage"] = LAG_GROUP
 
     own = df["block_name"].map(BLOCK_MAPPING)
     loss_id = _leading_id(df["block_id"])
@@ -483,13 +479,11 @@ def classify_losses(df):
         & _own_office_mask(off)
         & ~is_assembly
         & ~by_block_id
-        & ~is_lag
     )
     df["block_group"] = (
         own.fillna(UNMAPPED_GROUP)
         .mask(is_operka, "Опер площадь")
         .mask(is_defect, DEFECT_GROUP)
-        .mask(is_lag, LAG_GROUP)
     )
     return df
 
@@ -677,7 +671,7 @@ def group_kind(group):
         return "stages"
     if group == PICKMISS_GROUP:
         return "pickmiss"
-    if group in (DEFECT_GROUP, LAG_GROUP):
+    if group == DEFECT_GROUP:
         return "statuses"
     return "platforms"
 
@@ -708,8 +702,6 @@ def build_group_view(dc, dp, flow_title, group, other_curr, has_prev):
             key, names = "process_stage", ["Сортировка", "Предсортировка", "Отгрузка"]
         elif group == DEFECT_GROUP:
             key, names = "status_before", DEFECT_STATUSES
-        elif group == LAG_GROUP:
-            key, names = "status_before", LAG_STATUSES
         else:
             key, names = "block_name", PLATFORMS.get(group, [])
         grouped = build(dc, dp, key)
@@ -728,10 +720,7 @@ def build_group_view(dc, dp, flow_title, group, other_curr, has_prev):
 
 def flow_names(flow_title):
     names = list(ALL_BLOCKS)
-    if flow_title == "Входящий поток":
-        names.extend((DEFECT_GROUP, LAG_GROUP))
-    else:
-        names.append("Опер площадь")
+    names.append(DEFECT_GROUP if flow_title == "Входящий поток" else "Опер площадь")
     return names
 
 
@@ -791,7 +780,6 @@ def build_quality(curr, other_curr):
             & _own_office_mask(off)
             & (curr["block_group"] != "Опер площадь")
             & (curr["block_group"] != DEFECT_GROUP)
-            & (curr["block_group"] != LAG_GROUP)
             & ~curr["status_before"].isin(PLACE_BY_BLOCK_ID)
             & ~curr["reason"].isin(ASSEMBLY_LR)
         ]

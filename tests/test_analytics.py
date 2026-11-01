@@ -7,8 +7,6 @@ from analytics import (
     ALL_BLOCKS,
     DEFECT_GROUP,
     DEFECT_STATUSES,
-    LAG_GROUP,
-    LAG_STATUSES,
     build_loss_donut_svg,
     build_report,
     compute_period,
@@ -116,9 +114,10 @@ def row(**overrides):
         (
             {"status_before": "mrd", "reason": "5", "block_id": "100", "office_id": "999", "status_block_id": "6800"},
             "Входящий поток",
-            LAG_GROUP,
+            "Рязань Тюшевское 1",
         ),
-        ({"status_before": "SLT"}, "Входящий поток", LAG_GROUP),
+        ({"status_before": "SLT", "block_name": "Рязань КГТ 2"}, "Входящий поток", "Рязань Тюшевское 2"),
+        ({"status_before": "SLT", "block_name": "Склад Х"}, "Входящий поток", "Блоки вне маппинга"),
     ],
 )
 def test_classify(overrides, flow, group):
@@ -230,9 +229,7 @@ def test_other_only_keeps_empty_structure():
     current = prepare_losses(pd.DataFrame([row(status_before="ZZZ", loss_sum=5)]))
     report = build_report(current, prepare_losses(pd.DataFrame()), period)
     assert report["empty"] is False
-    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP, LAG_GROUP]
-    lag = report["flows"]["in"]["cards"][-1]
-    assert [card["name"] for card in lag["group_view"]["sections"][0]["cards"]] == LAG_STATUSES
+    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP]
     assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь"]
     assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["in"]["cards"]]
     assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["out"]["cards"]]
