@@ -168,14 +168,15 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     outer, inner, outset = r + sw / 2, r - sw / 2, 8
     hit_r = (outer + outset + inner) / 2
     hit_sw = outer + outset - inner
-    # Полградуса нахлёста, иначе сглаживание оставляет тёмную нитку на стыке.
-    seam = 0.5 if in_pct > 0 and out_pct > 0 else 0.0
+    gap = 5.0 if in_pct > 1 and out_pct > 1 else 0.0
 
     def span_of(pct):
         raw = pct / 100 * 360
         if raw <= 0:
             return 0.0
-        return raw + seam
+        if gap and raw > gap + 1:
+            return raw - gap
+        return raw
 
     in_span, out_span = span_of(in_pct), span_of(out_pct)
     in_start = (180 - in_span / 2) % 360
