@@ -7,6 +7,8 @@ from analytics import (
     ALL_BLOCKS,
     DEFECT_GROUP,
     DEFECT_STATUSES,
+    LAG_GROUP,
+    LAG_STATUSES,
     FOREIGN_GROUP,
     build_loss_donut_svg,
     build_report,
@@ -83,6 +85,12 @@ def row(**overrides):
         ({"status_before": "OSS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"status_before": "OSS", "block_id": "50"}, "Входящий поток", FOREIGN_GROUP),
         ({"status_before": "SMS", "reason": "5"}, "Входящий поток", "Рязань Тюшевское 1"),
+        (
+            {"status_before": "mrd", "reason": "5", "block_id": "100", "office_id": "999", "status_block_id": "6800"},
+            "Входящий поток",
+            LAG_GROUP,
+        ),
+        ({"status_before": "SLT"}, "Входящий поток", LAG_GROUP),
     ],
 )
 def test_classify(overrides, flow, group):
@@ -191,7 +199,9 @@ def test_other_only_keeps_empty_structure():
     current = prepare_losses(pd.DataFrame([row(status_before="ZZZ", loss_sum=5)]))
     report = build_report(current, prepare_losses(pd.DataFrame()), period)
     assert report["empty"] is False
-    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP]
+    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP, LAG_GROUP]
+    lag = report["flows"]["in"]["cards"][-1]
+    assert [card["name"] for card in lag["group_view"]["sections"][0]["cards"]] == LAG_STATUSES
     assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь"]
     assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["in"]["cards"]]
     assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["out"]["cards"]]
