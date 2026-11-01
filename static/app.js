@@ -180,18 +180,24 @@ function sparkline(values) {
   if (!values || values.length < 2) return null;
   const width = 120;
   const height = 28;
-  const pad = 2;
+  const padX = 0.6;
+  const padY = 2;
   const max = Math.max(...values, 0);
   const span = max || 1;
-  const step = (width - pad * 2) / (values.length - 1);
+  const step = (width - padX * 2) / (values.length - 1);
   const pts = values.map((value, index) => {
-    const x = pad + index * step;
-    const y = pad + (height - pad * 2) * (1 - (Number(value) || 0) / span);
+    const x = padX + index * step;
+    const y = padY + (height - padY * 2) * (1 - (Number(value) || 0) / span);
     return [x, y];
   });
   const line = pts.map((point, index) => `${index ? "L" : "M"}${point[0].toFixed(1)} ${point[1].toFixed(1)}`).join(" ");
-  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${(height - pad).toFixed(1)} L${pts[0][0].toFixed(1)} ${(height - pad).toFixed(1)} Z`;
-  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "spark", "aria-hidden": "true" });
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${(height - padY).toFixed(1)} L${pts[0][0].toFixed(1)} ${(height - padY).toFixed(1)} Z`;
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: "none",
+    class: "spark",
+    "aria-hidden": "true",
+  });
   svg.append(svgEl("path", { d: area, class: "spark-area" }));
   svg.append(svgEl("path", { d: line, class: "spark-line", fill: "none" }));
   return svg;
