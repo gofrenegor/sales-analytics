@@ -9,7 +9,6 @@ from analytics import (
     DEFECT_STATUSES,
     LAG_GROUP,
     LAG_STATUSES,
-    FOREIGN_GROUP,
     build_loss_donut_svg,
     build_report,
     compute_period,
@@ -61,7 +60,7 @@ def row(**overrides):
         (
             {"status_before": "SMC", "block_id": "6800", "office_id": "999"},
             "Исходящий поток",
-            FOREIGN_GROUP,
+            "Рязань Тюшевское 1",
         ),
         (
             {"status_before": "SMC", "block_id": "6800", "office_id": None},
@@ -79,14 +78,14 @@ def row(**overrides):
             "Исходящий поток",
             "Рязань Тюшевское 1",
         ),
-        ({"block_id": "100"}, "Входящий поток", FOREIGN_GROUP),
-        ({"office_id": "999"}, "Входящий поток", FOREIGN_GROUP),
+        ({"block_id": "100"}, "Входящий поток", "Рязань Тюшевское 1"),
+        ({"office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"office_id": "301760.0"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"block_name": "Склад Х", "block_id": "6810"}, "Входящий поток", "Блоки вне маппинга"),
         (
             {"block_name": "Склад Х", "block_id": None, "office_id": None},
             "Входящий поток",
-            FOREIGN_GROUP,
+            "Блоки вне маппинга",
         ),
         ({"status_before": "ZZZ"}, "Другое", "Рязань Тюшевское 1"),
         (
@@ -102,7 +101,7 @@ def row(**overrides):
         (
             {"status_before": "ORS", "block_id": "100", "office_id": "301760"},
             "Исходящий поток",
-            FOREIGN_GROUP,
+            "Рязань Тюшевское 1",
         ),
         ({"status_before": "ORS", "office_id": "999"}, "Исходящий поток", "Рязань Тюшевское 1"),
         (
@@ -110,9 +109,9 @@ def row(**overrides):
             "Входящий поток",
             "Рязань Тюшевское 1",
         ),
-        ({"status_before": "SMS", "office_id": "999"}, "Входящий поток", FOREIGN_GROUP),
+        ({"status_before": "SMS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"status_before": "OSS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
-        ({"status_before": "OSS", "block_id": "50"}, "Входящий поток", FOREIGN_GROUP),
+        ({"status_before": "OSS", "block_id": "50"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"status_before": "SMS", "reason": "5"}, "Входящий поток", "Рязань Тюшевское 1"),
         (
             {"status_before": "mrd", "reason": "5", "block_id": "100", "office_id": "999", "status_block_id": "6800"},
@@ -235,8 +234,8 @@ def test_other_only_keeps_empty_structure():
     lag = report["flows"]["in"]["cards"][-1]
     assert [card["name"] for card in lag["group_view"]["sections"][0]["cards"]] == LAG_STATUSES
     assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь"]
-    assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["in"]["cards"]]
-    assert FOREIGN_GROUP not in [card["name"] for card in report["flows"]["out"]["cards"]]
+    assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["in"]["cards"]]
+    assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["out"]["cards"]]
     assert report["dashboard"]["in_sum"] == 0
     assert report["dashboard"]["other"]["sum"] == 5
     assert report["dashboard"]["other"]["show"] is True

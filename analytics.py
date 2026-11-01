@@ -43,13 +43,11 @@ OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
 # Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
 STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
-# Блок этих статусов — «ID блока» места списания, не офис и не блок статуса.
+# Эти статусы не уходят в оперку и брак. Группа — название места списания.
 PLACE_BY_BLOCK_ID = frozenset({"ORS", "RNR", "OSS"})
 OPERKA_BLOCK_ID = "6800"
 PICKMISS_GROUP = "Пропуск сборки товара на блоке"
-FOREIGN_GROUP = "Другие логобъекты"
 UNMAPPED_GROUP = "Блоки вне маппинга"
-OWN_BLOCK_RANGE = (6800, 6826)
 OWN_OFFICE_ID = "301760"
 
 BLOCK_MAPPING = {
@@ -444,15 +442,14 @@ def classify_losses(df):
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
     ORS всегда LR 5: исходящий поток, этап «Сборка». RNR всегда LR 27: вход.
-    SMS и OSS — вход. У ORS, RNR и OSS блок берётся из «ID блока»:
-    свой диапазон остаётся на названии места, чужой ID — «Другие логобъекты».
-    Офис, оперка и брак для них не перебивают блок.
+    SMS и OSS — вход. ORS, RNR и OSS не уходят в оперку и брак:
+    группа — название места списания.
     MRD и SLT — группа «Отставание входа» на входящем потоке, мимо блока и брака.
     Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
     статус из OPERKA_STATUSES и это не LR сборки. ID блока перед списанием не решает.
-    Чужой офис или блок вне 6800–6826 — «Другие логобъекты», не оперка.
-    Приоритет блока у остальных, от слабого к сильному: свой блок по названию
-    места списания, оперка, чужой ЛО, брак. LR сборки не попадает ни в оперку,
+    Чужой офис в оперку не попадает и остаётся на названии места.
+    Приоритет блока, от слабого к сильному: свой блок по названию
+    места списания, оперка, брак, отставание входа. LR сборки не попадает ни в оперку,
     ни в брак: исход и блок места потери.
     """
     df = df.copy()
@@ -479,7 +476,6 @@ def classify_losses(df):
 
     own = df["block_name"].map(BLOCK_MAPPING)
     loss_id = _leading_id(df["block_id"])
-    loss_blk = pd.to_numeric(loss_id, errors="coerce")
     off = _office_key(df["office_id"])
     is_operka = (
         df["status_before"].isin(OPERKA_STATUSES)
@@ -489,15 +485,9 @@ def classify_losses(df):
         & ~by_block_id
         & ~is_lag
     )
-    foreign_blk = loss_blk.notna() & ((loss_blk < OWN_BLOCK_RANGE[0]) | (loss_blk > OWN_BLOCK_RANGE[1]))
-    foreign_off = (off != "") & (off.str.lower() != "nan") & (off != OWN_OFFICE_ID)
-    is_foreign = foreign_blk | foreign_off | (loss_blk.isna() & (off == "") & own.isna())
-    foreign_by_id = foreign_blk | (loss_blk.isna() & own.isna())
-    is_foreign = is_foreign.mask(by_block_id, foreign_by_id)
     df["block_group"] = (
         own.fillna(UNMAPPED_GROUP)
         .mask(is_operka, "Опер площадь")
-        .mask(is_foreign, FOREIGN_GROUP)
         .mask(is_defect, DEFECT_GROUP)
         .mask(is_lag, LAG_GROUP)
     )
@@ -687,7 +677,7 @@ def group_kind(group):
         return "stages"
     if group == PICKMISS_GROUP:
         return "pickmiss"
-    if group in (FOREIGN_GROUP, DEFECT_GROUP, LAG_GROUP):
+    if group in (DEFECT_GROUP, LAG_GROUP):
         return "statuses"
     return "platforms"
 
@@ -720,8 +710,6 @@ def build_group_view(dc, dp, flow_title, group, other_curr, has_prev):
             key, names = "status_before", DEFECT_STATUSES
         elif group == LAG_GROUP:
             key, names = "status_before", LAG_STATUSES
-        elif group == FOREIGN_GROUP:
-            key, names = "status_before", None
         else:
             key, names = "block_name", PLATFORMS.get(group, [])
         grouped = build(dc, dp, key)
@@ -749,7 +737,6 @@ def flow_names(flow_title):
 
 def flow_cards(dc, dp, flow_title, has_prev, other_curr):
     grouped = ensure(build(dc, dp, "block_group"), flow_names(flow_title))
-    grouped = grouped[grouped["name"] != FOREIGN_GROUP].reset_index(drop=True)
     cards = []
     for rec in pack_cards(grouped, has_prev):
         gname = rec["name"]
