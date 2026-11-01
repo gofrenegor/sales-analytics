@@ -1638,8 +1638,6 @@ function renderDashboard(screen) {
   }
   screen.append(hero);
   if (dash.delta_text) screen.append(el("p", { class: "delta-line" }, `К прошлому периоду · ${dash.delta_text}`));
-  const reasons = renderPareto(dash.reasons);
-  if (reasons) screen.append(el("h3", { class: "section-title" }, "Причины"), reasons);
   if (dash.other && dash.other.show) {
     const box = el("div", { class: "aside-metric" });
     const label = el("div", { class: "aside-label" }, "Вне потоков ", el("span", null, "· не входит в диаграмму"));
