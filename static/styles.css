@@ -165,8 +165,24 @@ p { margin: 0.35rem 0; }
   font-size: 1.05rem;
   font-variant-numeric: tabular-nums;
 }
-#gate-phone { width: 11.5rem; }
+#gate-contact { width: 11.5rem; }
 #gate-id { width: 4.5rem; }
+.mail-line { display: inline-flex; align-items: center; min-width: 0; }
+.mail-line select[hidden], .mail-at[hidden] { display: none; }
+.mail-at { color: var(--muted); font-weight: 750; padding: 0 0.15rem; }
+.mail-line select {
+  height: 2.5rem;
+  border: 1px solid var(--line-strong);
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+  background: var(--card);
+  padding: 0 0.35rem;
+  font-weight: 650;
+}
+.mail-line.email #gate-contact {
+  width: 8.2rem;
+  border-radius: 10px 0 0 10px;
+}
 .who[hidden] { display: none; }
 .who {
   display: flex;
@@ -226,6 +242,16 @@ p { margin: 0.35rem 0; }
   font-size: 1.15rem;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
+}
+.grant-phone .mail-line { display: flex; margin-top: 0.15rem; }
+.grant-phone .mail-line input { margin-top: 0; }
+.grant-phone .mail-line select {
+  height: auto;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.92rem;
 }
 #own-phone-save { margin: 0.45rem 0 0.7rem; }
 .grant-roles { display: grid; gap: 8px; }

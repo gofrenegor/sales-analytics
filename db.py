@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import time
 from datetime import timedelta
@@ -171,8 +172,13 @@ def ensure_schema():
         access_cols = {col["name"] for col in inspect(conn).get_columns("access_users")}
         if "phone" not in access_cols:
             conn.execute(text("ALTER TABLE access_users ADD COLUMN phone TEXT"))
+        if "email" not in access_cols:
+            conn.execute(text("ALTER TABLE access_users ADD COLUMN email TEXT"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS access_users_phone_idx ON access_users (phone)"
+        ))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS access_users_email_idx ON access_users (email)"
         ))
         conn.execute(text(
             "INSERT INTO access_users (id, role) "
@@ -215,6 +221,9 @@ def known_columns():
     return None if found == () else found
 
 
+MAIL_DOMAINS = ("gmail.com", "mail.ru")
+
+
 def normalize_phone(value):
     digits = "".join(ch for ch in str(value or "") if ch.isdigit())
     if len(digits) == 11 and digits.startswith("8"):
@@ -226,11 +235,47 @@ def normalize_phone(value):
     return digits
 
 
+def contact_kind(value):
+    text_value = str(value or "").strip()
+    if not text_value:
+        return ""
+    if "@" in text_value or text_value[0].isalpha():
+        return "email"
+    if text_value[0] in "+789":
+        return "phone"
+    return ""
+
+
+def normalize_email(nick, domain=""):
+    raw = str(nick or "").strip().lower()
+    dom = str(domain or "").strip().lower()
+    if "@" in raw:
+        local, _, found = raw.partition("@")
+        raw = local.strip()
+        if found.strip():
+            dom = found.strip()
+    if (
+        not raw
+        or raw.startswith(".")
+        or raw.endswith(".")
+        or ".." in raw
+        or not re.fullmatch(r"[a-z0-9._-]{1,64}", raw)
+    ):
+        raise ValueError("Некорректная почта")
+    if dom not in MAIL_DOMAINS:
+        raise ValueError("Домен только gmail.com или mail.ru")
+    return f"{raw}@{dom}"
+
+
 def _access_row(row):
     if row is None or row.role not in ACCESS_ROLES:
         return None
-    phone = row.phone or None
-    return {"id": int(row.id), "role": row.role, "phone": phone}
+    return {
+        "id": int(row.id),
+        "role": row.role,
+        "phone": row.phone or None,
+        "email": row.email or None,
+    }
 
 
 def get_access_user(user_id):
@@ -240,7 +285,7 @@ def get_access_user(user_id):
             if not inspect(conn).has_table("access_users"):
                 return None
             row = conn.execute(
-                text("SELECT id, role, phone FROM access_users WHERE id = :id"),
+                text("SELECT id, role, phone, email FROM access_users WHERE id = :id"),
                 {"id": int(user_id)},
             ).one_or_none()
     except Exception as exc:
@@ -250,20 +295,25 @@ def get_access_user(user_id):
     return _access_row(row)
 
 
-def match_login(user_id, phone_raw):
-    """Пара ID + телефон. Пока номер не записан, пускает по одному ID."""
+def match_login(user_id, contact, domain=""):
+    """Пара ID + телефон или ID + почта. Пустая строка пускает по одному ID."""
     user = get_access_user(user_id)
     if not user:
         return None
-    if not user.get("phone"):
+    if not user.get("phone") and not user.get("email"):
         return user
+    raw = str(contact or "").strip()
+    if not raw:
+        return None
+    kind = contact_kind(raw)
     try:
-        phone = normalize_phone(phone_raw)
+        if kind == "phone" and user.get("phone") and normalize_phone(raw) == user["phone"]:
+            return user
+        if kind == "email" and user.get("email") and normalize_email(raw, domain) == user["email"]:
+            return user
     except ValueError:
         return None
-    if phone != user["phone"]:
-        return None
-    return user
+    return None
 
 
 def next_access_id():
@@ -276,56 +326,69 @@ def next_access_id():
     return int(value or 1)
 
 
-def _phone_taken(conn, phone, user_id):
+def _value_taken(conn, column, value, user_id):
     row = conn.execute(
-        text("SELECT id FROM access_users WHERE phone = :phone AND id != :id"),
-        {"phone": phone, "id": int(user_id)},
+        text(f"SELECT id FROM access_users WHERE {column} = :value AND id != :id"),
+        {"value": value, "id": int(user_id)},
     ).one_or_none()
     return row is not None
 
 
-def grant_access(role, phone):
+def _require_contacts(phone, email, domain):
+    if not str(phone or "").strip() or not str(email or "").strip():
+        raise ValueError("Нужны телефон и почта")
+    return normalize_phone(phone), normalize_email(email, domain)
+
+
+def grant_access(role, phone, email, domain=""):
     if role not in ACCESS_ROLES:
         raise ValueError("Выберите права")
-    normalized = normalize_phone(phone)
+    normalized, mail = _require_contacts(phone, email, domain)
     with _write_lock:
         engine = get_engine()
         try:
             with engine.begin() as conn:
-                if _phone_taken(conn, normalized, 0):
+                if _value_taken(conn, "phone", normalized, 0):
                     raise ValueError("Номер уже выдан")
+                if _value_taken(conn, "email", mail, 0):
+                    raise ValueError("Почта уже выдана")
                 next_id = int(conn.execute(
                     text("SELECT COALESCE(MAX(id), 0) + 1 FROM access_users")
                 ).scalar() or 1)
                 conn.execute(
-                    text("INSERT INTO access_users (id, role, phone) VALUES (:id, :role, :phone)"),
-                    {"id": next_id, "role": role, "phone": normalized},
+                    text(
+                        "INSERT INTO access_users (id, role, phone, email) "
+                        "VALUES (:id, :role, :phone, :email)"
+                    ),
+                    {"id": next_id, "role": role, "phone": normalized, "email": mail},
                 )
         except ValueError:
             raise
         except Exception as exc:
             raise DataError(f"Не удалось выдать доступ: {public_error(exc)}") from exc
-    return {"id": next_id, "role": role, "phone": normalized}
+    return {"id": next_id, "role": role, "phone": normalized, "email": mail}
 
 
-def set_access_phone(user_id, phone):
-    normalized = normalize_phone(phone)
+def set_access_contact(user_id, phone, email, domain=""):
+    normalized, mail = _require_contacts(phone, email, domain)
     with _write_lock:
         engine = get_engine()
         try:
             with engine.begin() as conn:
-                if _phone_taken(conn, normalized, user_id):
+                if _value_taken(conn, "phone", normalized, user_id):
                     raise ValueError("Номер уже выдан")
+                if _value_taken(conn, "email", mail, user_id):
+                    raise ValueError("Почта уже выдана")
                 result = conn.execute(
-                    text("UPDATE access_users SET phone = :phone WHERE id = :id"),
-                    {"phone": normalized, "id": int(user_id)},
+                    text("UPDATE access_users SET phone = :phone, email = :email WHERE id = :id"),
+                    {"phone": normalized, "email": mail, "id": int(user_id)},
                 )
                 if not result.rowcount:
                     raise ValueError("Нет такого ID")
         except ValueError:
             raise
         except Exception as exc:
-            raise DataError(f"Не удалось записать номер: {public_error(exc)}") from exc
+            raise DataError(f"Не удалось записать контакт: {public_error(exc)}") from exc
     return get_access_user(user_id)
 
 

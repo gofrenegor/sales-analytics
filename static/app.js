@@ -2042,12 +2042,15 @@ function wireGrant() {
   const panel = document.getElementById("grant-panel");
   const value = document.getElementById("grant-id-value");
   const phone = document.getElementById("grant-phone");
+  const email = document.getElementById("grant-email");
+  const domain = document.getElementById("grant-domain");
   const submit = document.getElementById("grant-submit");
   const status = document.getElementById("grant-status");
   if (!toggle || !panel) return;
   phone?.addEventListener("input", () => {
     phone.value = phoneDraft(phone.value);
   });
+  if (email && domain) bindNick(email, domain);
   const chosen = () => panel.querySelector("input[name='grant-role']:checked");
   const refreshId = async () => {
     const data = await readJson(await fetch("/api/admin/access/next"));
@@ -2078,11 +2081,18 @@ function wireGrant() {
       const data = await readJson(await fetch("/api/admin/access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role, phone: phone.value }),
+        body: JSON.stringify({
+          role,
+          phone: phone.value,
+          email: email ? email.value : "",
+          domain: domain ? domain.value : "",
+        }),
       }));
       status.hidden = false;
-      status.textContent = `Выдан ID ${data.id} · +${data.phone} · ${data.role === "admin" ? "админка" : "просмотр"}`;
+      status.textContent = `Выдан ID ${data.id} · +${data.phone} · ${data.email} · ${data.role === "admin" ? "админка" : "просмотр"}`;
       phone.value = "";
+      if (email) email.value = "";
+      if (domain) domain.value = "gmail.com";
       await refreshId();
     } catch (error) {
       setAdminStatus(error.message);
@@ -2094,22 +2104,29 @@ function wireGrant() {
 
 function wireOwnPhone() {
   const input = document.getElementById("own-phone");
+  const email = document.getElementById("own-email");
+  const domain = document.getElementById("own-domain");
   const button = document.getElementById("own-phone-save");
   if (!input || !button) return;
   input.addEventListener("input", () => {
     input.value = phoneDraft(input.value);
   });
+  if (email && domain) bindNick(email, domain);
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
-      const data = await readJson(await fetch("/api/admin/access/phone", {
+      const data = await readJson(await fetch("/api/admin/access/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone: input.value }),
+        body: JSON.stringify({
+          phone: input.value,
+          email: email ? email.value : "",
+          domain: domain ? domain.value : "",
+        }),
       }));
       state.user = { ...state.user, ...data, ok: true };
-      input.value = data.phone ? `+${data.phone}` : "";
-      setAdminStatus("Номер сохранён");
+      fillOwnContact(data);
+      setAdminStatus("Контакты сохранены");
     } catch (error) {
       setAdminStatus(error.message);
     } finally {
@@ -2457,13 +2474,72 @@ function showGate() {
   if (toggle) toggle.hidden = true;
   if (who) who.hidden = true;
   setAdminOpen(false);
-  document.getElementById("gate-phone")?.focus();
+  document.getElementById("gate-contact")?.focus();
 }
 
 function phoneDraft(value) {
   const cleaned = String(value || "").replace(/[^\d+]/g, "");
   const plus = cleaned.startsWith("+") ? "+" : "";
   return (plus + cleaned.replace(/\+/g, "")).slice(0, 16);
+}
+
+function contactMode(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.includes("@") || /[a-zа-яё]/i.test(text[0])) return "email";
+  if ("+789".includes(text[0])) return "phone";
+  return "";
+}
+
+function nickDraft(value) {
+  const pasted = String(value || "").trim().match(/^([^@\s]+)@([a-z0-9.-]+)$/i);
+  return {
+    nick: (pasted ? pasted[1] : value).toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 64),
+    domain: pasted ? pasted[2].toLowerCase() : "",
+  };
+}
+
+function bindNick(input, select) {
+  input.addEventListener("input", () => {
+    const draft = nickDraft(input.value);
+    if (draft.domain && [...select.options].some((opt) => opt.value === draft.domain)) {
+      select.value = draft.domain;
+    }
+    if (input.value !== draft.nick) input.value = draft.nick;
+  });
+}
+
+function syncGateContact(input, select, at, line) {
+  const draft = nickDraft(input.value);
+  let value = input.value;
+  if (draft.domain) {
+    value = draft.nick;
+    if ([...select.options].some((opt) => opt.value === draft.domain)) select.value = draft.domain;
+  }
+  const mode = contactMode(value.trim());
+  const email = mode === "email";
+  if (mode === "phone") value = phoneDraft(value);
+  else if (email) value = nickDraft(value).nick;
+  select.hidden = !email;
+  if (at) at.hidden = !email;
+  line?.classList.toggle("email", email);
+  input.placeholder = email ? "ник" : mode === "phone" ? "телефон" : "телефон или почта";
+  input.setAttribute("inputmode", email ? "email" : "tel");
+  input.setAttribute("aria-label", email ? "Ник почты" : "Телефон или ник почты");
+  if (input.value !== value) input.value = value;
+}
+
+function fillOwnContact(user) {
+  const phone = document.getElementById("own-phone");
+  const email = document.getElementById("own-email");
+  const domain = document.getElementById("own-domain");
+  if (phone && document.activeElement !== phone) phone.value = user.phone ? `+${user.phone}` : "";
+  if (!email || document.activeElement === email) return;
+  const parts = String(user.email || "").split("@");
+  email.value = parts[0] || "";
+  if (domain && parts[1] && [...domain.options].some((opt) => opt.value === parts[1])) {
+    domain.value = parts[1];
+  }
 }
 
 function applySession() {
@@ -2477,8 +2553,7 @@ function applySession() {
   const admin = user && user.role === "admin";
   if (toggle) toggle.hidden = !admin;
   if (!admin) setAdminOpen(false);
-  const own = document.getElementById("own-phone");
-  if (own && document.activeElement !== own) own.value = user.phone ? `+${user.phone}` : "";
+  fillOwnContact(user);
   if (!who) return;
   who.hidden = false;
   who.replaceChildren(
@@ -2497,12 +2572,13 @@ async function logout() {
 
 function wireAuth() {
   const form = document.getElementById("gate-form");
-  const phone = document.getElementById("gate-phone");
+  const contact = document.getElementById("gate-contact");
+  const domain = document.getElementById("gate-domain");
+  const at = document.getElementById("gate-at");
+  const line = document.getElementById("gate-line");
   const input = document.getElementById("gate-id");
-  if (!form || !input || !phone) return;
-  phone.addEventListener("input", () => {
-    phone.value = phoneDraft(phone.value);
-  });
+  if (!form || !input || !contact || !domain) return;
+  contact.addEventListener("input", () => syncGateContact(contact, domain, at, line));
   input.addEventListener("input", () => {
     input.value = digitsOnly(input.value).slice(0, 9);
   });
@@ -2514,7 +2590,11 @@ function wireAuth() {
       const data = await readJson(await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id, phone: phone.value }),
+        body: JSON.stringify({
+          id,
+          contact: contact.value,
+          domain: domain.hidden ? "" : domain.value,
+        }),
       }));
       state.user = data;
       applySession();

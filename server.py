@@ -47,16 +47,22 @@ class JsonBody(JSONResponse):
 
 class LoginIn(BaseModel):
     id: int
+    contact: str = ""
     phone: str = ""
+    domain: str = ""
 
 
 class GrantIn(BaseModel):
     role: str
     phone: str = ""
+    email: str = ""
+    domain: str = ""
 
 
-class PhoneIn(BaseModel):
-    phone: str
+class ContactIn(BaseModel):
+    phone: str = ""
+    email: str = ""
+    domain: str = ""
 
 
 def fail(status, message):
@@ -125,14 +131,21 @@ def health():
 @app.get("/api/auth/me")
 def auth_me(user=Depends(actor)):
     if not user:
-        return {"ok": False, "id": None, "role": None, "phone": None}
-    return {"ok": True, "id": user["id"], "role": user["role"], "phone": user.get("phone")}
+        return {"ok": False, "id": None, "role": None, "phone": None, "email": None}
+    return {
+        "ok": True,
+        "id": user["id"],
+        "role": user["role"],
+        "phone": user.get("phone"),
+        "email": user.get("email"),
+    }
 
 
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn):
     try:
-        user = db.match_login(body.id, body.phone) if body.id > 0 else None
+        contact = body.contact or body.phone
+        user = db.match_login(body.id, contact, body.domain) if body.id > 0 else None
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     if not user:
@@ -142,6 +155,7 @@ def auth_login(body: LoginIn):
         "id": user["id"],
         "role": user["role"],
         "phone": user.get("phone"),
+        "email": user.get("email"),
     })
     return _auth_cookie(response, user["id"])
 
@@ -299,20 +313,20 @@ def access_grant(body: GrantIn, user=Depends(actor)):
     if blocked:
         return blocked
     try:
-        return db.grant_access(body.role, body.phone)
+        return db.grant_access(body.role, body.phone, body.email, body.domain)
     except ValueError as exc:
         return fail(400, str(exc))
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
 
 
-@app.post("/api/admin/access/phone")
-def access_phone(body: PhoneIn, user=Depends(actor)):
+@app.post("/api/admin/access/contact")
+def access_contact(body: ContactIn, user=Depends(actor)):
     blocked = denied(user, admin=True)
     if blocked:
         return blocked
     try:
-        saved = db.set_access_phone(user["id"], body.phone)
+        saved = db.set_access_contact(user["id"], body.phone, body.email, body.domain)
     except ValueError as exc:
         return fail(400, str(exc))
     except (db.DataError, db.ConfigError) as exc:

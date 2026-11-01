@@ -19,7 +19,14 @@
   <div id="gate" class="gate" hidden>
     <p class="gate-title">вы не зарегистрированы</p>
     <form id="gate-form" class="gate-form">
-      <input id="gate-phone" inputmode="tel" autocomplete="tel" placeholder="телефон" aria-label="Телефон" enterkeyhint="next">
+      <span class="mail-line" id="gate-line">
+        <input id="gate-contact" autocomplete="off" placeholder="телефон или почта" aria-label="Телефон или ник почты" enterkeyhint="next">
+        <span class="mail-at" id="gate-at" hidden aria-hidden="true">@</span>
+        <select id="gate-domain" hidden aria-label="Домен почты">
+          <option value="gmail.com">gmail.com</option>
+          <option value="mail.ru">mail.ru</option>
+        </select>
+      </span>
       <input id="gate-id" inputmode="numeric" autocomplete="off" placeholder="ID" aria-label="ID" enterkeyhint="go">
       <button type="submit" class="primary">Войти</button>
     </form>
@@ -31,10 +38,21 @@
     <aside id="sidebar">
       <h2>👤 Админ-панель</h2>
       <label class="grant-phone">
-        <span class="grant-id-kicker">Мой номер</span>
-        <input id="own-phone" inputmode="tel" autocomplete="tel" placeholder="+7" aria-label="Мой номер">
+        <span class="grant-id-kicker">Мой телефон</span>
+        <input id="own-phone" inputmode="tel" autocomplete="tel" placeholder="+7" aria-label="Мой телефон">
       </label>
-      <button type="button" id="own-phone-save" class="wide ghost">Сохранить мой номер</button>
+      <label class="grant-phone">
+        <span class="grant-id-kicker">Моя почта</span>
+        <span class="mail-line email">
+          <input id="own-email" autocomplete="off" placeholder="ник" aria-label="Ник моей почты">
+          <span class="mail-at" aria-hidden="true">@</span>
+          <select id="own-domain" aria-label="Домен моей почты">
+            <option value="gmail.com">gmail.com</option>
+            <option value="mail.ru">mail.ru</option>
+          </select>
+        </span>
+      </label>
+      <button type="button" id="own-phone-save" class="wide ghost">Сохранить мои контакты</button>
       <button type="button" id="grant-toggle" class="wide ghost" aria-expanded="false" aria-controls="grant-panel">Выдать доступ</button>
       <div id="grant-panel" class="grant-panel" hidden>
         <div class="grant-id" aria-disabled="true">
@@ -44,6 +62,17 @@
         <label class="grant-phone">
           <span class="grant-id-kicker">Телефон</span>
           <input id="grant-phone" inputmode="tel" autocomplete="off" placeholder="+7" aria-label="Телефон для этого ID">
+        </label>
+        <label class="grant-phone">
+          <span class="grant-id-kicker">Почта</span>
+          <span class="mail-line email">
+            <input id="grant-email" autocomplete="off" placeholder="ник" aria-label="Ник почты для этого ID">
+            <span class="mail-at" aria-hidden="true">@</span>
+            <select id="grant-domain" aria-label="Домен почты для этого ID">
+              <option value="gmail.com">gmail.com</option>
+              <option value="mail.ru">mail.ru</option>
+            </select>
+          </span>
         </label>
         <div class="grant-roles" role="radiogroup" aria-label="Права">
           <label class="grant-role">
