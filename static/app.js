@@ -157,6 +157,10 @@ function periodKey() {
     : `${state.mode}|${state.anchor}`;
 }
 
+function freeRangePending() {
+  return state.mode === "Свободный" && !(state.rangeStart && state.rangeEnd);
+}
+
 function syncForm() {
   const radio = document.querySelector(`input[name=mode][value="${state.mode}"]`);
   if (radio) radio.checked = true;
@@ -171,9 +175,9 @@ function syncForm() {
   anchor.required = !free;
   rangeStart.required = free;
   rangeEnd.required = free;
-  if (state.anchor) anchor.value = state.anchor;
-  if (state.rangeStart) rangeStart.value = state.rangeStart;
-  if (state.rangeEnd) rangeEnd.value = state.rangeEnd;
+  anchor.value = state.anchor || "";
+  rangeStart.value = state.rangeStart || "";
+  rangeEnd.value = state.rangeEnd || "";
   document.getElementById("anchor-label").textContent = ANCHOR_LABELS[state.mode] || ANCHOR_LABELS["Месяц"];
 }
 
@@ -184,14 +188,11 @@ function orderedRange(start, end) {
 
 function onControlsChange() {
   const mode = document.querySelector("input[name=mode]:checked").value;
-  const anchor = document.getElementById("anchor").value;
+  let anchor = document.getElementById("anchor").value;
   let rangeStart = document.getElementById("range-start").value;
   let rangeEnd = document.getElementById("range-end").value;
   if (mode !== "Свободный") {
-    if (state.mode === "Свободный" && state.rangeEnd) {
-      state.anchor = state.rangeEnd;
-      anchor = state.rangeEnd;
-    }
+    if (state.mode === "Свободный" && state.rangeEnd) anchor = state.rangeEnd;
     document.getElementById("anchor-label").textContent = ANCHOR_LABELS[mode];
     if (!anchor || (mode === state.mode && anchor === state.anchor)) {
       if (mode !== state.mode) syncForm();
@@ -206,18 +207,22 @@ function onControlsChange() {
   }
   if (state.mode !== "Свободный") {
     const period = state.report && state.report.period;
-    if (period && period.start && period.end) {
-      rangeStart = period.start;
-      rangeEnd = period.end;
-    } else {
-      rangeStart = rangeStart || state.anchor;
-      rangeEnd = rangeEnd || state.anchor;
+    if (!rangeStart) {
+      if (period && period.start) rangeStart = period.start;
+      else rangeStart = state.rangeStart || state.anchor;
     }
+    rangeEnd = "";
   }
   [rangeStart, rangeEnd] = orderedRange(rangeStart, rangeEnd);
   if (!rangeStart || !rangeEnd) {
     state.mode = mode;
+    state.rangeStart = rangeStart;
+    state.rangeEnd = rangeEnd;
     syncForm();
+    writeUrl(false);
+    setStatus("");
+    setBanner("");
+    render();
     return;
   }
   const same = mode === state.mode && rangeStart === state.rangeStart && rangeEnd === state.rangeEnd;
@@ -288,7 +293,7 @@ function renderNotes() {
   const report = state.report;
   const prevText = note.textContent;
   note.replaceChildren();
-  if (!report || !report.period) {
+  if (freeRangePending() || !report || !report.period) {
     note.hidden = true;
   } else {
     note.hidden = false;
@@ -304,7 +309,7 @@ function renderNotes() {
     }
   }
   const compare = document.getElementById("compare-note");
-  const showCompare = report && !report.empty && !report.has_prev && report.period.compare !== false;
+  const showCompare = !freeRangePending() && report && !report.empty && !report.has_prev && report.period.compare !== false;
   compare.hidden = !showCompare;
   compare.textContent = showCompare ? "ℹ️ За период сравнения в базе данных нет — динамика не показывается." : "";
   if (prevText && note.textContent !== prevText && !reducedMotion()) {
@@ -330,7 +335,7 @@ function moneyTable(headers, records) {
 function renderQuality() {
   const panel = document.getElementById("quality");
   const body = document.getElementById("quality-body");
-  const quality = state.report && !state.report.empty ? state.report.quality : null;
+  const quality = !freeRangePending() && state.report && !state.report.empty ? state.report.quality : null;
   panel.hidden = !quality;
   body.replaceChildren();
   if (!quality) return;
@@ -784,6 +789,10 @@ function renderScreen() {
 
 function fillScreen(screen) {
   const report = state.report;
+  if (freeRangePending()) {
+    screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
+    return;
+  }
   if (!report) {
     screen.append(el("p", { class: "hint" }, "Загрузка…"));
     return;
@@ -1028,8 +1037,13 @@ function wireChrome() {
       const nextDepth = VIEW_DEPTH[state.view] ?? 0;
       screenMotion = nextDepth < prevDepth ? "back" : nextDepth > prevDepth ? "forward" : "back";
     }
-    if (period !== periodKey()) loadReport({ spin: true });
-    else render();
+    if (period !== periodKey()) {
+      if (freeRangePending()) {
+        setStatus("");
+        setBanner("");
+        render();
+      } else loadReport({ spin: true });
+    } else render();
   });
 }
 
@@ -1042,7 +1056,6 @@ async function boot() {
     const data = await response.json();
     if (!state.anchor) state.anchor = data.max_date || data.today;
     if (!state.rangeStart) state.rangeStart = state.anchor;
-    if (!state.rangeEnd) state.rangeEnd = state.anchor;
     syncForm();
     renderSummary(data.summary);
     if (!data.ok) {
@@ -1052,6 +1065,11 @@ async function boot() {
       return;
     }
     writeUrl(false);
+    if (freeRangePending()) {
+      setStatus("");
+      render();
+      return;
+    }
     await loadReport();
   } catch (error) {
     setBanner("Не удалось открыть сервис");
