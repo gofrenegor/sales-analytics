@@ -685,14 +685,34 @@ function svgEl(name, attrs) {
   return node;
 }
 
+function chartTickDays(maxDay) {
+  const limit = 60;
+  if (maxDay <= limit) {
+    const days = [];
+    for (let day = 1; day <= maxDay; day += 1) days.push(day);
+    return days;
+  }
+  const days = [];
+  const last = limit - 1;
+  for (let i = 0; i < limit; i += 1) days.push(1 + Math.round(((maxDay - 1) * i) / last));
+  return days;
+}
+
 function renderChart(rows) {
   const colors = seriesColors();
-  const width = 860;
   const height = 400;
-  const pad = { l: 72, r: 16, t: 16, b: 36 };
+  const width = 1280;
+  const pad = { l: 78, r: 28, t: 16, b: 36 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
   const maxDay = Math.max(1, ...rows.map((row) => row.day));
+  const ticks = chartTickDays(maxDay);
+  let minStep = ticks.length > 1 ? ticks[1] - ticks[0] : 1;
+  for (let i = 2; i < ticks.length; i += 1) minStep = Math.min(minStep, ticks[i] - ticks[i - 1]);
+  const span = Math.max(maxDay - 1, 1);
+  const spacing = (innerW / span) * minStep;
+  const digits = String(maxDay).length;
+  const fontPx = Math.min(12, (spacing * 0.84) / (digits * 0.72));
   const maxY = niceMax(Math.max(0, ...rows.map((row) => row.sum)));
   const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / (maxDay - 1)) * innerW);
   const y = (value) => pad.t + innerH - (value / maxY) * innerH;
@@ -705,13 +725,12 @@ function renderChart(rows) {
     const value = maxY * i / 4;
     const yy = y(value);
     svg.append(svgEl("line", { x1: pad.l, x2: width - pad.r, y1: yy, y2: yy, stroke: colors.grid, "stroke-dasharray": i === 0 ? "0" : "3 4" }));
-    const label = svgEl("text", { x: pad.l - 8, y: yy + 4, "text-anchor": "end" });
+    const label = svgEl("text", { x: pad.l - 8, y: yy + 4, "text-anchor": "end", "font-size": "12" });
     label.textContent = fmtInt(value);
     svg.append(label);
   }
-  const step = maxDay > 24 ? 3 : maxDay > 16 ? 2 : 1;
-  for (let day = 1; day <= maxDay; day += step) {
-    const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle" });
+  for (const day of ticks) {
+    const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
     label.textContent = String(day);
     svg.append(label);
   }
