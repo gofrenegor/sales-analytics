@@ -81,6 +81,16 @@ EMPLOYEE_HEADERS = (
     "id сотрудника статуса перед списанием",
     "id сотрудника",
 )
+# AF — последний стикер до списания. Q — флаг оприходования (вещь получила движение).
+STICKER_COL_INDEX = 31
+STICKER_HEADERS = ("последний стикер до списания",)
+POSTED_COL_INDEX = 16
+POSTED_HEADERS = (
+    "оприходование",
+    "флаг оприходования",
+    "признак оприходования",
+    "оприходовано",
+)
 
 GROUP_PROMPTS = {
     "stages": "Выберите этап для детализации:",
@@ -353,6 +363,8 @@ def process_excel(file):
     df = pd.read_excel(file, engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip()
     employee = _employee_raw(df)
+    sticker = _pick_series(df, STICKER_HEADERS, STICKER_COL_INDEX, "стикер", _looks_sticker)
+    posted = _pick_series(df, POSTED_HEADERS, POSTED_COL_INDEX, "оприход", _looks_posted)
     cols_map = {
         "ШК": "barcode",
         "Наименование блока": "block_name",
@@ -387,6 +399,8 @@ def process_excel(file):
         df["status_employee_id"] = employee.map(badge_id)
     elif "status_employee_id" in df.columns:
         df["status_employee_id"] = df["status_employee_id"].map(badge_id)
+    df["last_sticker"] = sticker.map(sticker_text).to_numpy() if sticker is not None else ""
+    df["posted"] = posted.map(posted_flag).to_numpy() if posted is not None else ""
     return df
 
 
@@ -452,6 +466,111 @@ def badge_id(value):
     if re.fullmatch(r"-?\d+\.0+", text):
         text = text.split(".")[0]
     return re.sub(r"\D", "", text)
+
+
+def sticker_text(value):
+    """Текст стикера как в выгрузке, со звёздами. Пустое и NaN -> «»."""
+    try:
+        missing = value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return ""
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+    text = str(value).strip()
+    if text.lower() in {"", "nan", "none", "nat", "<na>"}:
+        return ""
+    if re.fullmatch(r"-?\d+\.0+", text):
+        text = text.split(".")[0]
+    return text
+
+
+def posted_flag(value):
+    """Флаг оприходования: «1» — ИСТИНА, «0» — ЛОЖЬ, «» — пусто или не разобрали."""
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    try:
+        if value is None or pd.isna(value):
+            return ""
+    except (TypeError, ValueError):
+        if value is None:
+            return ""
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            return ""
+        number = float(value)
+        if number == 1:
+            return "1"
+        if number == 0:
+            return "0"
+        return ""
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            native = value.item()
+        except Exception:
+            native = None
+        if native is not None and native is not value:
+            return posted_flag(native)
+    text = str(value).strip().lower()
+    if text in {"", "nan", "none", "nat", "<na>"}:
+        return ""
+    if text in {"истина", "true", "1", "1.0", "да", "yes"}:
+        return "1"
+    if text in {"ложь", "false", "0", "0.0", "нет", "no"}:
+        return "0"
+    return ""
+
+
+def _sample_values(series):
+    values = []
+    for value in series.tolist():
+        try:
+            missing = value is None or pd.isna(value)
+        except (TypeError, ValueError):
+            missing = value is None
+        if missing:
+            continue
+        values.append(value)
+        if len(values) >= 40:
+            break
+    return values
+
+
+def _looks_posted(series):
+    sample = _sample_values(series)
+    if not sample:
+        return False
+    hits = sum(posted_flag(value) in {"1", "0"} for value in sample)
+    return hits * 2 >= len(sample)
+
+
+def _looks_sticker(series):
+    sample = _sample_values(series)
+    if not sample:
+        return False
+    hits = sum("*" in sticker_text(value) for value in sample)
+    return hits * 2 >= len(sample)
+
+
+def _pick_series(df, headers, index, token, accept):
+    """Колонка по заголовку. Иначе — буква выгрузки, если заголовок или значения сходятся."""
+    folded = {str(col).strip().lower(): col for col in df.columns}
+    named = next((folded[name] for name in headers if name in folded), None)
+    if named is None and token:
+        named = next((col for key, col in folded.items() if token in key), None)
+    if named is not None:
+        return df[named]
+    if df.shape[1] <= index:
+        return None
+    series = df.iloc[:, index]
+    title = str(df.columns[index]).strip().lower()
+    if title in headers or (token and token in title) or accept(series):
+        return series
+    return None
 
 
 def _employee_raw(df):
@@ -995,6 +1114,47 @@ def build_employees(df):
         if key in out:
             out[key] = _employee_badges(group)
     return out
+
+
+def build_employee_items(df, badge, lr):
+    """Стикеры одного бейджика и LR. Каждая потеря — строка. Без списка ШК.
+
+    found: True — оприходование ИСТИНА (вещь нашли, было движение),
+    False — ЛОЖЬ, None — флага нет.
+    """
+    code = str(lr)
+    if code not in EMPLOYEE_LRS:
+        return []
+    if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
+        return []
+    part = df.loc[df["reason"].astype(str) == code]
+    if part.empty or "status_employee_id" not in part.columns:
+        return []
+    part = part.loc[part["status_employee_id"].map(badge_id) == (badge or "")]
+    if part.empty:
+        return []
+    stickers = part["last_sticker"] if "last_sticker" in part.columns else pd.Series("", index=part.index)
+    flags = part["posted"] if "posted" in part.columns else pd.Series("", index=part.index)
+    if "loss_sum" in part.columns:
+        sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
+    else:
+        sums = pd.Series(0.0, index=part.index)
+    items = []
+    for sticker, flag, amount in zip(stickers.tolist(), flags.tolist(), sums.tolist()):
+        parsed = posted_flag(flag)
+        if parsed == "1":
+            found = True
+        elif parsed == "0":
+            found = False
+        else:
+            found = None
+        items.append({
+            "sticker": sticker_text(sticker),
+            "found": found,
+            "sum": _f(amount),
+        })
+    items.sort(key=lambda row: (-row["sum"], row["sticker"]))
+    return items
 
 
 def _flow_code(title):

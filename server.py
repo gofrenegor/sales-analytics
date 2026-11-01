@@ -258,6 +258,18 @@ def _employees_payload(period):
     return {"employees": analytics.build_employees(current)}
 
 
+def _employee_items_payload(period, badge, lr):
+    frame, columns_ready = db.load_employee_slice(period["_start"], period["_end"], badge)
+    items = analytics.build_employee_items(frame, badge, lr)
+    filled = any(row["sticker"] or row["found"] is not None for row in items)
+    return {
+        "badge": badge,
+        "lr": lr,
+        "ready": bool(columns_ready and (not items or filled)),
+        "items": items,
+    }
+
+
 @app.get("/api/report")
 def report(
     request: Request,
@@ -292,6 +304,43 @@ def employees(
     if error is not None:
         return error
     return _cached_json("employees", period, _employees_payload, request)
+
+
+@app.get("/api/employees/items")
+def employee_items(
+    mode: str = "Месяц",
+    anchor: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    badge: str = "",
+    lr: str = "5",
+    user=Depends(actor),
+):
+    """Стикеры и флаг оприходования одного бейджика. Список сотрудников это не читает."""
+    blocked = denied(user)
+    if blocked:
+        return blocked
+    badge = str(badge or "").strip()
+    if not re.fullmatch(r"\d{0,64}", badge):
+        return fail(400, "Некорректный бейджик")
+    if lr not in analytics.EMPLOYEE_LRS:
+        return fail(400, "Некорректный LR")
+    period, error = _period(mode, anchor, start, end)
+    if error is not None:
+        return error
+    key = db.ready_key("employee-items", period) + (badge, lr)
+    cached = db.get_ready(key)
+    if cached is not None:
+        return _json(cached)
+    generation = db.cache_generation()
+    try:
+        payload = _employee_items_payload(period, badge, lr)
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    except Exception as exc:
+        log.exception("employee-items")
+        return fail(500, db.public_error(exc))
+    return _json(db.put_ready(key, payload, generation))
 
 
 @app.post("/api/admin/cache/clear")

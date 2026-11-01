@@ -386,6 +386,7 @@ main {
 }
 .badge-search button.primary { padding: 0 1.15rem; }
 .emp-list { display: flex; flex-direction: column; gap: 8px; }
+.emp-card { display: flex; flex-direction: column; }
 .emp-row {
   width: 100%;
   display: grid;
@@ -398,11 +399,52 @@ main {
   border-radius: 12px;
   padding: 10px 12px;
   min-height: 3.1rem;
+  font-size: inherit;
   content-visibility: auto;
   contain-intrinsic-size: auto 3.1rem;
   transition: background 0.16s ease, border-color 0.16s ease;
 }
-.emp-row:hover { background: var(--card-hover); border-color: var(--line-strong); }
+.emp-row:hover,
+.emp-card.is-open .emp-row { background: var(--card-hover); border-color: var(--line-strong); }
+.emp-card.is-open .emp-row {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.emp-detail {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  padding: 2px 12px 10px;
+  max-height: min(28rem, 60vh);
+  overflow: auto;
+}
+.emp-item {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 1.2fr) minmax(8.5rem, auto) auto;
+  align-items: center;
+  gap: 8px 12px;
+  min-height: 1.9rem;
+  font-size: 0.92rem;
+}
+.emp-sticker {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.emp-found {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.emp-found.yes { color: var(--green-ink); }
+.emp-found.no { color: var(--red); }
+.emp-found.unknown { color: var(--muted); font-weight: 600; }
+.emp-mark { font-size: 1.05rem; line-height: 1; }
 .emp-badge {
   font-variant-numeric: tabular-nums;
   font-weight: 750;

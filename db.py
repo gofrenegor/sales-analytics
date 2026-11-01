@@ -30,10 +30,11 @@ CACHE_TTL = 3600
 READ_COLUMNS = (
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
-    "status_employee_id",
+    "status_employee_id", "last_sticker", "posted",
 )
 WRITE_COLUMNS = READ_COLUMNS
-# Главный экран не читает ШК и бейджик. Сотрудники читают бейджик, без списка ШК.
+# Главный экран не читает ШК и бейджик. Список сотрудников — бейджик, без стикеров.
+# Стикер и флаг оприходования читает только срез одного бейджика по клику.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
@@ -45,6 +46,11 @@ FRAME_COLUMNS = {
         "status_employee_id",
     ),
 }
+DETAIL_COLUMNS = (
+    "loss_date", "block_name", "loss_sum", "loss_qty",
+    "reason", "status_before", "block_id", "office_id",
+    "status_employee_id", "last_sticker", "posted",
+)
 
 
 class ConfigError(Exception):
@@ -159,8 +165,15 @@ ACCESS_ROLES = ("view", "admin")
 
 
 def _ensure_loss_index(conn):
-    if inspect(conn).has_table("losses"):
-        conn.execute(text("CREATE INDEX IF NOT EXISTS losses_loss_date_idx ON losses (loss_date)"))
+    if not inspect(conn).has_table("losses"):
+        return
+    conn.execute(text("CREATE INDEX IF NOT EXISTS losses_loss_date_idx ON losses (loss_date)"))
+    names = {col["name"] for col in inspect(conn).get_columns("losses")}
+    if "status_employee_id" in names:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS losses_employee_date_idx "
+            "ON losses (status_employee_id, loss_date)"
+        ))
 
 
 def ensure_schema():
@@ -188,7 +201,7 @@ def ensure_schema():
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
-        for col in ("office_id", "block_id", "status_employee_id"):
+        for col in ("office_id", "block_id", "status_employee_id", "last_sticker", "posted"):
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE losses ADD COLUMN {col} TEXT"))
         _ensure_loss_index(conn)
@@ -411,6 +424,40 @@ def load_data(start, end, columns):
             return analytics.prepare_losses(pd.DataFrame())
         raise DataError(f"Не удалось получить данные из базы: {public_error(exc)}") from exc
     return analytics.prepare_losses(df)
+
+
+def load_employee_slice(start, end, badge):
+    """Строки одного бейджика за окно. В общий кэш кадра не кладётся.
+
+    ready — в таблице уже есть стикер и флаг. Иначе старая заливка, колонки пустые.
+    """
+    existing = known_columns()
+    ready = bool(existing) and "last_sticker" in existing and "posted" in existing
+    empty = analytics.prepare_losses(pd.DataFrame())
+    if not existing or "loss_date" not in existing or "status_employee_id" not in existing:
+        return empty, ready
+    cols = [col for col in DETAIL_COLUMNS if col in existing]
+    params = {
+        "start": start.isoformat(),
+        "end": (end + timedelta(days=1)).isoformat(),
+        "badge": badge or "",
+    }
+    if badge:
+        emp_sql = "AND status_employee_id = :badge"
+    else:
+        emp_sql = "AND (status_employee_id IS NULL OR status_employee_id = '')"
+    sql = text(
+        "SELECT " + ", ".join(cols)
+        + " FROM losses WHERE loss_date >= :start AND loss_date < :end "
+        + emp_sql
+    )
+    try:
+        frame = pd.read_sql(sql, get_engine(), params=params)
+    except Exception as exc:
+        if is_missing_table(exc):
+            return empty, ready
+        raise DataError(f"Не удалось получить данные из базы: {public_error(exc)}") from exc
+    return analytics.prepare_losses(frame), ready
 
 
 def load_cached(start, end, kind="report"):

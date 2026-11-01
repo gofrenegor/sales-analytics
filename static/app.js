@@ -17,6 +17,9 @@ const state = {
   badgeDraft: "",
   badgeQuery: "",
   empLr: "5",
+  empOpen: "",
+  empDetail: null,
+  empCache: {},
   user: null,
 };
 
@@ -1117,13 +1120,80 @@ async function waitAnimating() {
 
 let loadSeq = 0;
 let employeesSeq = 0;
+let empDetailSeq = 0;
 
 function resetEmployees() {
   employeesSeq += 1;
+  empDetailSeq += 1;
   state.employees = null;
   state.employeesKey = "";
   state.employeesLoading = false;
   state.employeesError = "";
+  state.empOpen = "";
+  state.empDetail = null;
+  state.empCache = {};
+}
+
+function empKey(lr, badge) {
+  return `${lr}|${badge || ""}`;
+}
+
+function periodParams() {
+  const params = new URLSearchParams({ mode: state.mode });
+  if (state.mode === "Свободный") {
+    params.set("start", state.rangeStart);
+    params.set("end", state.rangeEnd);
+  } else {
+    params.set("anchor", state.anchor);
+  }
+  return params;
+}
+
+function toggleEmp(lr, badge) {
+  const key = empKey(lr, badge);
+  if (state.empOpen === key) {
+    empDetailSeq += 1;
+    state.empOpen = "";
+    render();
+    return;
+  }
+  loadEmpDetail(lr, badge);
+}
+
+async function loadEmpDetail(lr, badge) {
+  const key = empKey(lr, badge);
+  const seq = ++empDetailSeq;
+  state.empOpen = key;
+  const hit = state.empCache[key];
+  if (hit) {
+    state.empDetail = { key, loading: false, error: "", items: hit.items, ready: hit.ready };
+    if (state.view === "employees") render();
+    return;
+  }
+  state.empDetail = { key, loading: true, error: "", items: null, ready: true };
+  if (state.view === "employees") render();
+  try {
+    const params = periodParams();
+    params.set("lr", lr);
+    params.set("badge", badge || "");
+    const response = await fetch(`/api/employees/items?${params.toString()}`);
+    const data = await response.json();
+    if (seq !== empDetailSeq) return;
+    if (response.status === 401) {
+      state.empOpen = "";
+      state.empDetail = null;
+      showGate();
+      return;
+    }
+    if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    const pack = { items: data.items || [], ready: data.ready !== false };
+    state.empCache[key] = pack;
+    state.empDetail = { key, loading: false, error: "", items: pack.items, ready: pack.ready };
+  } catch (error) {
+    if (seq !== empDetailSeq) return;
+    state.empDetail = { key, loading: false, error: error.message, items: null, ready: true };
+  }
+  if (state.view === "employees") render();
 }
 
 async function loadEmployees() {
@@ -1138,14 +1208,7 @@ async function loadEmployees() {
   state.employeesKey = key;
   if (state.view === "employees") render();
   try {
-    const params = new URLSearchParams({ mode: state.mode });
-    if (state.mode === "Свободный") {
-      params.set("start", state.rangeStart);
-      params.set("end", state.rangeEnd);
-    } else {
-      params.set("anchor", state.anchor);
-    }
-    const response = await fetch(`/api/employees?${params.toString()}`);
+    const response = await fetch(`/api/employees?${periodParams().toString()}`);
     const data = await response.json();
     if (seq !== employeesSeq) return;
     if (response.status === 401) {
@@ -1174,14 +1237,7 @@ async function loadReport(options = {}) {
   setStatus("Обновление…");
   setBanner("");
   try {
-    const params = new URLSearchParams({ mode: state.mode });
-    if (state.mode === "Свободный") {
-      params.set("start", state.rangeStart);
-      params.set("end", state.rangeEnd);
-    } else {
-      params.set("anchor", state.anchor);
-    }
-    const response = await fetch(`/api/report?${params.toString()}`);
+    const response = await fetch(`/api/report?${periodParams().toString()}`);
     const data = await response.json();
     if (seq !== loadSeq) return;
     if (response.status === 401) {
@@ -1706,12 +1762,22 @@ function renderEmployees(screen) {
     screen.append(el("p", { class: "box warn" }, "Такой бейджик не найден."));
     return;
   }
+  screen.append(el("p", { class: "hint" }, "Нажмите строку: последний стикер до списания и было ли движение."));
   const list = el("div", { class: "emp-list" });
   for (const row of rows) {
-    const label = row.badge ? String(row.badge) : "не указан";
-    list.append(el(
-      "div",
-      { class: "emp-row" },
+    const badge = String(row.badge || "");
+    const label = badge || "не указан";
+    const key = empKey(lr, badge);
+    const open = state.empOpen === key;
+    const card = el("div", { class: open ? "emp-card is-open" : "emp-card" });
+    card.append(el(
+      "button",
+      {
+        type: "button",
+        class: "emp-row",
+        "aria-expanded": open ? "true" : "false",
+        onclick: () => toggleEmp(lr, badge),
+      },
       el("span", { class: "emp-badge" }, label),
       el("span", { class: "emp-losses" }, `${fmtInt(row.losses)} ${lossLabel(row.losses)}`),
       el("span", { class: "emp-sum" }, fmtRub(row.sum)),
@@ -1719,8 +1785,65 @@ function renderEmployees(screen) {
         ? el("span", { class: "emp-bang", title: "Есть потеря после статуса WMI" }, "!")
         : el("span", { class: "emp-bang idle", "aria-hidden": "true" }, "!"),
     ));
+    if (open) {
+      const detail = state.empDetail && state.empDetail.key === key
+        ? state.empDetail
+        : { key, loading: true, error: "", items: null, ready: true };
+      card.append(renderEmpDetail(detail));
+    }
+    list.append(card);
   }
   screen.append(list);
+}
+
+function empFoundNode(found) {
+  if (found === true) {
+    return el(
+      "span",
+      { class: "emp-found yes" },
+      "найдено",
+      el("span", { class: "emp-mark", "aria-hidden": "true" }, "✓"),
+    );
+  }
+  if (found === false) {
+    return el(
+      "span",
+      { class: "emp-found no" },
+      "не найдено",
+      el("span", { class: "emp-mark", "aria-hidden": "true" }, "✕"),
+    );
+  }
+  return el("span", { class: "emp-found unknown" }, "нет флага");
+}
+
+function renderEmpDetail(detail) {
+  const box = el("div", { class: "emp-detail" });
+  if (!detail || detail.loading || detail.items == null) {
+    box.append(el("p", { class: "hint" }, "Загрузка стикеров…"));
+    return box;
+  }
+  if (detail.error) {
+    box.append(el("p", { class: "box bad" }, detail.error));
+    return box;
+  }
+  if (!detail.ready) {
+    box.append(el("p", { class: "hint" }, "В этих строках нет стикера и флага оприходования. Если период заливали без колонок AF и Q — загрузите его ещё раз."));
+    return box;
+  }
+  if (!detail.items.length) {
+    box.append(el("p", { class: "hint" }, "Нет строк за этот период."));
+    return box;
+  }
+  for (const item of detail.items) {
+    box.append(el(
+      "div",
+      { class: "emp-item" },
+      el("span", { class: "emp-sticker" }, item.sticker || "—"),
+      empFoundNode(item.found),
+      el("span", { class: "emp-sum" }, fmtRub(item.sum)),
+    ));
+  }
+  return box;
 }
 
 function renderDashboard(screen) {
