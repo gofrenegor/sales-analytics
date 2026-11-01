@@ -1102,7 +1102,6 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .flow-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; flex: 1; }
 .flow-copy .flow-name { flex: 0 0 auto; }
-.flow-title { font-size: 17px; font-weight: 650; }
 .flow-meta { font-size: 13px; color: var(--muted); font-weight: 550; }
 .flow-btn .chip { white-space: normal; max-width: 100%; margin-top: 4px; }
 .flow-btn.in strong { color: var(--green-ink); }

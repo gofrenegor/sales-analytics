@@ -732,40 +732,6 @@ def spark_by_group(frame, start, end):
     return out
 
 
-def reason_rows(frame):
-    """Причины LR по убыванию суммы. Длинный хвост схлопывается в «остальные»."""
-    if frame is None or len(frame) == 0 or "reason" not in getattr(frame, "columns", []):
-        return []
-    lr = frame.groupby("reason")[["loss_sum", "loss_qty"]].sum().reset_index()
-    total = _f(lr["loss_sum"].sum())
-    lr = lr.sort_values(["loss_sum", "reason"], ascending=[False, True])
-    rows = []
-    for rec in lr.itertuples(index=False):
-        amount = _f(rec.loss_sum)
-        if amount == 0 and _f(rec.loss_qty) == 0:
-            continue
-        rows.append({
-            "reason": str(rec.reason),
-            "sum": amount,
-            "qty": _f(rec.loss_qty),
-            "pct": (amount / total * 100) if total else 0.0,
-        })
-    if len(rows) <= 24:
-        return rows
-    head = rows[:23]
-    rest = rows[23:]
-    rest_sum = _f(sum(item["sum"] for item in rest))
-    rest_qty = _f(sum(item["qty"] for item in rest))
-    head.append({
-        "reason": "остальные",
-        "sum": rest_sum,
-        "qty": rest_qty,
-        "pct": (rest_sum / total * 100) if total else 0.0,
-        "rest": True,
-    })
-    return head
-
-
 def _as_name(value):
     try:
         missing = value is None or pd.isna(value)
@@ -1191,7 +1157,6 @@ def build_report(df_curr, df_prev, period):
             "prev_qty": prev_qty,
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
             "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
-            "reasons": reason_rows(curr),
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,
                 "has_rows": not other_curr.empty,
