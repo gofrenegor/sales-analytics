@@ -66,11 +66,27 @@
         <div class="range" id="range-wrap" hidden>
           <label class="anchor">
             <span>С</span>
-            <input type="date" id="range-start">
+            <span class="ymd">
+              <input id="range-start-day" class="ymd-day" type="text" inputmode="numeric" maxlength="2" placeholder="дд" autocomplete="off" spellcheck="false" aria-label="День, с">
+              <span class="ymd-dot" aria-hidden="true">.</span>
+              <input id="range-start-month" class="ymd-month" type="text" inputmode="numeric" maxlength="2" placeholder="мм" autocomplete="off" spellcheck="false" aria-label="Месяц, с">
+              <span class="ymd-dot" aria-hidden="true">.</span>
+              <input id="range-start-year" class="ymd-year" type="text" inputmode="numeric" maxlength="4" value="2026" autocomplete="off" spellcheck="false" aria-label="Год, с">
+              <span class="ymd-cal" aria-hidden="true">📅</span>
+              <input id="range-start" class="ymd-native" type="date" tabindex="-1" aria-label="Календарь, с">
+            </span>
           </label>
           <label class="anchor">
             <span>По</span>
-            <input type="date" id="range-end">
+            <span class="ymd">
+              <input id="range-end-day" class="ymd-day" type="text" inputmode="numeric" maxlength="2" placeholder="дд" autocomplete="off" spellcheck="false" aria-label="День, по">
+              <span class="ymd-dot" aria-hidden="true">.</span>
+              <input id="range-end-month" class="ymd-month" type="text" inputmode="numeric" maxlength="2" placeholder="мм" autocomplete="off" spellcheck="false" aria-label="Месяц, по">
+              <span class="ymd-dot" aria-hidden="true">.</span>
+              <input id="range-end-year" class="ymd-year" type="text" inputmode="numeric" maxlength="4" value="2026" autocomplete="off" spellcheck="false" aria-label="Год, по">
+              <span class="ymd-cal" aria-hidden="true">📅</span>
+              <input id="range-end" class="ymd-native" type="date" tabindex="-1" aria-label="Календарь, по">
+            </span>
           </label>
         </div>
       </form>

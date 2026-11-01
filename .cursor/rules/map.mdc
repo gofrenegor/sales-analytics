@@ -50,7 +50,7 @@ systemctl restart sales-analytics
 
 ## Экран
 
-Разрезы в `#dates`: радио `mode`. Для День/Неделя/Месяц одна дата `#anchor` (`state.anchor`). Для «Свободный» две даты: `#range-start` («С», `state.rangeStart`) и `#range-end` («По», `state.rangeEnd`). «По» пустое, пока пользователь сам его не выбрал (`freeRangePending`). Загрузка отчёта только когда обе даты есть. Календарь «По» открывается на 15-м числе месяца «С» (`armEndPicker`, класс `date-seed`): день у края месяца на Android уводит плашку на следующий месяц. Заготовка не считается выбором (`chosenEndValue` пустой, пока висит `dataset.seed`).
+Разрезы в `#dates`: радио `mode`. Для День/Неделя/Месяц одна дата `#anchor` (`state.anchor`). Для «Свободный» день/месяц/год: `#range-start-day|month|year` («С») и `#range-end-day|month|year` («По»). Год — текстовое поле, по умолчанию `2026` (`DEFAULT_YEAR`): нативный `input type=date` в ru-Chrome год с клавиатуры не принимает. Скрытые `#range-start` и `#range-end` только открывают календарь. «По» без полной даты не выбрано (`freeRangePending`). Загрузка отчёта только когда обе даты собраны (`isoFromParts`). Календарь «По» открывается на 15-м числе месяца «С» (`prepareRangePicker`, `dataset.seed`): день у края месяца на Android уводит плашку на следующий месяц. Заготовка не пишется в state, пока нет `change`.
 
 Экраны: `dashboard` → `flow` → `group` → `block_detail`. Функции: `renderDashboard`, `renderFlow`, `renderGroup`, `renderDetail`, график `renderChart`. URL: `mode`, `anchor` либо `start`+`end`, `view`, `flow`, `group`, `block`. Запрос отчёта: `loadReport` → `GET /api/report`.
 

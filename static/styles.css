@@ -308,21 +308,67 @@ input[type="date"]:focus {
   box-shadow: 0 0 0 3px var(--blue-dim);
   outline: none;
 }
-input[type="date"].date-seed {
-  color: transparent;
-}
-input[type="date"].date-seed::-webkit-calendar-picker-indicator {
-  opacity: 1;
-}
-input[type="date"].date-seed::-webkit-datetime-edit,
-input[type="date"].date-seed::-webkit-datetime-edit-fields-wrapper,
-input[type="date"].date-seed::-webkit-datetime-edit-text,
-input[type="date"].date-seed::-webkit-datetime-edit-month-field,
-input[type="date"].date-seed::-webkit-datetime-edit-day-field,
-input[type="date"].date-seed::-webkit-datetime-edit-year-field {
-  color: transparent;
-}
 .anchor { min-width: min(100%, 220px); }
+.anchor span.ymd {
+  display: flex;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text);
+}
+.ymd {
+  position: relative;
+  align-items: center;
+  width: 100%;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 0.15rem 2.4rem 0.15rem 0.45rem;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+.ymd:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-dim);
+}
+.ymd .ymd-dot {
+  display: inline;
+  margin: 0;
+  padding: 0 1px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.ymd input {
+  border: 0;
+  background: transparent;
+  padding: 0.3rem 0;
+  font-size: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ymd input:focus { outline: none; box-shadow: none; }
+.ymd input::placeholder { color: var(--muted); opacity: 1; }
+.ymd-day, .ymd-month { width: 2.4ch; flex: 0 0 auto; }
+.ymd-year { width: 5.2ch; flex: 0 0 auto; }
+.range .anchor { min-width: min(100%, 16.5rem); }
+.ymd-cal {
+  position: absolute;
+  right: 0.45rem;
+  pointer-events: none;
+  font-size: 1rem;
+  line-height: 1;
+}
+.ymd .ymd-native {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 2.4rem;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
 .range {
   display: flex;
   flex-wrap: wrap;

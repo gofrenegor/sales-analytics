@@ -11,6 +11,7 @@ const state = {
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
+const DEFAULT_YEAR = "2026";
 
 const VIEW_DEPTH = { dashboard: 0, flow: 1, group: 2, block_detail: 3 };
 let screenMotion = "";
@@ -161,52 +162,114 @@ function freeRangePending() {
   return state.mode === "Свободный" && !(state.rangeStart && state.rangeEnd);
 }
 
-function syncForm() {
+function digitsOnly(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function partEl(prefix, part) {
+  return document.getElementById(`${prefix}-${part}`);
+}
+
+function readParts(prefix) {
+  return {
+    day: digitsOnly(partEl(prefix, "day").value),
+    month: digitsOnly(partEl(prefix, "month").value),
+    year: digitsOnly(partEl(prefix, "year").value),
+  };
+}
+
+function partsUntouched(parts) {
+  return !parts.day && !parts.month && (!parts.year || parts.year === DEFAULT_YEAR);
+}
+
+function isoFromParts(parts) {
+  const day = Number(parts.day);
+  const month = Number(parts.month);
+  const year = parts.year;
+  if (!day || !month || year.length !== 4) return "";
+  const y = Number(year);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return "";
+  const dt = new Date(Date.UTC(y, month - 1, day));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) return "";
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
+function writeParts(prefix, iso, force) {
+  const day = partEl(prefix, "day");
+  const month = partEl(prefix, "month");
+  const year = partEl(prefix, "year");
+  const parts = readParts(prefix);
+  const current = isoFromParts(parts);
+  if (!force) {
+    if (current === (iso || "")) return;
+    if ([day, month, year].includes(document.activeElement)) return;
+    if (!partsUntouched(parts)) return;
+  }
+  if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    const [y, m, d] = iso.split("-");
+    day.value = d;
+    month.value = m;
+    year.value = y;
+    return;
+  }
+  day.value = "";
+  month.value = "";
+  year.value = DEFAULT_YEAR;
+}
+
+function committedOrKeep(prefix, previous) {
+  const parts = readParts(prefix);
+  const iso = isoFromParts(parts);
+  if (iso) return iso;
+  if (partsUntouched(parts)) return "";
+  if (parts.day && parts.month && parts.year.length > 0 && parts.year.length < 4) return previous || "";
+  return "";
+}
+
+function syncNative(prefix, iso) {
+  const native = document.getElementById(prefix);
+  if (native.dataset.seed === "1") return;
+  native.value = iso || "";
+}
+
+function syncForm(force) {
   const radio = document.querySelector(`input[name=mode][value="${state.mode}"]`);
   if (radio) radio.checked = true;
   const free = state.mode === "Свободный";
   const anchorWrap = document.getElementById("anchor-wrap");
   const rangeWrap = document.getElementById("range-wrap");
   const anchor = document.getElementById("anchor");
-  const rangeStart = document.getElementById("range-start");
-  const rangeEnd = document.getElementById("range-end");
   anchorWrap.hidden = free;
   rangeWrap.hidden = !free;
   anchor.required = !free;
-  rangeStart.required = free;
-  rangeEnd.required = free;
   anchor.value = state.anchor || "";
-  rangeStart.value = state.rangeStart || "";
-  rangeEnd.value = state.rangeEnd || "";
-  delete rangeEnd.dataset.seed;
-  rangeEnd.classList.remove("date-seed");
+  writeParts("range-start", state.rangeStart, force);
+  writeParts("range-end", state.rangeEnd, force);
+  syncNative("range-start", state.rangeStart);
+  syncNative("range-end", state.rangeEnd);
   document.getElementById("anchor-label").textContent = ANCHOR_LABELS[state.mode] || ANCHOR_LABELS["Месяц"];
 }
 
-function chosenEndValue() {
-  const end = document.getElementById("range-end");
-  if (end.dataset.seed === "1") return "";
-  return end.value;
-}
-
-function armEndPicker() {
-  const end = document.getElementById("range-end");
-  const start = document.getElementById("range-start").value || state.rangeStart;
-  if (state.mode !== "Свободный" || state.rangeEnd || !start || end.dataset.seed === "1") return;
-  const [year, month] = start.split("-");
-  if (!year || !month) return;
+function prepareRangePicker(prefix) {
+  const native = document.getElementById(prefix);
+  const current = isoFromParts(readParts(prefix));
+  if (current) {
+    delete native.dataset.seed;
+    native.value = current;
+    return;
+  }
+  const parts = readParts(prefix);
+  const year = parts.year.length === 4 ? parts.year : DEFAULT_YEAR;
+  let month = parts.month;
+  if ((!month || Number(month) < 1 || Number(month) > 12) && prefix === "range-end") {
+    const start = isoFromParts(readParts("range-start")) || state.rangeStart;
+    if (start) month = start.slice(5, 7);
+  }
+  const monthNum = Number(month);
+  const mm = monthNum >= 1 && monthNum <= 12 ? String(monthNum).padStart(2, "0") : "01";
   // Day near the edge makes the Android calendar open on the next month. The 15th keeps «По» on the «С» month.
-  end.dataset.seed = "1";
-  end.value = `${year}-${month}-15`;
-  end.classList.add("date-seed");
-}
-
-function dropEndSeed() {
-  const end = document.getElementById("range-end");
-  if (end.dataset.seed !== "1" || state.rangeEnd) return;
-  end.value = "";
-  delete end.dataset.seed;
-  end.classList.remove("date-seed");
+  native.dataset.seed = "1";
+  native.value = `${year}-${mm}-15`;
 }
 
 function orderedRange(start, end) {
@@ -217,22 +280,22 @@ function orderedRange(start, end) {
 function onControlsChange() {
   const mode = document.querySelector("input[name=mode]:checked").value;
   let anchor = document.getElementById("anchor").value;
-  let rangeStart = document.getElementById("range-start").value;
-  let rangeEnd = chosenEndValue();
   if (mode !== "Свободный") {
     if (state.mode === "Свободный" && state.rangeEnd) anchor = state.rangeEnd;
     document.getElementById("anchor-label").textContent = ANCHOR_LABELS[mode];
     if (!anchor || (mode === state.mode && anchor === state.anchor)) {
-      if (mode !== state.mode) syncForm();
+      if (mode !== state.mode) syncForm(true);
       return;
     }
     state.mode = mode;
     state.anchor = anchor;
-    syncForm();
+    syncForm(true);
     writeUrl(false);
     loadReport({ spin: true });
     return;
   }
+  let rangeStart = committedOrKeep("range-start", state.rangeStart);
+  let rangeEnd = committedOrKeep("range-end", state.rangeEnd);
   if (state.mode !== "Свободный") {
     const period = state.report && state.report.period;
     if (!rangeStart) {
@@ -240,13 +303,26 @@ function onControlsChange() {
       else rangeStart = state.rangeStart || state.anchor;
     }
     rangeEnd = "";
-  }
-  [rangeStart, rangeEnd] = orderedRange(rangeStart, rangeEnd);
-  if (!rangeStart || !rangeEnd) {
     state.mode = mode;
     state.rangeStart = rangeStart;
     state.rangeEnd = rangeEnd;
-    syncForm();
+    syncForm(true);
+    writeUrl(false);
+    setStatus("");
+    setBanner("");
+    render();
+    return;
+  }
+  const ordered = orderedRange(rangeStart, rangeEnd);
+  const swapped = ordered[0] !== rangeStart || ordered[1] !== rangeEnd;
+  [rangeStart, rangeEnd] = ordered;
+  if (!rangeStart || !rangeEnd) {
+    const changed = mode !== state.mode || rangeStart !== state.rangeStart || rangeEnd !== state.rangeEnd;
+    state.mode = mode;
+    state.rangeStart = rangeStart;
+    state.rangeEnd = rangeEnd;
+    syncForm(swapped);
+    if (!changed) return;
     writeUrl(false);
     setStatus("");
     setBanner("");
@@ -257,7 +333,7 @@ function onControlsChange() {
   state.mode = mode;
   state.rangeStart = rangeStart;
   state.rangeEnd = rangeEnd;
-  syncForm();
+  syncForm(swapped);
   if (same) return;
   writeUrl(false);
   loadReport({ spin: true });
@@ -972,7 +1048,7 @@ function wireAdmin() {
           preview.replaceChildren();
           event.target.value = "";
           if (!state.anchor) state.anchor = saved.summary.max_date || state.anchor;
-          syncForm();
+          syncForm(true);
           writeUrl(false);
           loadReport();
         } catch (error) {
@@ -1039,6 +1115,78 @@ function wireAdminPanel() {
   });
 }
 
+function wireDigits(input, size, next, replaceFull) {
+  input.addEventListener("focus", () => input.select());
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Backspace" && !input.value && input.dataset.prev) {
+      const prev = document.getElementById(input.dataset.prev);
+      if (prev) prev.focus();
+      return;
+    }
+    if (event.key.length === 1 && !/\d/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      event.preventDefault();
+      return;
+    }
+    if (!/^\d$/.test(event.key)) return;
+    const start = input.selectionStart ?? 0;
+    const end = input.selectionEnd ?? 0;
+    const collapsedAtEnd = end === start && start === input.value.length;
+    if (input.value.length >= size && end === start && (replaceFull || collapsedAtEnd)) {
+      event.preventDefault();
+      input.value = event.key;
+      input.setSelectionRange(1, 1);
+    }
+  });
+  input.addEventListener("input", () => {
+    const clean = digitsOnly(input.value).slice(0, size);
+    if (input.value !== clean) input.value = clean;
+    if (clean.length === size && next && document.activeElement === input) next.focus();
+  });
+}
+
+function pasteDate(event, prefix) {
+  const text = event.clipboardData ? event.clipboardData.getData("text") : "";
+  const match = String(text || "").trim().match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
+  if (!match) return;
+  event.preventDefault();
+  writeParts(prefix, `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`, true);
+  onControlsChange();
+}
+
+function bindRangeField(prefix) {
+  const day = partEl(prefix, "day");
+  const month = partEl(prefix, "month");
+  const year = partEl(prefix, "year");
+  month.dataset.prev = `${prefix}-day`;
+  year.dataset.prev = `${prefix}-month`;
+  wireDigits(day, 2, month, false);
+  wireDigits(month, 2, null, false);
+  wireDigits(year, 4, null, true);
+  const padOnBlur = (input) => {
+    input.addEventListener("blur", () => {
+      const n = digitsOnly(input.value);
+      if (n) input.value = n.padStart(2, "0");
+    });
+  };
+  padOnBlur(day);
+  padOnBlur(month);
+  year.addEventListener("blur", () => {
+    if (!digitsOnly(year.value)) year.value = DEFAULT_YEAR;
+  });
+  for (const input of [day, month, year]) input.addEventListener("paste", (event) => pasteDate(event, prefix));
+  const native = document.getElementById(prefix);
+  native.addEventListener("pointerdown", () => prepareRangePicker(prefix), true);
+  native.addEventListener("change", () => {
+    const value = isoDay(native.value);
+    delete native.dataset.seed;
+    if (value) writeParts(prefix, value, true);
+  }, true);
+  native.addEventListener("cancel", () => {
+    delete native.dataset.seed;
+    native.value = isoFromParts(readParts(prefix)) || "";
+  });
+}
+
 function wireChrome() {
   wireAdminPanel();
   document.getElementById("theme")?.addEventListener("click", () => {
@@ -1054,20 +1202,14 @@ function wireChrome() {
     render();
   });
   document.getElementById("dates").addEventListener("submit", (event) => event.preventDefault());
-  const rangeEnd = document.getElementById("range-end");
-  rangeEnd.addEventListener("pointerdown", armEndPicker, true);
-  rangeEnd.addEventListener("change", () => {
-    delete rangeEnd.dataset.seed;
-    rangeEnd.classList.remove("date-seed");
-  }, true);
-  rangeEnd.addEventListener("cancel", dropEndSeed);
+  for (const prefix of ["range-start", "range-end"]) bindRangeField(prefix);
   document.getElementById("dates").addEventListener("change", onControlsChange);
   window.addEventListener("popstate", () => {
     const prevDepth = VIEW_DEPTH[state.view] ?? 0;
     const prevKey = viewKey();
     const period = periodKey();
     readUrl();
-    syncForm();
+    syncForm(true);
     if (viewKey() !== prevKey) {
       const nextDepth = VIEW_DEPTH[state.view] ?? 0;
       screenMotion = nextDepth < prevDepth ? "back" : nextDepth > prevDepth ? "forward" : "back";
@@ -1084,14 +1226,14 @@ function wireChrome() {
 
 async function boot() {
   readUrl();
-  syncForm();
+  syncForm(true);
   setStatus("Загрузка…");
   try {
     const response = await fetch("/api/bootstrap");
     const data = await response.json();
     if (!state.anchor) state.anchor = data.max_date || data.today;
     if (!state.rangeStart) state.rangeStart = state.anchor;
-    syncForm();
+    syncForm(true);
     renderSummary(data.summary);
     if (!data.ok) {
       setBanner(data.error || "Нет соединения с базой");
