@@ -1122,7 +1122,8 @@ function chartTickDays(maxDay) {
   return days;
 }
 
-function renderChart(rows) {
+function renderChart(rows, grain) {
+  const hourly = grain === "hour";
   const colors = seriesColors();
   const height = 400;
   const width = 1280;
@@ -1135,7 +1136,7 @@ function renderChart(rows) {
   for (let i = 2; i < ticks.length; i += 1) minStep = Math.min(minStep, ticks[i] - ticks[i - 1]);
   const span = Math.max(maxDay - 1, 1);
   const spacing = (innerW / span) * minStep;
-  const digits = String(maxDay).length;
+  const digits = hourly ? 2 : String(maxDay).length;
   const fontPx = Math.min(12, (spacing * 0.84) / (digits * 0.72));
   const maxY = niceMax(Math.max(0, ...rows.map((row) => row.sum)));
   const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / (maxDay - 1)) * innerW);
@@ -1144,7 +1145,7 @@ function renderChart(rows) {
   const previous = rows.filter((row) => row.period === "Прошлый период").sort((a, b) => a.day - b.day);
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart", role: "img" });
-  svg.setAttribute("aria-label", "Динамика списаний по дням");
+  svg.setAttribute("aria-label", hourly ? "Динамика списаний по часам" : "Динамика списаний по дням");
   for (let i = 0; i <= 4; i += 1) {
     const value = maxY * i / 4;
     const yy = y(value);
@@ -1155,7 +1156,7 @@ function renderChart(rows) {
   }
   for (const day of ticks) {
     const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
-    label.textContent = String(day);
+    label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
     svg.append(label);
   }
 
@@ -1283,12 +1284,19 @@ function renderDashboard(screen) {
   donutCol.append(chart);
   hero.append(donutCol, side);
   if (state.report.show_daily) {
+    const hourly = state.report.chart_grain === "hour";
+    const hint = hourly
+      ? "По горизонтали — час из «Дата первого списания» (00–23). Наведите курсор на точку: топ-1 LR за час, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока."
+      : "По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока.";
+    const note = hourly && state.report.chart_time_missing
+      ? " В выгрузке время суток не найдено: все списания стоят на 00:00."
+      : "";
     hero.append(el(
       "div",
       { class: "daily-chart" },
-      el("h3", { class: "section-title" }, "Динамика по дням"),
-      renderChart(state.report.daily),
-      el("p", { class: "hint" }, "По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока."),
+      el("h3", { class: "section-title" }, hourly ? "Динамика по часам" : "Динамика по дням"),
+      renderChart(state.report.daily, state.report.chart_grain),
+      el("p", { class: "hint" }, hint + note),
     ));
   }
   screen.append(hero);

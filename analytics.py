@@ -579,19 +579,26 @@ def _stamp(value):
     return ts
 
 
-def daily_series(frame, start, end, label):
-    """Точки графика: номер дня в периоде, сумма и топы."""
-    n_days = (end - start).days + 1
-    if n_days < 1:
-        return []
-    idx = pd.date_range(pd.Timestamp(start), periods=n_days, freq="D")
+def _has_clock_time(frame):
+    """В loss_date есть время суток, не только полночь."""
+    if frame is None or len(frame) == 0 or "loss_date" not in getattr(frame, "columns", []):
+        return False
+    ts = frame["loss_date"].dropna()
+    if ts.empty or not pd.api.types.is_datetime64_any_dtype(ts):
+        return False
+    clock = (ts.dt.hour != 0) | (ts.dt.minute != 0) | (ts.dt.second != 0) | (ts.dt.microsecond != 0)
+    return bool(clock.any())
+
+
+def _chart_series(frame, idx, label, bucket_of, date_of, last=None):
+    """Точки графика: корзина idx, сумма и топы. bucket_of(frame) -> метка корзины."""
     top, top_lr, top_blk_lr = {}, {}, {}
     if frame is None or len(frame) == 0:
         sums = pd.Series(0.0, index=idx)
         qty = pd.Series(0.0, index=idx)
     else:
         d = frame.reset_index(drop=True)
-        day = d["loss_date"].dt.normalize().rename("day")
+        day = bucket_of(d).rename("day")
         sums = d.groupby(day)["loss_sum"].sum().reindex(idx, fill_value=0)
         qty = d.groupby(day)["loss_qty"].sum().reindex(idx, fill_value=0)
         by_blk = d.groupby([day, d["block_group"]])["loss_sum"].sum().sort_values(ascending=False)
@@ -603,16 +610,15 @@ def daily_series(frame, start, end, label):
         gl = gl.merge(top_b.reset_index()[["day", "block_group"]], on=["day", "block_group"])
         gl = gl.sort_values("loss_sum", ascending=False).groupby("day").head(1)
         top_blk_lr = {_stamp(r.day): f"LR {r.reason} · {fmt_rub(r.loss_sum)}" for r in gl.itertuples()}
-    last = pd.Timestamp(end)
     rows = []
     for i, ts in enumerate(idx):
-        if ts > last:
+        if last is not None and ts > last:
             continue
         key = _stamp(ts)
         rows.append({
             "period": label,
             "day": i + 1,
-            "date": ts.strftime("%d.%m.%Y"),
+            "date": date_of(ts),
             "sum": _f(sums.iloc[i]),
             "qty": _f(qty.iloc[i]),
             "top_lr": top_lr.get(key, "—"),
@@ -620,6 +626,30 @@ def daily_series(frame, start, end, label):
             "top_block_lr": top_blk_lr.get(key, "—"),
         })
     return rows
+
+
+def daily_series(frame, start, end, label):
+    """Точки графика: номер дня в периоде, сумма и топы."""
+    n_days = (end - start).days + 1
+    if n_days < 1:
+        return []
+    idx = pd.date_range(pd.Timestamp(start), periods=n_days, freq="D")
+    return _chart_series(
+        frame, idx, label,
+        lambda d: d["loss_date"].dt.normalize(),
+        lambda ts: ts.strftime("%d.%m.%Y"),
+        pd.Timestamp(end),
+    )
+
+
+def hourly_series(frame, day, label):
+    """24 точки: час 00–23 суток day. Время берётся из loss_date."""
+    idx = pd.date_range(pd.Timestamp(day), periods=24, freq="h")
+    return _chart_series(
+        frame, idx, label,
+        lambda d: d["loss_date"].dt.floor("h"),
+        lambda ts: ts.strftime("%d.%m %H:%M"),
+    )
 
 
 def _excluded_sum(other_curr, group, key, name):
@@ -812,6 +842,8 @@ def empty_report(period):
         "quality": None,
         "daily": [],
         "show_daily": False,
+        "chart_grain": "day",
+        "chart_time_missing": False,
         "flows": None,
     }
 
@@ -852,9 +884,20 @@ def build_report(df_curr, df_prev, period):
     op_sum = _sum(other_prev, "loss_sum")
     op_qty = _sum(other_prev, "loss_qty")
 
-    show_daily = period["days"] > 1
+    hour_mode = period.get("mode") == "День"
+    show_daily = period["days"] > 1 or hour_mode
+    chart_grain = "hour" if hour_mode else "day"
     daily = []
-    if show_daily:
+    chart_time_missing = False
+    if show_daily and chart_grain == "hour":
+        parts = [curr]
+        if has_prev:
+            parts.append(prev)
+        chart_time_missing = any(len(part) for part in parts) and not any(_has_clock_time(part) for part in parts)
+        daily.extend(hourly_series(curr, period["_start"], "Текущий период"))
+        if has_prev:
+            daily.extend(hourly_series(prev, period["_prev_start"], "Прошлый период"))
+    elif show_daily:
         daily.extend(daily_series(curr, period["_start"], period["_end"], "Текущий период"))
         if has_prev:
             daily.extend(daily_series(prev, period["_prev_start"], period["_prev_end"], "Прошлый период"))
@@ -883,5 +926,7 @@ def build_report(df_curr, df_prev, period):
         "quality": build_quality(curr, other_curr),
         "daily": daily,
         "show_daily": show_daily,
+        "chart_grain": chart_grain,
+        "chart_time_missing": chart_time_missing,
         "flows": flows,
     }
