@@ -308,6 +308,7 @@ def employees(
 
 @app.get("/api/employees/items")
 def employee_items(
+    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -331,7 +332,7 @@ def employee_items(
     key = db.ready_key("employee-items", period) + (badge, lr)
     cached = db.get_ready(key)
     if cached is not None:
-        return _json(cached)
+        return _ready_response(cached[0], cached[1], request)
     generation = db.cache_generation()
     try:
         payload = _employee_items_payload(period, badge, lr)
@@ -340,7 +341,8 @@ def employee_items(
     except Exception as exc:
         log.exception("employee-items")
         return fail(500, db.public_error(exc))
-    return _json(db.put_ready(key, payload, generation))
+    body, packed = db.put_ready(key, payload, generation)
+    return _ready_response(body, packed, request)
 
 
 @app.post("/api/admin/cache/clear")
