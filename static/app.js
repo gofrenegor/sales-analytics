@@ -837,8 +837,8 @@ function renderDashboard(screen) {
   bindDonut(chart);
   const side = el("div");
   for (const [code, title, amount] of [
-    ["in", "входящий поток", dash.in_sum],
     ["out", "исходящий поток", dash.out_sum],
+    ["in", "входящий поток", dash.in_sum],
   ]) {
     const help = code === "in" ? "Открыть блоки входящего потока" : "Открыть блоки исходящего потока";
     side.append(el(
@@ -849,7 +849,7 @@ function renderDashboard(screen) {
         title: help,
         onclick: () => go({ view: "flow", flow: code, group: "", block: "" }),
       },
-      el("span", null, title),
+      el("span", { class: "flow-name" }, title),
       el("strong", null, fmtRub(amount)),
     ));
   }
@@ -877,7 +877,7 @@ function renderDashboard(screen) {
     screen.append(box);
   }
   if (dash.other && dash.other.has_rows) {
-    screen.append(el("p", { class: "hint" }, "Статусы вне потоков временно исключены из диаграммы и итогов — список в «Проверке данных» выше."));
+    screen.append(el("p", { class: "hint" }, "Статусы вне потоков временно исключены из диаграммы и итогов — список в админке, вкладка «Инфо»."));
   }
 }
 
@@ -942,7 +942,7 @@ function renderDetail(screen) {
   if (delta) screen.append(delta);
   screen.append(el("hr"));
   if (detail.excluded_sum != null) {
-    screen.append(el("p", { class: "hint" }, `ℹ️ Не включено: ${fmtRub(detail.excluded_sum)} со статусами вне потоков (какие именно — в «Проверке данных» вверху страницы).`));
+    screen.append(el("p", { class: "hint" }, `ℹ️ Не включено: ${fmtRub(detail.excluded_sum)} со статусами вне потоков (какие именно — в админке, вкладка «Инфо»).`));
   }
   screen.append(el("h3", null, "Детализация по причинам (LR)"), lrTable(detail.rows));
 }

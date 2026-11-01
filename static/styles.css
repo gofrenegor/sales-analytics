@@ -411,12 +411,17 @@ input[type="date"]:focus {
 }
 
 .period-note {
-  margin: 0.15rem 0 0.7rem;
+  margin: 0.35rem 0 0.45rem;
   padding: 0.62rem 0.9rem;
   border-radius: 12px;
   border: 1px solid var(--note-border);
   background: var(--note-bg);
   color: var(--note-text);
+}
+#admin-info > .hint { margin: 0.15rem 0 0.45rem; }
+#admin-info > details.panel {
+  margin: 0.35rem 0 0.15rem;
+  padding: 0.15rem 0.65rem 0.55rem;
 }
 .period-note strong { color: var(--note-strong); }
 .hint { color: var(--muted); font-size: 0.92rem; }
@@ -529,6 +534,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-size: 17px;
   font-weight: 650;
   transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease;
+}
+.flow-btn .flow-name {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-size: 1.4em;
+  line-height: 1.15;
 }
 .flow-btn:active { transform: scale(0.985); }
 .flow-btn.in { box-shadow: inset 3px 0 0 var(--green); }
@@ -883,10 +894,10 @@ button.back:active { transform: translateX(-3px); }
 .screen-pane.arrive tbody tr {
   animation: rise-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
-.screen-pane.enter-right .flow-btn.out,
-.screen-pane.enter-left .flow-btn.out,
-.screen-pane.reveal .flow-btn.out,
-.screen-pane.arrive .flow-btn.out,
+.screen-pane.enter-right .flow-btn.in,
+.screen-pane.enter-left .flow-btn.in,
+.screen-pane.reveal .flow-btn.in,
+.screen-pane.arrive .flow-btn.in,
 .screen-pane.enter-right .loss-pct-out,
 .screen-pane.reveal .loss-pct-out,
 .screen-pane.arrive .loss-pct-out { animation-delay: 0.07s; }

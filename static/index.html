@@ -25,6 +25,15 @@
       <button type="button" id="cache-btn" class="wide ghost">🔄 Сбросить кэш данных</button>
       <button type="button" id="theme" class="wide ghost">🌓 Тема</button>
       <p id="admin-status" class="hint" hidden></p>
+      <details id="admin-info" class="panel">
+        <summary>ℹ️ Инфо</summary>
+        <div id="period-note" class="period-note" hidden></div>
+        <p id="compare-note" class="hint" hidden></p>
+        <details id="quality" class="panel" hidden>
+          <summary>🔍 Проверка данных (что не распознано)</summary>
+          <div id="quality-body"></div>
+        </details>
+      </details>
       <details class="panel" open>
         <summary>📥 Загрузка данных</summary>
         <label class="file">
@@ -101,12 +110,6 @@
           </label>
         </div>
       </form>
-      <div id="period-note" class="period-note" hidden></div>
-      <p id="compare-note" class="hint" hidden></p>
-      <details id="quality" class="panel" hidden>
-        <summary>🔍 Проверка данных (что не распознано)</summary>
-        <div id="quality-body"></div>
-      </details>
       <div id="screen"></div>
     </main>
   </div>
