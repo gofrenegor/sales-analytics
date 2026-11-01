@@ -10,7 +10,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from dateutil.relativedelta import relativedelta
 
-MODES = ("День", "Неделя", "Месяц")
+MODES = ("День", "Неделя", "Месяц", "Свободный")
+FREE_MAX_DAYS = 366
 
 INBOUND_STATUSES = [
     "ANV", "EPR", "IPS", "ORG", "PVP", "RGP", "RNP", "RSP", "RWP", "TWR",
@@ -218,11 +219,49 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
 </div>'''
 
 
+def _parse_day(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValueError("Некорректная дата") from None
+
+
+def compute_free_period(start, end):
+    """Свой интервал включительно. База сравнения не задаётся."""
+    start = _parse_day(start)
+    end = _parse_day(end)
+    if end < start:
+        raise ValueError("Конец периода раньше начала")
+    days = (end - start).days + 1
+    if days > FREE_MAX_DAYS:
+        raise ValueError(f"Свободный разрез длиннее {FREE_MAX_DAYS} дней")
+    fmt = lambda d: d.strftime("%d.%m.%Y")
+    current = fmt(start) if days == 1 else f"{fmt(start)} — {fmt(end)}"
+    return {
+        "mode": "Свободный",
+        "anchor": start.isoformat(),
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "prev_start": None,
+        "prev_end": None,
+        "days": days,
+        "compare": False,
+        "note": {"type": "free", "current": current, "days": days},
+        "_start": start,
+        "_end": end,
+        "_prev_start": start,
+        "_prev_end": start,
+    }
+
+
 def compute_period(mode, anchor, today):
     """Начало, конец и такой же по длине прошлый период. Неделя с понедельника."""
-    if isinstance(anchor, str):
-        anchor = date.fromisoformat(anchor)
-    if mode not in MODES:
+    anchor = _parse_day(anchor)
+    if mode not in MODES or mode == "Свободный":
         raise ValueError("Неизвестный разрез")
     fmt = lambda d: d.strftime("%d.%m.%Y")
 

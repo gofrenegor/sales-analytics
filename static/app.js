@@ -1,12 +1,16 @@
 const state = {
   mode: "Месяц",
   anchor: "",
+  rangeStart: "",
+  rangeEnd: "",
   view: "dashboard",
   flow: "",
   group: "",
   block: "",
   report: null,
 };
+
+const MODES = ["День", "Неделя", "Месяц", "Свободный"];
 
 const VIEW_DEPTH = { dashboard: 0, flow: 1, group: 2, block_detail: 3 };
 let screenMotion = "";
@@ -74,12 +78,20 @@ function setAdminStatus(text) {
   node.textContent = text || "";
 }
 
+function isoDay(value) {
+  return value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
 function readUrl() {
   const params = new URLSearchParams(location.search);
   const mode = params.get("mode");
-  if (mode === "День" || mode === "Неделя" || mode === "Месяц") state.mode = mode;
-  const anchor = params.get("anchor");
-  if (anchor && /^\d{4}-\d{2}-\d{2}$/.test(anchor)) state.anchor = anchor;
+  if (MODES.includes(mode)) state.mode = mode;
+  const anchor = isoDay(params.get("anchor"));
+  if (anchor) state.anchor = anchor;
+  const rangeStart = isoDay(params.get("start"));
+  const rangeEnd = isoDay(params.get("end"));
+  if (rangeStart) state.rangeStart = rangeStart;
+  if (rangeEnd) state.rangeEnd = rangeEnd;
   const view = params.get("view");
   state.view = ["dashboard", "flow", "group", "block_detail"].includes(view) ? view : "dashboard";
   state.flow = params.get("flow") || "";
@@ -96,7 +108,12 @@ function readUrl() {
 function writeUrl(push) {
   const params = new URLSearchParams();
   params.set("mode", state.mode);
-  if (state.anchor) params.set("anchor", state.anchor);
+  if (state.mode === "Свободный") {
+    if (state.rangeStart) params.set("start", state.rangeStart);
+    if (state.rangeEnd) params.set("end", state.rangeEnd);
+  } else if (state.anchor) {
+    params.set("anchor", state.anchor);
+  }
   if (state.view && state.view !== "dashboard") params.set("view", state.view);
   if (state.flow) params.set("flow", state.flow);
   if (state.group) params.set("group", state.group);
@@ -134,21 +151,81 @@ function goBack(view) {
   go(patch);
 }
 
+function periodKey() {
+  return state.mode === "Свободный"
+    ? `${state.mode}|${state.rangeStart}|${state.rangeEnd}`
+    : `${state.mode}|${state.anchor}`;
+}
+
 function syncForm() {
   const radio = document.querySelector(`input[name=mode][value="${state.mode}"]`);
   if (radio) radio.checked = true;
+  const free = state.mode === "Свободный";
+  const anchorWrap = document.getElementById("anchor-wrap");
+  const rangeWrap = document.getElementById("range-wrap");
   const anchor = document.getElementById("anchor");
+  const rangeStart = document.getElementById("range-start");
+  const rangeEnd = document.getElementById("range-end");
+  anchorWrap.hidden = free;
+  rangeWrap.hidden = !free;
+  anchor.required = !free;
+  rangeStart.required = free;
+  rangeEnd.required = free;
   if (state.anchor) anchor.value = state.anchor;
+  if (state.rangeStart) rangeStart.value = state.rangeStart;
+  if (state.rangeEnd) rangeEnd.value = state.rangeEnd;
   document.getElementById("anchor-label").textContent = ANCHOR_LABELS[state.mode] || ANCHOR_LABELS["Месяц"];
+}
+
+function orderedRange(start, end) {
+  if (start && end && end < start) return [end, start];
+  return [start, end];
 }
 
 function onControlsChange() {
   const mode = document.querySelector("input[name=mode]:checked").value;
   const anchor = document.getElementById("anchor").value;
-  document.getElementById("anchor-label").textContent = ANCHOR_LABELS[mode];
-  if (!anchor || (mode === state.mode && anchor === state.anchor)) return;
+  let rangeStart = document.getElementById("range-start").value;
+  let rangeEnd = document.getElementById("range-end").value;
+  if (mode !== "Свободный") {
+    if (state.mode === "Свободный" && state.rangeEnd) {
+      state.anchor = state.rangeEnd;
+      anchor = state.rangeEnd;
+    }
+    document.getElementById("anchor-label").textContent = ANCHOR_LABELS[mode];
+    if (!anchor || (mode === state.mode && anchor === state.anchor)) {
+      if (mode !== state.mode) syncForm();
+      return;
+    }
+    state.mode = mode;
+    state.anchor = anchor;
+    syncForm();
+    writeUrl(false);
+    loadReport({ spin: true });
+    return;
+  }
+  if (state.mode !== "Свободный") {
+    const period = state.report && state.report.period;
+    if (period && period.start && period.end) {
+      rangeStart = period.start;
+      rangeEnd = period.end;
+    } else {
+      rangeStart = rangeStart || state.anchor;
+      rangeEnd = rangeEnd || state.anchor;
+    }
+  }
+  [rangeStart, rangeEnd] = orderedRange(rangeStart, rangeEnd);
+  if (!rangeStart || !rangeEnd) {
+    state.mode = mode;
+    syncForm();
+    return;
+  }
+  const same = mode === state.mode && rangeStart === state.rangeStart && rangeEnd === state.rangeEnd;
   state.mode = mode;
-  state.anchor = anchor;
+  state.rangeStart = rangeStart;
+  state.rangeEnd = rangeEnd;
+  syncForm();
+  if (same) return;
   writeUrl(false);
   loadReport({ spin: true });
 }
@@ -176,7 +253,13 @@ async function loadReport(options = {}) {
   setStatus("Обновление…");
   setBanner("");
   try {
-    const params = new URLSearchParams({ mode: state.mode, anchor: state.anchor });
+    const params = new URLSearchParams({ mode: state.mode });
+    if (state.mode === "Свободный") {
+      params.set("start", state.rangeStart);
+      params.set("end", state.rangeEnd);
+    } else {
+      params.set("anchor", state.anchor);
+    }
     const response = await fetch(`/api/report?${params.toString()}`);
     const data = await response.json();
     if (seq !== loadSeq) return;
@@ -212,6 +295,8 @@ function renderNotes() {
     const item = report.period.note;
     if (item.type === "day") {
       note.append("Выбран день: ", strong(item.current), " · сравнение: ", strong(item.previous));
+    } else if (item.type === "free") {
+      note.append("Период: ", strong(item.current), ` (${item.days} дн.). Сравнение пока не считаем.`);
     } else {
       note.append(
         "Период: ", strong(item.current), ` (${item.days} дн.) · сравнение с теми же днями: `, strong(item.previous),
@@ -219,7 +304,7 @@ function renderNotes() {
     }
   }
   const compare = document.getElementById("compare-note");
-  const showCompare = report && !report.empty && !report.has_prev;
+  const showCompare = report && !report.empty && !report.has_prev && report.period.compare !== false;
   compare.hidden = !showCompare;
   compare.textContent = showCompare ? "ℹ️ За период сравнения в базе данных нет — динамика не показывается." : "";
   if (prevText && note.textContent !== prevText && !reducedMotion()) {
@@ -808,7 +893,7 @@ function wireAdmin() {
     try {
       const data = await readJson(await fetch("/api/admin/cache/clear", { method: "POST" }));
       setAdminStatus(data.message);
-      if (state.anchor) loadReport();
+      if (state.mode === "Свободный" ? state.rangeStart && state.rangeEnd : state.anchor) loadReport();
     } catch (error) {
       setAdminStatus(error.message);
     }
@@ -936,14 +1021,14 @@ function wireChrome() {
   window.addEventListener("popstate", () => {
     const prevDepth = VIEW_DEPTH[state.view] ?? 0;
     const prevKey = viewKey();
-    const period = `${state.mode}|${state.anchor}`;
+    const period = periodKey();
     readUrl();
     syncForm();
     if (viewKey() !== prevKey) {
       const nextDepth = VIEW_DEPTH[state.view] ?? 0;
       screenMotion = nextDepth < prevDepth ? "back" : nextDepth > prevDepth ? "forward" : "back";
     }
-    if (period !== `${state.mode}|${state.anchor}`) loadReport({ spin: true });
+    if (period !== periodKey()) loadReport({ spin: true });
     else render();
   });
 }
@@ -956,6 +1041,8 @@ async function boot() {
     const response = await fetch("/api/bootstrap");
     const data = await response.json();
     if (!state.anchor) state.anchor = data.max_date || data.today;
+    if (!state.rangeStart) state.rangeStart = state.anchor;
+    if (!state.rangeEnd) state.rangeEnd = state.anchor;
     syncForm();
     renderSummary(data.summary);
     if (!data.ok) {

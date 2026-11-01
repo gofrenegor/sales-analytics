@@ -91,23 +91,33 @@ def bootstrap():
 
 
 @app.get("/api/report")
-def report(mode: str = "Месяц", anchor: str | None = None):
+def report(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
     if mode not in analytics.MODES:
         return fail(400, "Неизвестный разрез")
     try:
         today = analytics.business_today()
-        if anchor:
-            anchor_day = date.fromisoformat(anchor)
+        if mode == "Свободный":
+            if not start or not end:
+                return fail(400, "Укажите начало и конец периода")
+            period = analytics.compute_free_period(start, end)
+            current = db.load_cached(period["_start"], period["_end"])
+            previous = pd.DataFrame()
         else:
-            summary = db.get_summary()
-            anchor_day = date.fromisoformat(summary["max_date"]) if summary.get("max_date") else today
-        period = analytics.compute_period(mode, anchor_day, today)
-        current = db.load_cached(period["_start"], period["_end"])
-        previous = db.load_cached(period["_prev_start"], period["_prev_end"])
+            if anchor:
+                anchor_day = date.fromisoformat(anchor)
+            else:
+                summary = db.get_summary()
+                anchor_day = date.fromisoformat(summary["max_date"]) if summary.get("max_date") else today
+            period = analytics.compute_period(mode, anchor_day, today)
+            current = db.load_cached(period["_start"], period["_end"])
+            previous = db.load_cached(period["_prev_start"], period["_prev_end"])
         return analytics.build_report(current, previous, period)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
-    except ValueError:
+    except ValueError as exc:
+        msg = str(exc)
+        if any(part in msg for part in ("дата", "период", "разрез", "дней")):
+            return fail(400, msg)
         return fail(400, "Некорректная дата")
     except Exception as exc:
         log.exception("report")

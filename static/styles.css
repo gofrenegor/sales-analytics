@@ -233,7 +233,8 @@ main > * { max-width: 1180px; }
   align-items: end;
   margin: 0.8rem 0 0.7rem;
 }
-fieldset { border: 0; margin: 0; padding: 0; }
+fieldset { border: 0; margin: 0; padding: 0; flex: 1 1 28rem; min-width: min(100%, 18rem); }
+.modes { width: 100%; }
 legend, .anchor span, .file span {
   display: block;
   margin-bottom: 0.35rem;
@@ -244,7 +245,7 @@ legend, .anchor span, .file span {
 .modes {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   padding: 3px;
   border: 1px solid var(--line-strong);
   border-radius: 12px;
@@ -256,7 +257,7 @@ legend, .anchor span, .file span {
   top: 3px;
   bottom: 3px;
   left: 3px;
-  width: calc((100% - 6px) / 3);
+  width: calc((100% - 6px) / 4);
   border-radius: 9px;
   background: var(--blue);
   box-shadow: 0 6px 16px color-mix(in srgb, var(--blue) 35%, transparent);
@@ -264,6 +265,7 @@ legend, .anchor span, .file span {
 }
 .modes:has(input[value="Неделя"]:checked) .mode-glider { transform: translateX(100%); }
 .modes:has(input[value="Месяц"]:checked) .mode-glider { transform: translateX(200%); }
+.modes:has(input[value="Свободный"]:checked) .mode-glider { transform: translateX(300%); }
 .modes label {
   position: relative;
   z-index: 1;
@@ -306,7 +308,16 @@ input[type="date"]:focus {
   box-shadow: 0 0 0 3px var(--blue-dim);
   outline: none;
 }
-.anchor { min-width: min(100%, 280px); }
+.anchor { min-width: min(100%, 220px); }
+.range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+.range[hidden] { display: none; }
+@media (max-width: 640px) {
+  .modes label { font-size: 0.78rem; padding: 0.2rem 0.15rem; }
+}
 
 .period-note {
   margin: 0.15rem 0 0.7rem;

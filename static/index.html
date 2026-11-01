@@ -56,12 +56,23 @@
             <label><input type="radio" name="mode" value="День"> День</label>
             <label><input type="radio" name="mode" value="Неделя"> Неделя</label>
             <label><input type="radio" name="mode" value="Месяц" checked> Месяц</label>
+            <label><input type="radio" name="mode" value="Свободный"> Свободный</label>
           </div>
         </fieldset>
-        <label class="anchor">
+        <label class="anchor" id="anchor-wrap">
           <span id="anchor-label">Выберите любой день нужного месяца</span>
           <input type="date" id="anchor" required>
         </label>
+        <div class="range" id="range-wrap" hidden>
+          <label class="anchor">
+            <span>С</span>
+            <input type="date" id="range-start">
+          </label>
+          <label class="anchor">
+            <span>По</span>
+            <input type="date" id="range-end">
+          </label>
+        </div>
       </form>
       <div id="period-note" class="period-note" hidden></div>
       <p id="compare-note" class="hint" hidden></p>
