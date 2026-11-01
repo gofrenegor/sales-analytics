@@ -489,22 +489,43 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .hero-side { grid-area: side; }
 .daily-chart { grid-area: daily; min-width: 0; }
 .loss-stack { width: 100%; max-width: 560px; margin: 0 auto; }
-.loss-figure { display: flex; align-items: center; justify-content: center; }
+.loss-figure {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Было 20px внутрь svg. До обводки (радиус 137 при viewBox 400) оставалось
+     63/400 ширины кольца минус эти 20px. Новый зазор — 70% того расстояния. */
+  --pct-gap: calc((63 / 400 * 345px * 1.24 - 20px) * 0.7);
+}
 .loss-donut-wrap { position: relative; width: calc(345px * 1.24); max-width: 100%; }
 .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; pointer-events: none; }
 .loss-donut text { font-family: Manrope, sans-serif; }
 .loss-pct {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  width: max-content;
+  margin: 0;
   font-size: 28px;
   font-weight: 700;
   letter-spacing: -0.4px;
-  min-width: 2.6em;
   font-variant-numeric: tabular-nums;
-  position: relative;
-  z-index: 4;
+  white-space: nowrap;
   pointer-events: none;
 }
-.loss-pct-in { text-align: right; color: var(--green-ink); margin-right: -20px; }
-.loss-pct-out { text-align: left; color: var(--blue); margin-left: -20px; }
+.loss-pct-in {
+  /* 137/400 — доля от центра кольца до внешней кромки обводки. */
+  right: calc(50% + (137 / 400) * min(345px * 1.24, 100%) + var(--pct-gap));
+  color: var(--green-ink);
+}
+.loss-pct-out {
+  left: calc(50% + (137 / 400) * min(345px * 1.24, 100%) + var(--pct-gap));
+  color: var(--blue);
+}
 .loss-donut .loss-seg-hit {
   fill: none;
   stroke: transparent;
@@ -724,9 +745,19 @@ td.num, th.num { text-align: right; }
 }
 @media (max-width: 860px) {
   .cards { grid-template-columns: 1fr; }
-  .loss-pct { font-size: 18px; }
-  .loss-pct-in { margin-right: 0; }
-  .loss-pct-out { margin-left: 0; }
+  .loss-pct {
+    position: static;
+    top: auto;
+    bottom: auto;
+    display: block;
+    width: auto;
+    min-width: 2.6em;
+    font-size: 18px;
+  }
+  .loss-pct-in,
+  .loss-pct-out { right: auto; left: auto; }
+  .loss-pct-in { margin-right: -14px; text-align: right; }
+  .loss-pct-out { margin-left: -14px; text-align: left; }
 }
 
 #screen { position: relative; }
