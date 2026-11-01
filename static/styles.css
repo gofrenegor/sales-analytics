@@ -370,6 +370,59 @@ main {
   border-color: var(--blue);
   color: #fff;
 }
+.emp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin: 0.1rem 0 0.35rem;
+}
+.emp-toolbar .hint { margin: 0; }
+.emp-sort { display: flex; gap: 6px; }
+.emp-sort button {
+  flex: 0 0 auto;
+  width: 4.75rem;
+  height: 1.7rem;
+  min-height: 0;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1;
+  color: var(--text);
+}
+.emp-sort button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.emp-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+.emp-pages button {
+  flex: 0 0 auto;
+  height: 1.7rem;
+  min-height: 0;
+  padding: 0 0.7rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.emp-pages button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
 .badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.5rem 0 0.9rem; }
 .badge-search input {
   flex: 1 1 12rem;
@@ -385,12 +438,18 @@ main {
   box-shadow: 0 0 0 3px var(--blue-dim);
 }
 .badge-search button.primary { padding: 0 1.15rem; }
-.emp-list { display: flex; flex-direction: column; gap: 8px; }
+.emp-list {
+  --emp-cols: 8.75rem 11rem minmax(0, 1fr) 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-x: auto;
+}
 .emp-card { display: flex; flex-direction: column; }
 .emp-row {
   width: 100%;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto 1.5rem;
+  grid-template-columns: var(--emp-cols);
   align-items: center;
   gap: 8px 12px;
   text-align: left;
@@ -399,7 +458,8 @@ main {
   border-radius: 12px;
   padding: 10px 12px;
   min-height: 3.1rem;
-  font-size: inherit;
+  font-size: 1rem;
+  line-height: 1.45;
   content-visibility: auto;
   contain-intrinsic-size: auto 3.1rem;
   transition: background 0.16s ease, border-color 0.16s ease;
@@ -425,7 +485,8 @@ main {
   align-items: center;
   gap: 8px 12px;
   min-height: 1.9rem;
-  font-size: 0.92rem;
+  font-size: 1rem;
+  line-height: 1.45;
 }
 .emp-sticker {
   font-variant-numeric: tabular-nums;
@@ -446,15 +507,37 @@ main {
 .emp-found.unknown { color: var(--muted); font-weight: 600; }
 .emp-mark { font-size: 1.05rem; line-height: 1; }
 .emp-badge {
+  justify-self: stretch;
+  text-align: center;
   font-variant-numeric: tabular-nums;
   font-weight: 750;
+  line-height: 1.45;
   background: var(--blue-dim);
   color: var(--blue-ink);
   border-radius: 999px;
-  padding: 0.2rem 0.7rem;
+  padding: 0.2rem 0.55rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.emp-losses { color: var(--muted); }
-.emp-sum { font-weight: 750; font-variant-numeric: tabular-nums; }
+.emp-losses {
+  display: grid;
+  grid-template-columns: 4.75rem minmax(0, 1fr);
+  column-gap: 0.4rem;
+  align-items: baseline;
+  color: var(--muted);
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.emp-qty { text-align: right; font-variant-numeric: tabular-nums; }
+.emp-loss-word { text-align: left; }
+.emp-sum {
+  justify-self: end;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  white-space: nowrap;
+}
 .emp-bang {
   color: var(--red);
   font-weight: 800;
@@ -1003,6 +1086,12 @@ input[type="date"]:focus {
   .modes label { font-size: 0.78rem; padding: 0.2rem 0.15rem; }
   .pickers, .picker-row { width: 100%; }
   .picker[data-picker="month"] { min-width: 0; flex: 1 1 7rem; }
+}
+@media (max-width: 420px) {
+  .emp-list { --emp-cols: 6.6rem 8.4rem minmax(0, 1fr) 1.1rem; }
+  .emp-row { gap: 6px 8px; padding: 8px; }
+  .emp-losses { grid-template-columns: 3.2rem minmax(0, 1fr); column-gap: 0.3rem; }
+  .emp-badge { padding: 0.15rem 0.4rem; }
 }
 
 .period-note {

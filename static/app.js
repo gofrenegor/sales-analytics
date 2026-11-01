@@ -17,6 +17,8 @@ const state = {
   badgeDraft: "",
   badgeQuery: "",
   empLr: "5",
+  empSort: "qty",
+  empPage: 0,
   empOpen: "",
   empDetail: null,
   empCache: {},
@@ -1132,6 +1134,7 @@ function resetEmployees() {
   state.empOpen = "";
   state.empDetail = null;
   state.empCache = {};
+  state.empPage = 0;
 }
 
 function empKey(lr, badge) {
@@ -1669,6 +1672,45 @@ function empPack() {
   return data;
 }
 
+function sortEmployees(rows, mode) {
+  const list = rows.slice();
+  const byQty = mode !== "sum";
+  list.sort((a, b) => {
+    const lossA = Number(a.losses) || 0;
+    const lossB = Number(b.losses) || 0;
+    const sumA = Number(a.sum) || 0;
+    const sumB = Number(b.sum) || 0;
+    const primary = byQty ? lossB - lossA : sumB - sumA;
+    if (primary) return primary;
+    const secondary = byQty ? sumB - sumA : lossB - lossA;
+    if (secondary) return secondary;
+    return String(a.badge || "").localeCompare(String(b.badge || ""), "ru", { numeric: true });
+  });
+  return list;
+}
+
+function empPages(total) {
+  const pages = [];
+  let start = 0;
+  let index = 0;
+  while (start < total) {
+    const size = index === 0 ? 25 : index === 1 ? 50 : 100;
+    const end = Math.min(total, start + size);
+    pages.push({ start, end });
+    start = end;
+    index += 1;
+  }
+  return pages;
+}
+
+function showEmpPage(index) {
+  if (state.empPage === index) return;
+  state.empPage = index;
+  render();
+  const list = document.querySelector(".emp-list");
+  if (list) list.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+}
+
 function renderEmployees(screen) {
   const report = state.report;
   const pack = empPack();
@@ -1682,12 +1724,14 @@ function renderEmployees(screen) {
       onclick: () => {
         if (state.empLr === code) return;
         state.empLr = code;
+        state.empPage = 0;
         render();
       },
     }, `${code}лр`));
   }
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
-  const rows = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
+  const matched = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
+  const rows = sortEmployees(matched, state.empSort);
   const shownLosses = rows.reduce((sum, row) => sum + (Number(row.losses) || 0), 0);
   const shownSum = rows.reduce((sum, row) => sum + (Number(row.sum) || 0), 0);
   const input = el("input", {
@@ -1707,6 +1751,7 @@ function renderEmployees(screen) {
       event.preventDefault();
       state.badgeQuery = String(state.badgeDraft || "").replace(/\D/g, "");
       state.badgeDraft = state.badgeQuery;
+      state.empPage = 0;
       render();
     },
   }, input, el("button", { type: "submit", class: "primary" }, "Найти"));
@@ -1717,6 +1762,7 @@ function renderEmployees(screen) {
       onclick: () => {
         state.badgeQuery = "";
         state.badgeDraft = "";
+        state.empPage = 0;
         render();
       },
     }, "Сброс"));
@@ -1746,10 +1792,29 @@ function renderEmployees(screen) {
     screen.append(el("p", { class: "hint" }, "Загрузка сотрудников…"));
     return;
   }
+  const sortMode = state.empSort === "sum" ? "sum" : "qty";
+  const sortBar = el("div", { class: "emp-sort", role: "group", "aria-label": "Сортировка" });
+  for (const item of [["qty", "штуки"], ["sum", "рубли"]]) {
+    const code = item[0];
+    sortBar.append(el("button", {
+      type: "button",
+      "aria-pressed": sortMode === code ? "true" : "false",
+      title: code === "sum" ? "Сортировка по потерям в рублях" : "Сортировка по штукам",
+      onclick: () => {
+        if (state.empSort === code) return;
+        state.empSort = code;
+        state.empPage = 0;
+        render();
+      },
+    }, item[1]));
+  }
   screen.append(
     el("div", { class: "sub" }, query ? `Найдено бейджиков: ${fmtInt(rows.length)}` : `Бейджиков: ${fmtInt(rows.length)}`),
     el("div", { class: "big-sum" }, fmtRub(shownSum)),
-    el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
+    el("div", { class: "emp-toolbar" },
+      el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
+      sortBar,
+    ),
   );
   if (!all.length) {
     screen.append(el("p", { class: "box warn" }, `Нет потерь LR ${lr} за этот период.`));
@@ -1763,8 +1828,13 @@ function renderEmployees(screen) {
     return;
   }
   screen.append(el("p", { class: "hint" }, "Нажмите строку: последний стикер до списания и было ли движение."));
+  const pages = empPages(rows.length);
+  let pageIndex = state.empPage;
+  if (pageIndex >= pages.length) pageIndex = 0;
+  if (pageIndex !== state.empPage) state.empPage = pageIndex;
+  const page = pages[pageIndex];
   const list = el("div", { class: "emp-list" });
-  for (const row of rows) {
+  for (const row of rows.slice(page.start, page.end)) {
     const badge = String(row.badge || "");
     const label = badge || "не указан";
     const key = empKey(lr, badge);
@@ -1779,7 +1849,10 @@ function renderEmployees(screen) {
         onclick: () => toggleEmp(lr, badge),
       },
       el("span", { class: "emp-badge" }, label),
-      el("span", { class: "emp-losses" }, `${fmtInt(row.losses)} ${lossLabel(row.losses)}`),
+      el("span", { class: "emp-losses" },
+        el("span", { class: "emp-qty" }, fmtInt(row.losses)),
+        el("span", { class: "emp-loss-word" }, lossLabel(row.losses)),
+      ),
       el("span", { class: "emp-sum" }, fmtRub(row.sum)),
       row.wmi
         ? el("span", { class: "emp-bang", title: "Есть потеря после статуса WMI" }, "!")
@@ -1794,6 +1867,17 @@ function renderEmployees(screen) {
     list.append(card);
   }
   screen.append(list);
+  if (pages.length > 1) {
+    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы бейджиков" });
+    pages.forEach((item, index) => {
+      nav.append(el("button", {
+        type: "button",
+        "aria-pressed": index === pageIndex ? "true" : "false",
+        onclick: () => showEmpPage(index),
+      }, `${fmtInt(item.start + 1)}–${fmtInt(item.end)}`));
+    });
+    screen.append(nav);
+  }
 }
 
 function empFoundNode(found) {
