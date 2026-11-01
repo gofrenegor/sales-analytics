@@ -2148,6 +2148,7 @@ async function parseJson(response) {
   const text = await response.text();
   const start = text.trimStart();
   if (!start || start[0] === "<") {
+    if (response.status === 413) throw new Error("Файл слишком большой, прокси его не пропустил");
     throw new Error("Сервер вернул страницу ошибки вместо данных");
   }
   try {
@@ -2261,6 +2262,44 @@ function wireOwnPhone() {
   });
 }
 
+const UPLOAD_CHUNK = 256 * 1024;
+
+function newUploadId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function sendPreview(files, hint) {
+  const batch = newUploadId();
+  const ids = [];
+  let step = 0;
+  let pieces = 0;
+  for (const file of files) pieces += Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
+  for (const file of files) {
+    const uploadId = newUploadId();
+    ids.push(uploadId);
+    const total = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
+    for (let index = 0; index < total; index += 1) {
+      step += 1;
+      if (hint) hint.textContent = pieces > 1 ? `Читаем файлы… ${step} из ${pieces}` : "Читаем файлы…";
+      const body = new FormData();
+      body.append("batch", batch);
+      body.append("upload_id", uploadId);
+      body.append("name", file.name);
+      body.append("index", String(index));
+      body.append("total", String(total));
+      body.append("chunk", file.slice(index * UPLOAD_CHUNK, (index + 1) * UPLOAD_CHUNK), "part");
+      await readJson(await fetch("/api/admin/preview/chunk", { method: "POST", body }));
+    }
+  }
+  return readJson(await fetch("/api/admin/preview/finish", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ batch, ids }),
+  }));
+}
+
 function wireAdmin() {
   wireGrant();
   wireOwnPhone();
@@ -2279,11 +2318,10 @@ function wireAdmin() {
     const files = event.target.files;
     preview.replaceChildren();
     if (!files.length) return;
-    preview.append(el("p", { class: "hint" }, "Читаем файлы…"));
-    const body = new FormData();
-    for (const file of files) body.append("files", file);
+    const hint = el("p", { class: "hint" }, "Читаем файлы…");
+    preview.append(hint);
     try {
-      const data = await readJson(await fetch("/api/admin/preview", { method: "POST", body }));
+      const data = await sendPreview(files, hint);
       preview.replaceChildren();
       if (!data.rows) {
         preview.append(el("p", { class: "box warn" }, "Нет строк с датой — нечего загружать."));

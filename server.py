@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, File, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -26,10 +26,21 @@ PENDING_TTL = 1800
 
 pending = {}
 pending_lock = threading.Lock()
+# Кусок меньше типичного лимита прокси (1 МБ). Целый xlsx прокси режет и отдаёт HTML.
+UPLOAD_CHUNK = 256 * 1024
+UPLOAD_MAX_BYTES = 80 * 1024 * 1024
+_UPLOAD_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
+uploads = {}
+uploads_lock = threading.Lock()
 
 
 class TokenIn(BaseModel):
     token: str
+
+
+class BatchIn(BaseModel):
+    batch: str
+    ids: list[str]
 
 
 class ConfirmIn(BaseModel):
@@ -108,6 +119,59 @@ def sweep_pending():
         dead = [key for key, item in pending.items() if now - item["ts"] > PENDING_TTL]
         for key in dead:
             pending.pop(key, None)
+    with uploads_lock:
+        dead = [key for key, item in uploads.items() if now - item["ts"] > PENDING_TTL]
+        for key in dead:
+            uploads.pop(key, None)
+
+
+def _preview_from_blobs(blobs):
+    """Список (имя, байты xlsx) -> JSON превью. Ошибки разбора — 400, не страница прокси."""
+    sweep_pending()
+    frames = []
+    for name, payload in blobs:
+        name = name or "файл"
+        if not str(name).lower().endswith(".xlsx"):
+            return fail(400, f"Нужен файл .xlsx: {name}")
+        try:
+            frames.append(analytics.process_excel(BytesIO(payload)))
+        except Exception as exc:
+            return fail(400, f"Не удалось прочитать {name}: {exc}")
+    try:
+        frame, skipped, dups = analytics.prepare_upload(frames)
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except Exception as exc:
+        log.exception("preview")
+        return fail(400, f"Не удалось разобрать файл: {exc}")
+    token = None
+    if len(frame):
+        token = secrets.token_urlsafe(18)
+        with pending_lock:
+            pending[token] = {"df": frame, "ts": time.time()}
+    start = end = None
+    if len(frame):
+        try:
+            dates = pd.to_datetime(frame["loss_date"], errors="coerce")
+            if getattr(dates, "ndim", 1) != 1:
+                return fail(400, "В файле две колонки «Дата первого списания»")
+            dates = dates.dropna()
+            if dates.empty:
+                return fail(400, "В файле нет дат списания")
+            start = dates.min().date().isoformat()
+            end = dates.max().date().isoformat()
+        except Exception as exc:
+            log.exception("preview dates")
+            return fail(400, f"Не удалось разобрать даты: {exc}")
+    return {
+        "files": len(blobs),
+        "rows": int(len(frame)),
+        "skipped_no_date": int(skipped),
+        "duplicates": int(dups),
+        "start": start,
+        "end": end,
+        "token": token,
+    }
 
 
 @asynccontextmanager
@@ -402,39 +466,84 @@ async def preview(files: list[UploadFile] = File(...), user=Depends(actor)):
     blocked = denied(user, admin=True)
     if blocked:
         return blocked
-    sweep_pending()
-    frames = []
+    blobs = []
     for upload in files:
-        name = upload.filename or "файл"
-        if not name.lower().endswith(".xlsx"):
-            return fail(400, f"Нужен файл .xlsx: {name}")
-        try:
-            payload = await upload.read()
-            frames.append(analytics.process_excel(BytesIO(payload)))
-        except Exception as exc:
-            return fail(400, f"Не удалось прочитать {name}: {exc}")
-    try:
-        frame, skipped, dups = analytics.prepare_upload(frames)
-    except ValueError as exc:
-        return fail(400, str(exc))
-    token = None
-    if len(frame):
-        token = secrets.token_urlsafe(18)
-        with pending_lock:
-            pending[token] = {"df": frame, "ts": time.time()}
-    start = end = None
-    if len(frame):
-        start = pd.to_datetime(frame["loss_date"]).min().date().isoformat()
-        end = pd.to_datetime(frame["loss_date"]).max().date().isoformat()
-    return {
-        "files": len(files),
-        "rows": int(len(frame)),
-        "skipped_no_date": int(skipped),
-        "duplicates": int(dups),
-        "start": start,
-        "end": end,
-        "token": token,
-    }
+        blobs.append((upload.filename or "файл", await upload.read()))
+    return _preview_from_blobs(blobs)
+
+
+@app.post("/api/admin/preview/chunk")
+async def preview_chunk(
+    batch: str = Form(...),
+    upload_id: str = Form(...),
+    name: str = Form(...),
+    index: int = Form(...),
+    total: int = Form(...),
+    chunk: UploadFile = File(...),
+    user=Depends(actor),
+):
+    """Один кусок xlsx. Прокси перед сайтом на целом файле больше ~1 МБ отдаёт HTML."""
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    sweep_pending()
+    if not _UPLOAD_ID.fullmatch(batch) or not _UPLOAD_ID.fullmatch(upload_id):
+        return fail(400, "Некорректная загрузка")
+    name = (name or "файл").strip()[:180]
+    if not name.lower().endswith(".xlsx"):
+        return fail(400, f"Нужен файл .xlsx: {name}")
+    if total < 1 or total > 400 or index < 0 or index >= total:
+        return fail(400, "Некорректный кусок файла")
+    data = await chunk.read()
+    if len(data) > UPLOAD_CHUNK:
+        return fail(400, "Слишком большой кусок файла")
+    with uploads_lock:
+        item = uploads.get(batch)
+        if item is None:
+            item = {"ts": time.time(), "files": {}, "bytes": 0}
+            uploads[batch] = item
+        item["ts"] = time.time()
+        slot = item["files"].get(upload_id)
+        if slot is None:
+            slot = {"name": name, "total": total, "parts": {}}
+            item["files"][upload_id] = slot
+        if slot["total"] != total or slot["name"] != name:
+            return fail(400, "Куски одного файла не сходятся")
+        prev = slot["parts"].get(index)
+        next_bytes = item["bytes"] - (len(prev) if prev is not None else 0) + len(data)
+        if next_bytes > UPLOAD_MAX_BYTES:
+            return fail(400, "Файл слишком большой")
+        slot["parts"][index] = data
+        item["bytes"] = next_bytes
+    return {"ok": True, "index": index, "total": total}
+
+
+@app.post("/api/admin/preview/finish")
+def preview_finish(body: BatchIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    if not _UPLOAD_ID.fullmatch(body.batch) or not body.ids or len(body.ids) > 20:
+        return fail(400, "Некорректная загрузка")
+    with uploads_lock:
+        item = uploads.get(body.batch)
+    if item is None:
+        return fail(404, "Загрузка устарела. Выберите файлы ещё раз.")
+    blobs = []
+    for upload_id in body.ids:
+        if not _UPLOAD_ID.fullmatch(upload_id):
+            return fail(400, "Некорректная загрузка")
+        slot = item["files"].get(upload_id)
+        if slot is None or len(slot["parts"]) != slot["total"]:
+            return fail(400, "Не все куски файла дошли")
+        if any(i not in slot["parts"] for i in range(slot["total"])):
+            return fail(400, "Не все куски файла дошли")
+        blobs.append((slot["name"], b"".join(slot["parts"][i] for i in range(slot["total"]))))
+    result = _preview_from_blobs(blobs)
+    if isinstance(result, dict):
+        with uploads_lock:
+            uploads.pop(body.batch, None)
+    return result
 
 
 @app.post("/api/admin/commit")
@@ -455,12 +564,12 @@ def commit(body: TokenIn, user=Depends(actor)):
     except (db.DataError, db.ConfigError) as exc:
         with pending_lock:
             pending[body.token] = item
-        return fail(503, str(exc))
+        return fail(400, str(exc))
     except Exception as exc:
         log.exception("commit")
         with pending_lock:
             pending[body.token] = item
-        return fail(500, db.public_error(exc))
+        return fail(400, db.public_error(exc))
     return {"ok": True, "message": "Данные сохранены!", "summary": summary}
 
 

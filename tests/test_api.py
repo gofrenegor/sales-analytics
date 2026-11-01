@@ -1,3 +1,4 @@
+import os
 import re
 from datetime import date
 from io import BytesIO
@@ -216,6 +217,52 @@ def test_employee_items_return_json(client):
     )
     assert cached.status_code == 200
     assert cached.json()["items"][0]["sticker"] == "*123*"
+
+
+def test_chunked_preview_over_proxy_limit(client):
+    """Целый xlsx больше 1 МБ прокси режет HTML-страницей. Сайт шлёт куски по 256 КБ."""
+    today = date.fromisoformat(client.get("/api/bootstrap").json()["today"])
+    rows = []
+    for i in range(120):
+        row = loss_row(today, f"wide-{i}", 10 + i)
+        row["хвост"] = os.urandom(12000).hex()
+        rows.append(row)
+    blob = xlsx(rows)
+    assert len(blob) > 1024 * 1024
+    chunk = 256 * 1024
+    batch = "a" * 16
+    upload_id = "b" * 16
+    total = (len(blob) + chunk - 1) // chunk
+    for index in range(total):
+        part = blob[index * chunk:(index + 1) * chunk]
+        res = client.post(
+            "/api/admin/preview/chunk",
+            data={"batch": batch, "upload_id": upload_id, "name": "wide.xlsx", "index": str(index), "total": str(total)},
+            files=[("chunk", ("part", part, "application/octet-stream"))],
+        )
+        assert res.status_code == 200, res.text
+        assert res.headers["content-type"].startswith("application/json")
+        assert not res.text.lstrip().startswith("<")
+    huge = client.post(
+        "/api/admin/preview/chunk",
+        data={"batch": "c" * 16, "upload_id": "d" * 16, "name": "wide.xlsx", "index": "0", "total": "1"},
+        files=[("chunk", ("part", b"x" * (chunk + 1), "application/octet-stream"))],
+    )
+    assert huge.status_code == 400
+    assert huge.json()["error"] == "Слишком большой кусок файла"
+    done = client.post("/api/admin/preview/finish", json={"batch": batch, "ids": [upload_id]})
+    assert done.status_code == 200, done.text
+    assert done.json()["rows"] == 120
+    assert done.json()["token"]
+    saved = client.post("/api/admin/commit", json={"token": done.json()["token"]})
+    assert saved.status_code == 200
+    assert saved.json()["summary"]["total_rows"] == 120
+    report = client.get("/api/report", params={"mode": "День", "anchor": today.isoformat()}, headers={"Accept-Encoding": "gzip"})
+    assert report.status_code == 200
+    assert report.headers["content-type"].startswith("application/json")
+    assert "content-encoding" not in {k.lower() for k in report.headers}
+    assert not report.text.lstrip().startswith("<")
+    assert report.json()["empty"] is False
 
 
 def test_index_injects_asset_version(client):
