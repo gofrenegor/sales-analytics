@@ -68,8 +68,49 @@
             <label><input type="radio" name="mode" value="Свободный"> Свободный</label>
           </div>
         </fieldset>
-        <label class="anchor" id="anchor-wrap">
-          <span id="anchor-label">Выберите любой день нужного месяца</span>
+        <div class="pickers" id="pickers">
+          <span id="anchor-label">Выберите месяц</span>
+          <div class="picker-row" role="group" aria-labelledby="anchor-label">
+            <div class="picker" data-picker="day" hidden>
+              <button type="button" class="picker-btn" id="picker-day-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="picker-day-menu">
+                <span class="picker-main">
+                  <span class="picker-kicker" id="picker-day-kicker"></span>
+                  <span class="picker-value" id="picker-day-value">—</span>
+                </span>
+                <span class="picker-caret" aria-hidden="true"></span>
+              </button>
+              <div class="picker-menu" id="picker-day-menu" role="listbox" aria-label="День" hidden></div>
+            </div>
+            <div class="picker" data-picker="week" hidden>
+              <button type="button" class="picker-btn" id="picker-week-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="picker-week-menu">
+                <span class="picker-main">
+                  <span class="picker-value" id="picker-week-value">—</span>
+                </span>
+                <span class="picker-caret" aria-hidden="true"></span>
+              </button>
+              <div class="picker-menu" id="picker-week-menu" role="listbox" aria-label="Неделя" hidden></div>
+            </div>
+            <div class="picker" data-picker="month">
+              <button type="button" class="picker-btn" id="picker-month-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="picker-month-menu">
+                <span class="picker-main">
+                  <span class="picker-value" id="picker-month-value">—</span>
+                </span>
+                <span class="picker-caret" aria-hidden="true"></span>
+              </button>
+              <div class="picker-menu" id="picker-month-menu" role="listbox" aria-label="Месяц" hidden></div>
+            </div>
+            <div class="picker" data-picker="year">
+              <button type="button" class="picker-btn" id="picker-year-btn" aria-haspopup="listbox" aria-expanded="false" aria-controls="picker-year-menu">
+                <span class="picker-main">
+                  <span class="picker-value" id="picker-year-value">—</span>
+                </span>
+                <span class="picker-caret" aria-hidden="true"></span>
+              </button>
+              <div class="picker-menu" id="picker-year-menu" role="listbox" aria-label="Год" hidden></div>
+            </div>
+          </div>
+        </div>
+        <label class="anchor" id="anchor-wrap" hidden>
           <span class="ymd">
             <input id="anchor-day" class="ymd-day" type="text" inputmode="numeric" maxlength="2" placeholder="дд" autocomplete="off" spellcheck="false" aria-label="День">
             <span class="ymd-dot" aria-hidden="true">.</span>

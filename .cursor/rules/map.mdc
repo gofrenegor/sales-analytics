@@ -45,12 +45,12 @@ systemctl restart sales-analytics
 - `db.py` — движок, схема `losses` (таблицу не пересоздаёт, только добавляет колонки), `load_cached`, `get_summary`, `replace_period`, `truncate_losses`.
 - `static/index.html` — каркас страницы.
 - `static/app.js` — состояние, URL, загрузка отчёта, экраны.
-- `static/styles.css` — стили. Режимы: `.modes`, свободный диапазон: `.range`.
+- `static/styles.css` — стили. Режимы: `.modes`, меню периода: `.pickers`, свободный диапазон: `.range`.
 - `tests/` — pytest (`test_api.py`, `test_analytics.py`, `test_entrypoint.py`). По умолчанию не запускать.
 
 ## Экран
 
-Разрезы в `#dates`: радио `mode`. Для День/Неделя/Месяц одна дата `#anchor` (`state.anchor`), поля `#anchor-day|month|year`. Для «Свободный» день/месяц/год: `#range-start-day|month|year` («С») и `#range-end-day|month|year` («По»). Год — текстовое поле, по умолчанию `2026` (`DEFAULT_YEAR`), вне стрелок и автоперехода. Полный день → фокус на месяц. Влево/вправо только день и месяц. Точки `.ymd-dot` вплотную к цифрам, зазор одинаковый. Невозможная дата → «некорректная дата» (`#…-error`), state не меняется. Скрытые `#anchor`, `#range-start`, `#range-end` только календарь. «По» без полной даты не выбрано (`freeRangePending`). Загрузка отчёта только когда обе даты собраны (`isoFromParts`). Календарь «По» открывается на 15-м числе месяца «С» (`prepareRangePicker`, `dataset.seed`): день у края месяца на Android уводит плашку на следующий месяц. Заготовка не пишется в state, пока нет `change`.
+Разрезы в `#dates`: радио `mode`. Для День/Неделя/Месяц якорь `#anchor` (`state.anchor`) и меню `#pickers` (плашка `.ymd` скрыта): День — день, месяц, год; Неделя — недели пн–вс месяца плюс месяц и год, без дня; Месяц — месяц и год. Выбор пишет ISO в `#anchor` и грузит отчёт. Для «Свободный» без изменений: `#range-start-day|month|year` («С») и `#range-end-day|month|year` («По»). Год — текстовое поле, по умолчанию `2026` (`DEFAULT_YEAR`), вне стрелок и автоперехода. Полный день → фокус на месяц. Влево/вправо только день и месяц. Точки `.ymd-dot` вплотную к цифрам, зазор одинаковый. Невозможная дата → «некорректная дата» (`#…-error`), state не меняется. Скрытые `#anchor`, `#range-start`, `#range-end` только календарь. «По» без полной даты не выбрано (`freeRangePending`). Загрузка отчёта только когда обе даты собраны (`isoFromParts`). Календарь «По» открывается на 15-м числе месяца «С» (`prepareRangePicker`, `dataset.seed`): день у края месяца на Android уводит плашку на следующий месяц. Заготовка не пишется в state, пока нет `change`.
 
 Экраны: `dashboard` → `flow` → `group` → `block_detail`. Функции: `renderDashboard`, `renderFlow`, `renderGroup`, `renderDetail`, график `renderChart`. URL: `mode`, `anchor` либо `start`+`end`, `view`, `flow`, `group`, `block`. Запрос отчёта: `loadReport` → `GET /api/report`.
 
