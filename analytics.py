@@ -1031,6 +1031,66 @@ def build_employees(df):
     return out
 
 
+def _flow_code(title):
+    if title == "Входящий поток":
+        return "in"
+    if title == "Исходящий поток":
+        return "out"
+    return ""
+
+
+def reason_moves(curr, prev):
+    """Топ-1 LR по росту суммы и топ-1 по падению. Блок — где этот LR сдвинулся сильнее всего в ту же сторону."""
+    empty = {"up": None, "down": None}
+    cols = ["reason", "block_group", "flow", "loss_sum"]
+
+    def piece(frame):
+        if frame is None or len(frame) == 0 or not set(cols).issubset(getattr(frame, "columns", [])):
+            return pd.DataFrame(columns=cols)
+        part = frame[frame["flow"].isin(("Входящий поток", "Исходящий поток"))]
+        if part.empty:
+            return pd.DataFrame(columns=cols)
+        return part.groupby(["reason", "block_group", "flow"], sort=False)["loss_sum"].sum().reset_index()
+
+    cur = piece(curr).rename(columns={"loss_sum": "sum"})
+    old = piece(prev).rename(columns={"loss_sum": "prev"})
+    if cur.empty and old.empty:
+        return empty
+    merged = cur.merge(old, on=["reason", "block_group", "flow"], how="outer")
+    merged["sum"] = pd.to_numeric(merged["sum"], errors="coerce").fillna(0.0)
+    merged["prev"] = pd.to_numeric(merged["prev"], errors="coerce").fillna(0.0)
+    merged["reason"] = merged["reason"].map(lambda value: _as_name(value).strip())
+    merged["block_group"] = merged["block_group"].map(_as_name)
+    merged = merged[~merged["reason"].isin(("", "nan", "None"))]
+    if merged.empty:
+        return empty
+    merged["diff"] = merged["sum"] - merged["prev"]
+    totals = merged.groupby("reason", sort=False)[["sum", "prev", "diff"]].sum()
+
+    def pick(kind):
+        series = totals["diff"]
+        winner = series.idxmax() if kind == "up" else series.idxmin()
+        diff = _f(series.loc[winner])
+        if kind == "up" and diff <= 0:
+            return None
+        if kind == "down" and diff >= 0:
+            return None
+        same = merged[(merged["reason"] == winner) & ((merged["diff"] > 0) if kind == "up" else (merged["diff"] < 0))]
+        if same.empty:
+            return None
+        spot = same.loc[same["diff"].idxmax() if kind == "up" else same["diff"].idxmin()]
+        return {
+            "reason": str(winner),
+            "diff": diff,
+            "sum": _f(totals.loc[winner, "sum"]),
+            "prev": _f(totals.loc[winner, "prev"]),
+            "block": str(spot["block_group"]),
+            "flow": _flow_code(spot["flow"]),
+        }
+
+    return {"up": pick("up"), "down": pick("down")}
+
+
 def empty_report(period):
     return {
         "empty": True,
@@ -1043,6 +1103,7 @@ def empty_report(period):
         "chart_grain": "day",
         "chart_time_missing": False,
         "flows": None,
+        "moves": {"up": None, "down": None},
     }
 
 
@@ -1145,4 +1206,5 @@ def build_report(df_curr, df_prev, period):
         "chart_grain": chart_grain,
         "chart_time_missing": chart_time_missing,
         "flows": flows,
+        "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
     }

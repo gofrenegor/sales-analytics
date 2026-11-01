@@ -90,18 +90,6 @@ function pctLabel(pct) {
   return `${value.toFixed(1)}%`;
 }
 
-function parseIso(iso) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
-  if (!match) return null;
-  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
-}
-
-function addUtcDays(date, days) {
-  const next = new Date(date.getTime());
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
 function csvCell(value) {
   const text = value == null ? "" : String(value);
   if (/[;"\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
@@ -132,8 +120,6 @@ function downloadButton(filename, header, rows) {
   }, "Скачать");
 }
 
-const HEAT_MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-
 function sparkline(values) {
   if (!values || values.length < 2) return null;
   const width = 120;
@@ -161,74 +147,43 @@ function sparkline(values) {
   return svg;
 }
 
-function moverRows() {
-  const report = state.report;
-  if (!report || !report.has_prev || !report.flows) return { up: [], down: [] };
-  const items = [];
-  for (const code of ["in", "out"]) {
-    const flow = report.flows[code];
-    if (!flow) continue;
-    for (const card of flow.cards || []) {
-      const sum = Number(card.loss_sum) || 0;
-      const prev = Number(card.prev_sum) || 0;
-      const diff = sum - prev;
-      if (!diff) continue;
-      items.push({
-        name: card.name,
-        flow: code,
-        flowTitle: code === "in" ? "входящий" : "исходящий",
-        sum,
-        prev,
-        diff,
-        growth: prev > 0 ? (diff / prev) * 100 : null,
-        pct: card.pct,
-      });
-    }
+function moverCard(item, kind) {
+  const title = kind === "up" ? "Взлёт" : "Падение";
+  if (!item || !item.reason) {
+    return el("div", { class: `mover ${kind} idle` }, el("span", { class: "mover-kicker" }, title), el("span", { class: "mover-where" }, kind === "up" ? "Нет взлёта" : "Нет падения"));
   }
-  return {
-    up: items.filter((item) => item.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 3),
-    down: items.filter((item) => item.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 3),
-  };
-}
-
-function moverColumn(title, items, kind) {
-  const col = el("div", { class: "test-col" });
-  col.append(el("h3", null, title));
-  if (!items.length) {
-    col.append(el("p", { class: "test-empty" }, kind === "up" ? "Нет взлётов" : "Нет падений"));
-    return col;
-  }
-  for (const item of items) {
-    const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
-    const pct = item.growth == null
-      ? "не было в прошлом периоде"
-      : `${item.growth > 0 ? "+" : ""}${item.growth.toFixed(1)}%`;
-    col.append(el(
-      "button",
-      {
-        type: "button",
-        class: "test-row",
-        onclick: () => go({ view: "group", flow: item.flow, group: item.name, block: "" }),
+  const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
+  const flowTitle = item.flow === "in" ? "входящий" : item.flow === "out" ? "исходящий" : "";
+  const where = [item.block, flowTitle].filter(Boolean).join(" · ");
+  return el(
+    "button",
+    {
+      type: "button",
+      class: `mover ${kind}`,
+      onclick: () => {
+        if (!item.flow || !item.block) return;
+        go({ view: "group", flow: item.flow, group: item.block, block: "" });
       },
-      el("div", { class: "test-name" }, item.name),
-      el("div", { class: "test-meta" }, `${item.flowTitle} · ${pctLabel(item.pct)} потока`),
-      el("div", { class: "test-sum" }, fmtRub(item.sum)),
-      el("div", { class: "test-meta" }, `было ${fmtRub(item.prev)}`),
-      el("div", { class: `test-delta ${kind}` }, `${money} · ${pct}`),
-    ));
-  }
-  return col;
+    },
+    el("span", { class: "mover-kicker" }, title),
+    el(
+      "span",
+      { class: "mover-line" },
+      el("span", { class: "mover-lr" }, `LR ${item.reason}`),
+      el("span", { class: "mover-delta" }, money),
+    ),
+    where ? el("span", { class: "mover-where" }, where) : null,
+  );
 }
 
 function renderMovers() {
-  const panel = el("section", { class: "test-panel", "aria-label": "тест" });
-  panel.append(el("div", { class: "test-title" }, "тест"));
+  const panel = el("section", { class: "movers", "aria-label": "Взлёты и падения" });
   if (!state.report || !state.report.has_prev) {
-    panel.append(el("p", { class: "test-empty" }, "Для этого разреза нет прошлого периода."));
+    panel.append(el("p", { class: "mover-empty" }, "Для этого разреза нет прошлого периода."));
     return panel;
   }
-  const { up, down } = moverRows();
-  panel.append(el("div", { class: "test-cols" }, moverColumn("Взлёты", up, "up"), moverColumn("Падения", down, "down")));
+  const moves = state.report.moves || {};
+  panel.append(moverCard(moves.up, "up"), moverCard(moves.down, "down"));
   return panel;
 }
 
@@ -1547,74 +1502,6 @@ function renderChart(rows, grain) {
   return el("div", null, wrap, legend);
 }
 
-function renderHeatmap(rows) {
-  const period = state.report.period || {};
-  const start = parseIso(period.start);
-  const end = parseIso(period.end);
-  if (!start || !end || end < start) return null;
-  const current = rows.filter((row) => row.period === "Текущий период");
-  const max = Math.max(1, ...current.map((row) => Number(row.sum) || 0));
-  const wrap = el("div", { class: "heat-wrap" });
-  const tip = el("div", { class: "chart-tip" });
-  tip.hidden = true;
-  const grid = el("div", { class: "heat" });
-  for (const name of ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]) grid.append(el("div", { class: "heat-head" }, name));
-  const lead = (start.getUTCDay() + 6) % 7;
-  for (let i = 0; i < lead; i += 1) grid.append(el("div", { class: "heat-pad" }));
-  const count = Math.round((end - start) / 86400000) + 1;
-  for (let index = 0; index < count; index += 1) {
-    const date = addUtcDays(start, index);
-    const day = index + 1;
-    const point = current.find((row) => row.day === day);
-    const sum = point ? Number(point.sum) || 0 : 0;
-    const heat = sum <= 0 ? 0.06 : 0.16 + 0.84 * Math.sqrt(sum / max);
-    const cell = el(
-      "button",
-      {
-        type: "button",
-        class: heat > 0.62 ? "heat-cell on" : "heat-cell",
-        style: `--heat:${heat.toFixed(3)}`,
-        title: `${fmtDate(date.toISOString().slice(0, 10))} · ${fmtRub(sum)}`,
-      },
-      el("strong", null, String(date.getUTCDate())),
-    );
-    if (date.getUTCDate() === 1 || index === 0) cell.append(el("span", null, HEAT_MON[date.getUTCMonth()]));
-    const show = () => {
-      const body = dayTip(rows, day);
-      tip.replaceChildren();
-      if (body) tip.append(body);
-      tip.hidden = !body;
-      if (!body) return;
-      const host = wrap.getBoundingClientRect();
-      const rect = cell.getBoundingClientRect();
-      tip.style.left = "0px";
-      tip.style.top = "0px";
-      let left = rect.left - host.left + rect.width + 8;
-      let top = rect.top - host.top;
-      if (left + tip.offsetWidth > host.width) left = Math.max(8, rect.left - host.left - tip.offsetWidth - 8);
-      if (top + tip.offsetHeight > host.height) top = Math.max(8, host.height - tip.offsetHeight - 8);
-      tip.style.left = `${left}px`;
-      tip.style.top = `${top}px`;
-    };
-    cell.addEventListener("pointerenter", show);
-    cell.addEventListener("focus", show);
-    cell.addEventListener("click", show);
-    grid.append(cell);
-  }
-  grid.addEventListener("pointerleave", () => { tip.hidden = true; });
-  grid.addEventListener("focusout", (event) => {
-    if (!grid.contains(event.relatedTarget)) tip.hidden = true;
-  });
-  wrap.append(grid, tip);
-  return el(
-    "div",
-    { class: "heatmap" },
-    el("h3", { class: "section-title" }, "Календарь"),
-    wrap,
-    el("p", { class: "hint" }, "Цвет клетки — сумма дня. Наведите или нажмите: те же подробности, что у графика."),
-  );
-}
-
 function empPack() {
   const data = state.employees;
   if (!data) return null;
@@ -1786,8 +1673,7 @@ function renderDashboard(screen) {
       renderChart(state.report.daily, state.report.chart_grain),
       el("p", { class: "hint" }, hint + note),
     );
-    const heat = !hourly && (state.mode === "Месяц" || state.mode === "Свободный") ? renderHeatmap(state.report.daily) : null;
-    hero.append(el("div", { class: heat ? "daily-board" : "daily-board solo" }, chartCol, heat));
+    hero.append(el("div", { class: "daily-board" }, chartCol));
   }
   screen.append(hero);
   if (dash.delta_text) screen.append(el("p", { class: "delta-line" }, `К прошлому периоду · ${dash.delta_text}`));
