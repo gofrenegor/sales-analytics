@@ -152,8 +152,9 @@ p { margin: 0.35rem 0; }
 .gate[hidden] { display: none; }
 .gate-title {
   margin: 0;
-  font-size: clamp(1.25rem, 2.4vw, 1.7rem);
+  font-size: calc(2.5 * clamp(1.25rem, 2.4vw, 1.7rem));
   font-weight: 700;
+  line-height: 1.05;
 }
 .gate-form { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; align-items: center; }
 .gate-form input {
