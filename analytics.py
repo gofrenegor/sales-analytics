@@ -3,6 +3,7 @@
 import calendar
 import math
 import os
+import re
 from datetime import date, datetime, timedelta
 from html import escape
 from zoneinfo import ZoneInfo
@@ -70,8 +71,16 @@ PLATFORMS = {b: [n for n, v in BLOCK_MAPPING.items() if v == b] for b in ALL_BLO
 COLS = [
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
+    "status_employee_id",
     "flow", "process_stage", "block_group",
 ]
+# Полная выгрузка: бейджик исполнителя лежит в колонке AC.
+EMPLOYEE_COL_INDEX = 28
+EMPLOYEE_HEADERS = (
+    "id сотрудника статуса перед списан",
+    "id сотрудника статуса перед списанием",
+    "id сотрудника",
+)
 
 GROUP_PROMPTS = {
     "stages": "Выберите этап для детализации:",
@@ -343,6 +352,7 @@ def _strip_tz(series):
 def process_excel(file):
     df = pd.read_excel(file, engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip()
+    employee = _employee_raw(df)
     cols_map = {
         "ШК": "barcode",
         "Наименование блока": "block_name",
@@ -373,6 +383,10 @@ def process_excel(file):
     if "office_id" in df.columns:
         raw = df["office_id"]
         df["office_id"] = raw.astype(str).str.replace(r"\.0$", "", regex=True).str.strip().where(raw.notna(), None)
+    if employee is not None:
+        df["status_employee_id"] = employee.map(badge_id)
+    elif "status_employee_id" in df.columns:
+        df["status_employee_id"] = df["status_employee_id"].map(badge_id)
     return df
 
 
@@ -402,6 +416,10 @@ def prepare_losses(df):
     for col in ("block_id", "office_id", "status_block_id", "reason", "block_name", "status_before"):
         if col not in df.columns:
             df[col] = None
+    if "status_employee_id" not in df.columns:
+        df["status_employee_id"] = ""
+    else:
+        df["status_employee_id"] = df["status_employee_id"].map(badge_id)
     if "loss_sum" not in df.columns:
         df["loss_sum"] = 0
     if "loss_qty" not in df.columns:
@@ -415,6 +433,65 @@ def prepare_losses(df):
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
     return classify_losses(df)
+
+
+def badge_id(value):
+    """Цифры бейджика. Пустое, NaN и «12345.0» из Excel -> «12345» или «»."""
+    try:
+        missing = value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return ""
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+    text = str(value).strip()
+    if text.lower() in {"", "nan", "none", "nat", "<na>"}:
+        return ""
+    if re.fullmatch(r"-?\d+\.0+", text):
+        text = text.split(".")[0]
+    return re.sub(r"\D", "", text)
+
+
+def plain_code(value):
+    """ШК текстом без хвоста «.0»."""
+    try:
+        missing = value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return ""
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ""
+        if value.is_integer():
+            return str(int(value))
+    text = str(value).strip()
+    if text.lower() in {"nan", "none", "nat", "<na>"}:
+        return ""
+    if re.fullmatch(r"\d+\.0+", text):
+        return text.split(".")[0]
+    return text
+
+
+def _employee_raw(df):
+    """Серия бейджика до обрезки колонок.
+
+    В полной выгрузке бейджик — колонка AC. Если заголовок AC про сотрудника
+    или отдельного заголовка нет, берём AC. Иначе — известный заголовок.
+    """
+    folded = {str(col).strip().lower(): col for col in df.columns}
+    named = next((folded[name] for name in EMPLOYEE_HEADERS if name in folded), None)
+    if df.shape[1] > EMPLOYEE_COL_INDEX:
+        ac_name = str(df.columns[EMPLOYEE_COL_INDEX]).strip().lower()
+        if named is None or ac_name in EMPLOYEE_HEADERS or "сотруд" in ac_name:
+            return df.iloc[:, EMPLOYEE_COL_INDEX]
+    if named is not None:
+        return df[named]
+    return None
 
 
 def _leading_id(series):
@@ -893,6 +970,45 @@ def build_quality(curr, other_curr):
     }
 
 
+def build_employees(df):
+    """LR 5 по бейджику. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса."""
+    if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
+        return []
+    part = df[df["reason"].astype(str) == "5"]
+    if part.empty:
+        return []
+    part = part.copy()
+    if "status_employee_id" not in part.columns:
+        part["status_employee_id"] = ""
+    else:
+        part["status_employee_id"] = part["status_employee_id"].map(badge_id)
+    if "barcode" not in part.columns:
+        part["barcode"] = ""
+    if "status_before" not in part.columns:
+        part["status_before"] = ""
+    rows = []
+    for badge, group in part.groupby("status_employee_id", sort=False):
+        items = []
+        for rec in group[["barcode", "loss_sum", "status_before"]].itertuples(index=False):
+            is_wmi = str(rec.status_before) == "WMI"
+            items.append({
+                "barcode": plain_code(rec.barcode),
+                "sum": _f(rec.loss_sum),
+                "wmi": is_wmi,
+            })
+        items.sort(key=lambda item: (-item["sum"], item["barcode"]))
+        badge_text = str(badge or "")
+        rows.append({
+            "badge": badge_text,
+            "losses": int(len(group)),
+            "sum": _f(group["loss_sum"].sum()),
+            "wmi": any(item["wmi"] for item in items),
+            "items": items,
+        })
+    rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
+    return rows
+
+
 def empty_report(period):
     return {
         "empty": True,
@@ -905,6 +1021,7 @@ def empty_report(period):
         "chart_grain": "day",
         "chart_time_missing": False,
         "flows": None,
+        "employees": [],
     }
 
 
@@ -1007,4 +1124,5 @@ def build_report(df_curr, df_prev, period):
         "chart_grain": chart_grain,
         "chart_time_missing": chart_time_missing,
         "flows": flows,
+        "employees": build_employees(df_curr),
     }

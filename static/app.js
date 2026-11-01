@@ -10,12 +10,16 @@ const state = {
   group: "",
   block: "",
   report: null,
+  badgeDraft: "",
+  badgeQuery: "",
+  employeeOpen: null,
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
 const DEFAULT_YEAR = "2026";
+const VIEWS = ["dashboard", "flow", "group", "block_detail", "employees"];
 
-const VIEW_DEPTH = { dashboard: 0, flow: 1, group: 2, block_detail: 3 };
+const VIEW_DEPTH = { dashboard: 0, employees: 0, flow: 1, group: 2, block_detail: 3 };
 let screenMotion = "";
 let animating = 0;
 
@@ -53,6 +57,15 @@ function fmtInt(value) {
 
 function fmtRub(value) {
   return `${fmtInt(value)} ₽`;
+}
+
+function lossLabel(count) {
+  const n = Math.abs(Number(count) || 0) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return "потерь";
+  if (n1 === 1) return "потеря";
+  if (n1 >= 2 && n1 <= 4) return "потери";
+  return "потерь";
 }
 
 function fmtDate(iso) {
@@ -300,10 +313,15 @@ function readUrl() {
   if (rangeStart) state.rangeStart = rangeStart;
   if (rangeEnd) state.rangeEnd = rangeEnd;
   const view = params.get("view");
-  state.view = ["dashboard", "flow", "group", "block_detail"].includes(view) ? view : "dashboard";
+  state.view = VIEWS.includes(view) ? view : "dashboard";
   state.flow = params.get("flow") || "";
   state.group = params.get("group") || "";
   state.block = params.get("block") || "";
+  if (state.view === "employees") {
+    state.flow = "";
+    state.group = "";
+    state.block = "";
+  }
   if (!params.get("view") && (state.flow === "in" || state.flow === "out")) state.view = "flow";
   if ((state.view === "flow" || state.view === "group" || state.view === "block_detail") && !["in", "out"].includes(state.flow)) {
     state.view = "dashboard";
@@ -321,10 +339,14 @@ function writeUrl(push) {
   } else if (state.anchor) {
     params.set("anchor", state.anchor);
   }
-  if (state.view && state.view !== "dashboard") params.set("view", state.view);
-  if (state.flow) params.set("flow", state.flow);
-  if (state.group) params.set("group", state.group);
-  if (state.block) params.set("block", state.block);
+  if (state.view === "employees") {
+    params.set("view", "employees");
+  } else {
+    if (state.view && state.view !== "dashboard") params.set("view", state.view);
+    if (state.flow) params.set("flow", state.flow);
+    if (state.group) params.set("group", state.group);
+    if (state.block) params.set("block", state.block);
+  }
   const url = `/?${params.toString()}`;
   if (push) history.pushState(null, "", url);
   else history.replaceState(null, "", url);
@@ -342,9 +364,16 @@ function go(patch, push = true) {
   const prevDepth = VIEW_DEPTH[state.view] ?? 0;
   const prevKey = viewKey();
   Object.assign(state, patch);
+  if (state.view === "employees") {
+    state.flow = "";
+    state.group = "";
+    state.block = "";
+  }
   if (viewKey() !== prevKey) {
     const nextDepth = VIEW_DEPTH[state.view] ?? 0;
-    screenMotion = nextDepth < prevDepth ? "back" : "forward";
+    if (nextDepth < prevDepth) screenMotion = "back";
+    else if (nextDepth > prevDepth) screenMotion = "forward";
+    else screenMotion = "";
   }
   writeUrl(push);
   render();
@@ -1525,6 +1554,121 @@ function renderHeatmap(rows) {
   );
 }
 
+function empKey(row) {
+  return row.badge ? String(row.badge) : "—";
+}
+
+function renderEmployees(screen) {
+  const report = state.report;
+  const all = (report && report.employees) || [];
+  const query = String(state.badgeQuery || "").replace(/\D/g, "");
+  const rows = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
+  const shownLosses = rows.reduce((sum, row) => sum + (Number(row.losses) || 0), 0);
+  const shownSum = rows.reduce((sum, row) => sum + (Number(row.sum) || 0), 0);
+  const input = el("input", {
+    id: "badge-search",
+    type: "search",
+    inputmode: "numeric",
+    placeholder: "Бейджик",
+    autocomplete: "off",
+    enterkeyhint: "search",
+    value: state.badgeDraft || "",
+    "aria-label": "Поиск по бейджику",
+    oninput: (event) => { state.badgeDraft = event.target.value; },
+  });
+  const form = el("form", {
+    class: "badge-search",
+    onsubmit: (event) => {
+      event.preventDefault();
+      state.badgeQuery = String(state.badgeDraft || "").replace(/\D/g, "");
+      state.badgeDraft = state.badgeQuery;
+      state.employeeOpen = null;
+      render();
+    },
+  }, input, el("button", { type: "submit", class: "primary" }, "Найти"));
+  if (state.badgeQuery) {
+    form.append(el("button", {
+      type: "button",
+      class: "ghost",
+      onclick: () => {
+        state.badgeQuery = "";
+        state.badgeDraft = "";
+        state.employeeOpen = null;
+        render();
+      },
+    }, "Сброс"));
+  }
+  screen.append(
+    el("div", { class: "screen-head" }, el("h2", null, "Сотрудники")),
+    el("p", { class: "hint" }, "Тест: только LR 5. Сверху — у кого больше потерь. Красный «!» — среди потерь есть статус WMI. Нажмите строку: ШК и сумма каждой потери."),
+    form,
+  );
+  if (freeRangePending()) {
+    screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
+    return;
+  }
+  if (!report) {
+    screen.append(el("p", { class: "hint" }, "Загрузка…"));
+    return;
+  }
+  if (report.empty) {
+    screen.append(el("p", { class: "box warn" }, "⚠️ Нет данных за этот период."));
+    return;
+  }
+  screen.append(
+    el("div", { class: "sub" }, query ? `Найдено бейджиков: ${fmtInt(rows.length)}` : `Бейджиков: ${fmtInt(rows.length)}`),
+    el("div", { class: "big-sum" }, fmtRub(shownSum)),
+    el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
+  );
+  if (!all.length) {
+    screen.append(el("p", { class: "box warn" }, "Нет потерь LR 5 за этот период."));
+    return;
+  }
+  if (all.length && all.every((row) => !row.badge)) {
+    screen.append(el("p", { class: "hint" }, "Бейджики пустые. ID сотрудника берётся из колонки AC выгрузки. Если файл заливали без этой колонки — загрузите период ещё раз."));
+  }
+  if (!rows.length) {
+    screen.append(el("p", { class: "box warn" }, "Такой бейджик не найден."));
+    return;
+  }
+  const list = el("div", { class: "emp-list" });
+  for (const row of rows) {
+    const key = empKey(row);
+    const open = state.employeeOpen === key;
+    const label = row.badge ? String(row.badge) : "не указан";
+    const card = el("div", { class: open ? "emp-card open" : "emp-card" });
+    card.append(el(
+      "button",
+      {
+        type: "button",
+        class: "emp-row",
+        "aria-expanded": open ? "true" : "false",
+        onclick: () => {
+          state.employeeOpen = open ? null : key;
+          render();
+        },
+      },
+      el("span", { class: "emp-badge" }, label),
+      el("span", { class: "emp-losses" }, `${fmtInt(row.losses)} ${lossLabel(row.losses)}`),
+      el("span", { class: "emp-sum" }, fmtRub(row.sum)),
+      row.wmi
+        ? el("span", { class: "emp-bang", title: "Есть потеря после статуса WMI" }, "!")
+        : el("span", { class: "emp-bang idle", "aria-hidden": "true" }, "!"),
+    ));
+    if (open) {
+      const drop = el("div", { class: "emp-drop" });
+      for (const item of row.items || []) {
+        const code = el("span", { class: "code" }, item.barcode || "—");
+        if (item.wmi) code.append(el("span", { class: "wmi", title: "Статус перед списанием — WMI" }, "!"));
+        drop.append(el("div", { class: "emp-shk" }, code, el("b", null, fmtRub(item.sum))));
+      }
+      card.append(drop);
+    }
+    list.append(card);
+  }
+  screen.append(list);
+}
+
 function renderDashboard(screen) {
   const dash = state.report.dashboard;
   const hero = el("div", { class: "hero" });
@@ -1704,6 +1848,10 @@ function renderScreen() {
 
 function fillScreen(screen) {
   const report = state.report;
+  if (state.view === "employees") {
+    renderEmployees(screen);
+    return;
+  }
   if (freeRangePending()) {
     screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
     return;
@@ -1776,7 +1924,18 @@ function presentScreen(pane) {
   }
 }
 
+function syncSections() {
+  const employees = state.view === "employees";
+  const losses = document.getElementById("section-losses");
+  const staff = document.getElementById("section-employees");
+  if (losses) losses.setAttribute("aria-pressed", employees ? "false" : "true");
+  if (staff) staff.setAttribute("aria-pressed", employees ? "true" : "false");
+  const search = document.querySelector("header .search");
+  if (search) search.hidden = employees;
+}
+
 function render() {
+  syncSections();
   renderNotes();
   renderQuality();
   renderScreen();
@@ -2090,6 +2249,14 @@ function wireSearch() {
 function wireChrome() {
   wireAdminPanel();
   wireSearch();
+  document.getElementById("section-losses")?.addEventListener("click", () => {
+    if (state.view !== "employees") return;
+    go({ view: "dashboard", flow: "", group: "", block: "" });
+  });
+  document.getElementById("section-employees")?.addEventListener("click", () => {
+    if (state.view === "employees") return;
+    go({ view: "employees", flow: "", group: "", block: "" });
+  });
   document.getElementById("theme")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
@@ -2114,7 +2281,9 @@ function wireChrome() {
     syncForm(true);
     if (viewKey() !== prevKey) {
       const nextDepth = VIEW_DEPTH[state.view] ?? 0;
-      screenMotion = nextDepth < prevDepth ? "back" : nextDepth > prevDepth ? "forward" : "back";
+      if (nextDepth < prevDepth) screenMotion = "back";
+      else if (nextDepth > prevDepth) screenMotion = "forward";
+      else screenMotion = "";
     }
     if (period !== periodKey()) {
       if (freeRangePending()) {

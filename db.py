@@ -24,6 +24,7 @@ CACHE_TTL = 3600
 READ_COLUMNS = (
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
+    "status_employee_id",
 )
 WRITE_COLUMNS = READ_COLUMNS + ("status_employee_id",)
 

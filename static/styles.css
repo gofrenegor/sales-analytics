@@ -182,6 +182,94 @@ main {
   padding-right: 3.5rem;
 }
 .top h1 { flex: 1; margin: 0; }
+.sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 0.15rem 0 0.7rem; }
+.sections button {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  min-height: 2.2rem;
+  padding: 0.2rem 0.95rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.sections button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
+.badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.2rem 0 0.9rem; }
+.badge-search input {
+  flex: 1 1 12rem;
+  height: 40px;
+  padding: 0 12px;
+  background: var(--card);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+}
+.badge-search input:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-dim);
+}
+.badge-search button.primary { padding: 0 1.15rem; }
+.emp-list { display: flex; flex-direction: column; gap: 8px; }
+.emp-card { min-width: 0; }
+.emp-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto 1.5rem;
+  align-items: center;
+  gap: 8px 12px;
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-height: 3.1rem;
+}
+.emp-row:hover { background: var(--card-hover); }
+.emp-card.open .emp-row {
+  border-color: var(--blue);
+  border-radius: 12px 12px 0 0;
+}
+.emp-badge {
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  background: var(--blue-dim);
+  color: var(--blue-ink);
+  border-radius: 999px;
+  padding: 0.2rem 0.7rem;
+}
+.emp-losses { color: var(--muted); }
+.emp-sum { font-weight: 750; font-variant-numeric: tabular-nums; }
+.emp-bang {
+  color: var(--red);
+  font-weight: 800;
+  font-size: 1.35rem;
+  line-height: 1;
+  text-align: center;
+}
+.emp-bang.idle { visibility: hidden; }
+.emp-drop {
+  border: 1px solid var(--blue);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  background: var(--card);
+  padding: 2px 12px 8px;
+}
+.emp-shk {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+.emp-shk:last-child { border-bottom: 0; }
+.emp-shk .code { min-width: 0; overflow-wrap: anywhere; }
+.emp-shk .wmi { color: var(--red); font-weight: 800; margin-left: 8px; }
+.emp-shk b { flex: 0 0 auto; font-weight: 700; }
 .sr {
   position: absolute;
   width: 1px;
