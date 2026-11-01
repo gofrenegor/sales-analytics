@@ -11,9 +11,8 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, File, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse, Response
-from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -69,12 +68,9 @@ def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
 
 
-def _ready_response(body, packed, request):
-    headers = {"Vary": "Accept-Encoding"}
-    if packed and "gzip" in request.headers.get("accept-encoding", "").lower():
-        headers["Content-Encoding"] = "gzip"
-        return Response(content=packed, media_type="application/json", headers=headers)
-    return Response(content=body, media_type="application/json", headers=headers)
+def _ready_response(body):
+    """Тело без gzip. Прокси перед сайтом на уже сжатом ответе отдаёт HTML-страницу ошибки."""
+    return Response(content=body, media_type="application/json")
 
 
 def actor(access_id: str | None = Cookie(default=None)):
@@ -124,7 +120,6 @@ async def lifespan(_app):
 
 
 app = FastAPI(title="Аналитика списаний", lifespan=lifespan, default_response_class=JsonBody)
-app.add_middleware(GZipMiddleware, minimum_size=800)
 
 
 @app.get("/api/health")
@@ -227,21 +222,21 @@ def _period(mode, anchor, start, end):
         return None, fail(500, db.public_error(exc))
 
 
-def _cached_json(kind, period, build, request):
+def _cached_json(kind, period, build):
     key = db.ready_key(kind, period)
     cached = db.get_ready(key)
     if cached is not None:
-        return _ready_response(cached[0], cached[1], request)
+        return _ready_response(cached)
     generation = db.cache_generation()
     try:
         payload = build(period)
+        body = db.put_ready(key, payload, generation)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     except Exception as exc:
         log.exception(kind)
         return fail(500, db.public_error(exc))
-    body, packed = db.put_ready(key, payload, generation)
-    return _ready_response(body, packed, request)
+    return _ready_response(body)
 
 
 def _report_payload(period):
@@ -272,7 +267,6 @@ def _employee_items_payload(period, badge, lr):
 
 @app.get("/api/report")
 def report(
-    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -285,12 +279,11 @@ def report(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("report", period, _report_payload, request)
+    return _cached_json("report", period, _report_payload)
 
 
 @app.get("/api/employees")
 def employees(
-    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -303,12 +296,11 @@ def employees(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employees", period, _employees_payload, request)
+    return _cached_json("employees", period, _employees_payload)
 
 
 @app.get("/api/employees/items")
 def employee_items(
-    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -332,17 +324,17 @@ def employee_items(
     key = db.ready_key("employee-items", period) + (badge, lr)
     cached = db.get_ready(key)
     if cached is not None:
-        return _ready_response(cached[0], cached[1], request)
+        return _ready_response(cached)
     generation = db.cache_generation()
     try:
         payload = _employee_items_payload(period, badge, lr)
+        body = db.put_ready(key, payload, generation)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     except Exception as exc:
         log.exception("employee-items")
         return fail(500, db.public_error(exc))
-    body, packed = db.put_ready(key, payload, generation)
-    return _ready_response(body, packed, request)
+    return _ready_response(body)
 
 
 @app.post("/api/admin/cache/clear")

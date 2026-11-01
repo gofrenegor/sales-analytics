@@ -1177,7 +1177,7 @@ async function loadEmpDetail(lr, badge) {
     params.set("lr", lr);
     params.set("badge", badge || "");
     const response = await fetch(`/api/employees/items?${params.toString()}`);
-    const data = await response.json();
+    const data = await parseJson(response);
     if (seq !== empDetailSeq) return;
     if (response.status === 401) {
       state.empOpen = "";
@@ -1209,7 +1209,7 @@ async function loadEmployees() {
   if (state.view === "employees") render();
   try {
     const response = await fetch(`/api/employees?${periodParams().toString()}`);
-    const data = await response.json();
+    const data = await parseJson(response);
     if (seq !== employeesSeq) return;
     if (response.status === 401) {
       state.employeesLoading = false;
@@ -1238,7 +1238,7 @@ async function loadReport(options = {}) {
   setBanner("");
   try {
     const response = await fetch(`/api/report?${periodParams().toString()}`);
-    const data = await response.json();
+    const data = await parseJson(response);
     if (seq !== loadSeq) return;
     if (response.status === 401) {
       showGate();
@@ -2144,8 +2144,21 @@ function renderSummary(summary) {
   }
 }
 
+async function parseJson(response) {
+  const text = await response.text();
+  const start = text.trimStart();
+  if (!start || start[0] === "<") {
+    throw new Error("Сервер вернул страницу ошибки вместо данных");
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error("Сервер вернул не данные");
+  }
+}
+
 async function readJson(response) {
-  const data = await response.json();
+  const data = await parseJson(response);
   if (!response.ok) throw new Error(data.error || "Ошибка");
   return data;
 }
@@ -2737,7 +2750,7 @@ async function openApp() {
   setStatus("Загрузка…");
   try {
     const response = await fetch("/api/bootstrap");
-    const data = await response.json();
+    const data = await parseJson(response);
     if (response.status === 401) {
       showGate();
       return;
