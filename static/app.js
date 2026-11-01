@@ -114,67 +114,7 @@ function downloadButton(filename, header, rows) {
   }, "Скачать");
 }
 
-const PARETO_COLORS = ["#4C9AFF", "#3fb950", "#c4b5fd", "#e3b341", "#ff7b72", "#79c0ff", "#d2a8ff", "#ffa657"];
 const HEAT_MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-
-function paretoModel(rows) {
-  const clean = (rows || []).filter((row) => Number(row.sum) > 0 && !row.rest);
-  if (!clean.length) return null;
-  const named = [];
-  let cum = 0;
-  for (const row of clean) {
-    if (cum >= 80 && named.length) break;
-    named.push(row);
-    cum += Number(row.pct) || 0;
-    if (named.length >= 8) break;
-  }
-  const namedPct = named.reduce((sum, row) => sum + (Number(row.pct) || 0), 0);
-  return {
-    named,
-    restPct: Math.max(0, 100 - namedPct),
-    count: named.length,
-    caption: pctLabel(namedPct),
-  };
-}
-
-function renderPareto(rows) {
-  const model = paretoModel(rows);
-  if (!model) return null;
-  const bar = el("div", {
-    class: "pareto",
-    role: "img",
-    "aria-label": `${model.count} LR = ${model.caption} суммы`,
-  });
-  model.named.forEach((row, index) => {
-    const seg = el("i", { style: `flex:${Math.max(Number(row.pct) || 0, 0.4)} 1 0;background:${PARETO_COLORS[index % PARETO_COLORS.length]}` });
-    seg.title = `LR ${row.reason} · ${pctLabel(row.pct)} · ${fmtRub(row.sum)}`;
-    bar.append(seg);
-  });
-  if (model.restPct > 0.05) {
-    const rest = el("i", { class: "pareto-rest", style: `flex:${Math.max(model.restPct, 0.4)} 1 0` });
-    rest.title = `остальные · ${pctLabel(model.restPct)}`;
-    bar.append(rest);
-  }
-  const legend = el("div", { class: "pareto-legend" });
-  model.named.forEach((row, index) => {
-    legend.append(el(
-      "span",
-      null,
-      el("i", { style: `background:${PARETO_COLORS[index % PARETO_COLORS.length]}` }),
-      `LR ${row.reason} ${pctLabel(row.pct)}`,
-    ));
-  });
-  if (model.restPct > 0.05) {
-    legend.append(el("span", null, el("i", { class: "pareto-rest" }), `остальные ${pctLabel(model.restPct)}`));
-  }
-  return el(
-    "div",
-    { class: "pareto-block" },
-    el("p", { class: "pareto-caption" }, `${model.count} LR = ${model.caption} суммы`),
-    bar,
-    legend,
-  );
-}
 
 function sparkline(values) {
   if (!values || values.length < 2) return null;
@@ -1750,8 +1690,6 @@ function renderDetail(screen) {
   const delta = deltaNode(detail.delta_text);
   if (delta) screen.append(delta);
   screen.append(el("hr"));
-  const pareto = renderPareto(detail.rows);
-  if (pareto) screen.append(pareto);
   if (detail.excluded_sum != null) {
     screen.append(el("p", { class: "hint" }, `ℹ️ Не включено: ${fmtRub(detail.excluded_sum)} со статусами вне потоков (какие именно — в админке, вкладка «Инфо»).`));
   }

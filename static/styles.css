@@ -1028,26 +1028,6 @@ button.quiet {
   margin-top: 0.15rem;
 }
 button.quiet:hover { color: var(--text); border-color: var(--blue); }
-.pareto-block { margin: 0.2rem 0 0.8rem; }
-.pareto-caption { margin: 0 0 8px; font-weight: 750; }
-.pareto {
-  display: flex;
-  height: 16px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(128, 128, 128, 0.16);
-}
-.pareto i { display: block; min-width: 3px; height: 100%; }
-.pareto-rest { background: rgba(128, 128, 128, 0.45); }
-.pareto-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 8px; font-size: 12.5px; color: var(--muted); }
-.pareto-legend i {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 6px;
-  border-radius: 99px;
-  vertical-align: middle;
-}
 .daily-board {
   grid-area: daily;
   display: grid;
