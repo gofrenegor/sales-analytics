@@ -41,7 +41,7 @@ systemctl restart sales-analytics
 ## Файлы
 
 - `server.py` — HTTP. `GET /`, `GET /api/health`, `GET /api/bootstrap`, `GET /api/report`, админка: `POST /api/admin/cache/clear`, `GET /api/admin/summary`, `POST /api/admin/preview`, `POST /api/admin/commit`, `POST /api/admin/truncate`.
-- `analytics.py` — периоды, классификация, отчёт. Режимы: `День`, `Неделя`, `Месяц`, `Свободный` (`MODES`, потолок `FREE_MAX_DAYS` = 366). `compute_period` / `compute_free_period` считают окно. `classify_losses` раскладывает строки. `build_report` собирает ответ. Справочники: `BLOCK_MAPPING`, `STAGE_MAPPING`, `INBOUND_STATUSES`, `OUTBOUND_STATUSES`, `OPERKA_STATUSES`, `ASSEMBLY_LR`, `DEFECT_STATUSES`.
+- `analytics.py` — периоды, классификация, отчёт. Режимы: `День`, `Неделя`, `Месяц`, `Свободный` (`MODES`, потолок `FREE_MAX_DAYS` = 366). `compute_period` / `compute_free_period` считают окно. `classify_losses` раскладывает строки. `build_report` собирает ответ. Справочники: `BLOCK_MAPPING`, `STAGE_MAPPING`, `INBOUND_STATUSES`, `OUTBOUND_STATUSES`, `OPERKA_STATUSES`, `ASSEMBLY_LR`, `DEFECT_STATUSES`, `STATUS_FORCE_LR`, `PLACE_BY_BLOCK_ID`. ORS → LR 5, сборка, блок по «ID блока». RNR → LR 27, вход, блок по «ID блока». SMS → вход, блок как обычно. OSS → вход, блок по «ID блока».
 - `db.py` — движок, схема `losses` (таблицу не пересоздаёт, только добавляет колонки), `load_cached`, `get_summary`, `replace_period`, `truncate_losses`.
 - `static/index.html` — каркас страницы.
 - `static/app.js` — состояние, URL, загрузка отчёта, экраны.

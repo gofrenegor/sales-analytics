@@ -16,6 +16,7 @@ FREE_MAX_DAYS = 366
 INBOUND_STATUSES = [
     "ANV", "EPR", "IPS", "ORG", "PVP", "RGP", "RNP", "RSP", "RWP", "TWR",
     "WDC", "WWE", "WIJ", "WPT", "WPU", "SGR",
+    "RNR", "SMS", "OSS",
 ]
 OUTBOUND_STATUSES = [
     "GWS", "IKZ", "IPG", "ISB", "LAM", "LIO", "LIP", "LPG", "LSS", "OPS",
@@ -38,6 +39,10 @@ STAGE_MAPPING = {
 }
 OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
+# Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
+STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
+# Блок этих статусов — «ID блока» места списания, не офис и не блок статуса.
+PLACE_BY_BLOCK_ID = frozenset({"ORS", "RNR", "OSS"})
 OPERKA_BLOCK_ID = "6800"
 PICKMISS_GROUP = "Пропуск сборки товара на блоке"
 FOREIGN_GROUP = "Другие логобъекты"
@@ -425,16 +430,26 @@ def classify_losses(df):
     """flow, process_stage, block_group.
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
-    Приоритет блока, от слабого к сильному: свой блок по названию места списания,
-    оперка, чужой ЛО, брак. LR сборки не попадает ни в оперку, ни в брак:
-    исход и блок места потери.
+    ORS всегда LR 5: исходящий поток, этап «Сборка». RNR всегда LR 27: вход.
+    SMS и OSS — вход. У ORS, RNR и OSS блок берётся из «ID блока»:
+    свой диапазон остаётся на названии места, чужой ID — «Другие логобъекты».
+    Офис, оперка и брак для них не перебивают блок.
+    Приоритет блока у остальных, от слабого к сильному: свой блок по названию
+    места списания, оперка, чужой ЛО, брак. LR сборки не попадает ни в оперку,
+    ни в брак: исход и блок места потери.
     """
     df = df.copy()
+    forced_lr = df["status_before"].map(STATUS_FORCE_LR)
+    hit = forced_lr.notna()
+    df.loc[hit, "reason"] = forced_lr.loc[hit]
+    by_block_id = df["status_before"].isin(PLACE_BY_BLOCK_ID)
+
     df["flow"] = "Другое"
     df.loc[df["status_before"].isin(INBOUND_STATUSES), "flow"] = "Входящий поток"
     df.loc[df["status_before"].isin(OUTBOUND_STATUSES), "flow"] = "Исходящий поток"
-    is_assembly = df["reason"].isin(ASSEMBLY_LR)
-    is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly
+    forced_in = df["status_before"].isin(("RNR", "SMS", "OSS"))
+    is_assembly = (df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")) & ~forced_in
+    is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
 
@@ -444,12 +459,19 @@ def classify_losses(df):
 
     own = df["block_name"].map(BLOCK_MAPPING)
     b_id = _leading_id(df["status_block_id"])
-    is_operka = df["status_before"].isin(OPERKA_STATUSES) & (b_id == OPERKA_BLOCK_ID) & ~is_assembly
+    is_operka = (
+        df["status_before"].isin(OPERKA_STATUSES)
+        & (b_id == OPERKA_BLOCK_ID)
+        & ~is_assembly
+        & ~by_block_id
+    )
     loss_blk = pd.to_numeric(_leading_id(df["block_id"]), errors="coerce")
     off = df["office_id"].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     foreign_blk = loss_blk.notna() & ((loss_blk < OWN_BLOCK_RANGE[0]) | (loss_blk > OWN_BLOCK_RANGE[1]))
     foreign_off = (off != "") & (off.str.lower() != "nan") & (off != OWN_OFFICE_ID)
     is_foreign = foreign_blk | foreign_off | (loss_blk.isna() & (off == "") & own.isna())
+    foreign_by_id = foreign_blk | (loss_blk.isna() & own.isna())
+    is_foreign = is_foreign.mask(by_block_id, foreign_by_id)
     df["block_group"] = (
         own.fillna(UNMAPPED_GROUP)
         .mask(is_operka, "Опер площадь")

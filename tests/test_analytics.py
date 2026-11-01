@@ -63,12 +63,44 @@ def row(**overrides):
             "Исходящий поток",
             "Рязань Тюшевское 1",
         ),
+        (
+            {"status_before": "ORS", "reason": "12", "status_block_id": "6800"},
+            "Исходящий поток",
+            "Рязань Тюшевское 1",
+        ),
+        (
+            {"status_before": "ORS", "block_id": "100", "office_id": "301760"},
+            "Исходящий поток",
+            FOREIGN_GROUP,
+        ),
+        ({"status_before": "ORS", "office_id": "999"}, "Исходящий поток", "Рязань Тюшевское 1"),
+        (
+            {"status_before": "RNR", "reason": "3", "status_block_id": "6800"},
+            "Входящий поток",
+            "Рязань Тюшевское 1",
+        ),
+        ({"status_before": "SMS", "office_id": "999"}, "Входящий поток", FOREIGN_GROUP),
+        ({"status_before": "OSS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
+        ({"status_before": "OSS", "block_id": "50"}, "Входящий поток", FOREIGN_GROUP),
+        ({"status_before": "SMS", "reason": "5"}, "Входящий поток", "Рязань Тюшевское 1"),
     ],
 )
 def test_classify(overrides, flow, group):
     frame = prepare_losses(pd.DataFrame([row(**overrides)]))
     assert frame.loc[0, "flow"] == flow
     assert frame.loc[0, "block_group"] == group
+
+
+def test_forced_status_lr():
+    ors = prepare_losses(pd.DataFrame([row(status_before="ors", reason="12", status_block_id="6800")]))
+    assert ors.loc[0, "reason"] == "5"
+    assert ors.loc[0, "process_stage"] == "Сборка"
+    assert ors.loc[0, "flow"] == "Исходящий поток"
+    rnr = prepare_losses(pd.DataFrame([row(status_before="RNR", reason="9", status_block_id="6800")]))
+    assert rnr.loc[0, "reason"] == "27"
+    assert rnr.loc[0, "flow"] == "Входящий поток"
+    assert rnr.loc[0, "process_stage"] == "Другое"
+    assert rnr.loc[0, "block_group"] == "Рязань Тюшевское 1"
 
 
 def test_operka_stage():
