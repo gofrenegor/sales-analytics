@@ -168,7 +168,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     outer, inner, outset = r + sw / 2, r - sw / 2, 8
     hit_r = (outer + outset + inner) / 2
     hit_sw = outer + outset - inner
-    gap = 5.0 if in_pct > 1 and out_pct > 1 else 0.0
+    gap = 4.0 if in_pct > 1 and out_pct > 1 else 0.0
 
     def span_of(pct):
         raw = pct / 100 * 360
