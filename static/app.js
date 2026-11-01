@@ -176,6 +176,89 @@ function moverCard(item, kind) {
   );
 }
 
+function blockMoves() {
+  const report = state.report;
+  if (!report || !report.has_prev || !report.flows) return { up: [], down: [] };
+  const items = [];
+  for (const code of ["in", "out"]) {
+    const flow = report.flows[code];
+    if (!flow) continue;
+    for (const card of flow.cards || []) {
+      const sum = Number(card.loss_sum) || 0;
+      const prev = Number(card.prev_sum) || 0;
+      const diff = sum - prev;
+      if (!diff) continue;
+      items.push({
+        name: card.name,
+        flow: code,
+        flowTitle: code === "in" ? "входящий" : "исходящий",
+        diff,
+      });
+    }
+  }
+  return {
+    up: items.filter((item) => item.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 5),
+    down: items.filter((item) => item.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 5),
+  };
+}
+
+function moverBlockRow(item, kind, index) {
+  const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
+  return el(
+    "button",
+    {
+      type: "button",
+      class: "mover-block",
+      onclick: () => go({ view: "group", flow: item.flow, group: item.name, block: "" }),
+    },
+    el("span", { class: "mover-block-rank" }, String(index + 1)),
+    el("span", { class: "mover-block-name" }, item.name),
+    el("span", { class: "mover-block-meta" }, item.flowTitle),
+    el("span", { class: "mover-block-delta" }, money),
+  );
+}
+
+function moverColumn(item, kind, blocks) {
+  const col = el("div", { class: `mover-col ${kind}` });
+  col.append(moverCard(item, kind));
+  if (!blocks.length) return col;
+  const fold = el("div", { class: "mover-fold", inert: "" });
+  const inner = el("div", { class: "mover-fold-inner" });
+  blocks.forEach((block, index) => inner.append(moverBlockRow(block, kind, index)));
+  fold.append(inner);
+  col.append(el("p", { class: "mover-more" }, `топ-${blocks.length}`), fold);
+  return col;
+}
+
+function bindMoverCols(panel) {
+  const fine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  panel.querySelectorAll(".mover-col").forEach((col) => {
+    const fold = col.querySelector(".mover-fold");
+    if (!fold) return;
+    const setOpen = (open) => {
+      col.classList.toggle("is-open", open);
+      col.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) fold.removeAttribute("inert");
+      else fold.setAttribute("inert", "");
+    };
+    if (!fine) {
+      setOpen(true);
+      return;
+    }
+    setOpen(false);
+    col.addEventListener("pointerenter", () => setOpen(true));
+    col.addEventListener("pointerleave", () => {
+      const active = document.activeElement;
+      if (active && col.contains(active)) return;
+      setOpen(false);
+    });
+    col.addEventListener("focusin", () => setOpen(true));
+    col.addEventListener("focusout", (event) => {
+      if (!col.contains(event.relatedTarget)) setOpen(false);
+    });
+  });
+}
+
 function renderMovers() {
   const panel = el("section", { class: "movers", "aria-label": "Взлёты и падения" });
   if (!state.report || !state.report.has_prev) {
@@ -183,7 +266,9 @@ function renderMovers() {
     return panel;
   }
   const moves = state.report.moves || {};
-  panel.append(moverCard(moves.up, "up"), moverCard(moves.down, "down"));
+  const blocks = blockMoves();
+  panel.append(moverColumn(moves.up, "up", blocks.up), moverColumn(moves.down, "down", blocks.down));
+  bindMoverCols(panel);
   return panel;
 }
 
