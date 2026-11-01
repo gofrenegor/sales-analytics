@@ -16,6 +16,7 @@ const state = {
   employeesError: "",
   badgeDraft: "",
   badgeQuery: "",
+  empLr: "5",
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
@@ -1088,7 +1089,8 @@ async function loadEmployees() {
     const data = await response.json();
     if (seq !== employeesSeq) return;
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
-    state.employees = data.employees || [];
+    const pack = data.employees;
+    state.employees = pack && !Array.isArray(pack) ? pack : { "5": pack || [], "27": [] };
     state.employeesLoading = false;
   } catch (error) {
     if (seq !== employeesSeq) return;
@@ -1603,9 +1605,30 @@ function renderHeatmap(rows) {
   );
 }
 
+function empPack() {
+  const data = state.employees;
+  if (!data) return null;
+  if (Array.isArray(data)) return { "5": data, "27": [] };
+  return data;
+}
+
 function renderEmployees(screen) {
   const report = state.report;
-  const all = state.employees || [];
+  const pack = empPack();
+  const lr = state.empLr === "27" ? "27" : "5";
+  const all = pack ? (pack[lr] || []) : [];
+  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "тест" });
+  for (const code of ["5", "27"]) {
+    lrs.append(el("button", {
+      type: "button",
+      "aria-pressed": lr === code ? "true" : "false",
+      onclick: () => {
+        if (state.empLr === code) return;
+        state.empLr = code;
+        render();
+      },
+    }, `${code}лр`));
+  }
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
   const rows = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
   const shownLosses = rows.reduce((sum, row) => sum + (Number(row.losses) || 0), 0);
@@ -1643,7 +1666,7 @@ function renderEmployees(screen) {
   }
   screen.append(
     el("div", { class: "screen-head" }, el("h2", null, "Сотрудники")),
-    el("p", { class: "hint" }, "Тест: только LR 5. Сверху — у кого больше потерь. Красный «!» — среди потерь есть статус WMI."),
+    el("section", { class: "test-panel", "aria-label": "тест" }, el("div", { class: "test-title" }, "тест"), lrs),
     form,
   );
   if (freeRangePending()) {
@@ -1672,7 +1695,7 @@ function renderEmployees(screen) {
     el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
   );
   if (!all.length) {
-    screen.append(el("p", { class: "box warn" }, "Нет потерь LR 5 за этот период."));
+    screen.append(el("p", { class: "box warn" }, `Нет потерь LR ${lr} за этот период.`));
     return;
   }
   if (all.length && all.every((row) => !row.badge)) {

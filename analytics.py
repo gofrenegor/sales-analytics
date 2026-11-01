@@ -985,25 +985,10 @@ def build_quality(curr, other_curr):
     }
 
 
-def build_employees(df):
-    """LR 5 по бейджику. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. Без списка ШК."""
-    if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
-        return []
-    wanted = [col for col in ("status_employee_id", "loss_sum", "status_before") if col in df.columns]
-    part = df.loc[df["reason"].astype(str) == "5", wanted].copy()
-    if part.empty:
-        return []
-    if "status_employee_id" not in part.columns:
-        part["badge"] = ""
-    else:
-        part["badge"] = part["status_employee_id"].map(badge_id)
-    if "loss_sum" not in part.columns:
-        part["loss_sum"] = 0.0
-    part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
-    if "status_before" not in part.columns:
-        part["wmi"] = False
-    else:
-        part["wmi"] = part["status_before"].astype(str) == "WMI"
+EMPLOYEE_LRS = ("5", "27")
+
+
+def _employee_badges(part):
     rows = []
     for badge, group in part.groupby("badge", sort=False):
         flags = group["wmi"].tolist()
@@ -1015,6 +1000,35 @@ def build_employees(df):
         })
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
     return rows
+
+
+def build_employees(df):
+    """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. Без списка ШК."""
+    empty = {lr: [] for lr in EMPLOYEE_LRS}
+    if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
+        return empty
+    wanted = [col for col in ("reason", "status_employee_id", "loss_sum", "status_before") if col in df.columns]
+    part = df.loc[df["reason"].astype(str).isin(EMPLOYEE_LRS), wanted].copy()
+    if part.empty:
+        return empty
+    part["lr"] = part["reason"].astype(str)
+    if "status_employee_id" not in part.columns:
+        part["badge"] = ""
+    else:
+        part["badge"] = part["status_employee_id"].map(badge_id)
+    if "loss_sum" not in part.columns:
+        part["loss_sum"] = 0.0
+    part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
+    if "status_before" not in part.columns:
+        part["wmi"] = False
+    else:
+        part["wmi"] = part["status_before"].astype(str) == "WMI"
+    out = dict(empty)
+    for lr, group in part.groupby("lr", sort=False):
+        key = str(lr)
+        if key in out:
+            out[key] = _employee_badges(group)
+    return out
 
 
 def empty_report(period):

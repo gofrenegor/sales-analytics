@@ -197,6 +197,21 @@ main {
   border-color: var(--blue);
   color: #fff;
 }
+.emp-lrs { display: flex; gap: 8px; }
+.emp-lrs button {
+  flex: 1 1 0;
+  min-height: 2.6rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-weight: 750;
+  color: var(--text);
+}
+.emp-lrs button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
+}
 .badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.2rem 0 0.9rem; }
 .badge-search input {
   flex: 1 1 12rem;
