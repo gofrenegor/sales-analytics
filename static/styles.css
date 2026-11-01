@@ -308,6 +308,20 @@ input[type="date"]:focus {
   box-shadow: 0 0 0 3px var(--blue-dim);
   outline: none;
 }
+input[type="date"].date-seed {
+  color: transparent;
+}
+input[type="date"].date-seed::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+input[type="date"].date-seed::-webkit-datetime-edit,
+input[type="date"].date-seed::-webkit-datetime-edit-fields-wrapper,
+input[type="date"].date-seed::-webkit-datetime-edit-text,
+input[type="date"].date-seed::-webkit-datetime-edit-month-field,
+input[type="date"].date-seed::-webkit-datetime-edit-day-field,
+input[type="date"].date-seed::-webkit-datetime-edit-year-field {
+  color: transparent;
+}
 .anchor { min-width: min(100%, 220px); }
 .range {
   display: flex;

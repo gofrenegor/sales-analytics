@@ -178,7 +178,35 @@ function syncForm() {
   anchor.value = state.anchor || "";
   rangeStart.value = state.rangeStart || "";
   rangeEnd.value = state.rangeEnd || "";
+  delete rangeEnd.dataset.seed;
+  rangeEnd.classList.remove("date-seed");
   document.getElementById("anchor-label").textContent = ANCHOR_LABELS[state.mode] || ANCHOR_LABELS["Месяц"];
+}
+
+function chosenEndValue() {
+  const end = document.getElementById("range-end");
+  if (end.dataset.seed === "1") return "";
+  return end.value;
+}
+
+function armEndPicker() {
+  const end = document.getElementById("range-end");
+  const start = document.getElementById("range-start").value || state.rangeStart;
+  if (state.mode !== "Свободный" || state.rangeEnd || !start || end.dataset.seed === "1") return;
+  const [year, month] = start.split("-");
+  if (!year || !month) return;
+  // Day near the edge makes the Android calendar open on the next month. The 15th keeps «По» on the «С» month.
+  end.dataset.seed = "1";
+  end.value = `${year}-${month}-15`;
+  end.classList.add("date-seed");
+}
+
+function dropEndSeed() {
+  const end = document.getElementById("range-end");
+  if (end.dataset.seed !== "1" || state.rangeEnd) return;
+  end.value = "";
+  delete end.dataset.seed;
+  end.classList.remove("date-seed");
 }
 
 function orderedRange(start, end) {
@@ -190,7 +218,7 @@ function onControlsChange() {
   const mode = document.querySelector("input[name=mode]:checked").value;
   let anchor = document.getElementById("anchor").value;
   let rangeStart = document.getElementById("range-start").value;
-  let rangeEnd = document.getElementById("range-end").value;
+  let rangeEnd = chosenEndValue();
   if (mode !== "Свободный") {
     if (state.mode === "Свободный" && state.rangeEnd) anchor = state.rangeEnd;
     document.getElementById("anchor-label").textContent = ANCHOR_LABELS[mode];
@@ -1026,6 +1054,13 @@ function wireChrome() {
     render();
   });
   document.getElementById("dates").addEventListener("submit", (event) => event.preventDefault());
+  const rangeEnd = document.getElementById("range-end");
+  rangeEnd.addEventListener("pointerdown", armEndPicker, true);
+  rangeEnd.addEventListener("change", () => {
+    delete rangeEnd.dataset.seed;
+    rangeEnd.classList.remove("date-seed");
+  }, true);
+  rangeEnd.addEventListener("cancel", dropEndSeed);
   document.getElementById("dates").addEventListener("change", onControlsChange);
   window.addEventListener("popstate", () => {
     const prevDepth = VIEW_DEPTH[state.view] ?? 0;
