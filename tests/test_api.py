@@ -188,6 +188,36 @@ def test_access_grant_and_view_role(client):
     assert client.post("/api/admin/cache/clear").status_code == 403
 
 
+def test_employee_items_return_json(client):
+    today = date.fromisoformat(client.get("/api/bootstrap").json()["today"])
+    row = loss_row(today, "sticker-1", 15, status="WMI")
+    row["Лостризон первого списания"] = 5
+    row["ID сотрудника статуса перед списанием"] = 12345
+    row["Последний стикер до списания"] = "*123*"
+    row["Оприходование"] = 1
+    preview = client.post(
+        "/api/admin/preview",
+        files=[("files", ("data.xlsx", xlsx([row]), MIME))],
+    )
+    assert preview.status_code == 200
+    assert client.post("/api/admin/commit", json={"token": preview.json()["token"]}).status_code == 200
+    params = {"mode": "День", "anchor": today.isoformat(), "badge": "12345", "lr": "5"}
+    first = client.get("/api/employees/items", params=params)
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("application/json")
+    item = first.json()["items"][0]
+    assert item["sticker"] == "*123*"
+    assert item["found"] is True
+    assert item["sum"] == 15
+    cached = client.get(
+        "/api/employees/items",
+        params=params,
+        headers={"Accept-Encoding": "gzip"},
+    )
+    assert cached.status_code == 200
+    assert cached.json()["items"][0]["sticker"] == "*123*"
+
+
 def test_index_injects_asset_version(client):
     html = client.get("/").text
     assert "admin-toggle" in html
