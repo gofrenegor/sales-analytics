@@ -1,5 +1,6 @@
 """Postgres (боевая база) и SQLite (проверка). Схема таблицы не пересоздаётся."""
 
+import json
 import logging
 import os
 import threading
@@ -18,6 +19,9 @@ ROOT = Path(__file__).resolve().parent
 
 _engine = None
 _cache = {}
+_ready = {}
+_columns_cache = None
+_generation = 0
 _cache_lock = threading.Lock()
 _write_lock = threading.Lock()
 CACHE_TTL = 3600
@@ -26,7 +30,19 @@ READ_COLUMNS = (
     "reason", "status_before_date", "status_before", "block_id", "office_id",
     "status_employee_id",
 )
-WRITE_COLUMNS = READ_COLUMNS + ("status_employee_id",)
+WRITE_COLUMNS = READ_COLUMNS
+# Главный экран не читает ШК и бейджик: они только у раздела «Сотрудники».
+FRAME_COLUMNS = {
+    "report": (
+        "loss_date", "block_name", "loss_sum", "loss_qty",
+        "reason", "status_before", "block_id", "office_id",
+    ),
+    "employees": (
+        "loss_date", "barcode", "block_name", "loss_sum",
+        "reason", "status_before", "block_id", "office_id",
+        "status_employee_id",
+    ),
+}
 
 
 class ConfigError(Exception):
@@ -98,8 +114,17 @@ def reset_engine():
 
 
 def clear_cache():
+    global _columns_cache, _generation
     with _cache_lock:
+        _generation += 1
         _cache.clear()
+        _ready.clear()
+        _columns_cache = None
+
+
+def cache_generation():
+    with _cache_lock:
+        return _generation
 
 
 def is_missing_table(exc):
@@ -128,6 +153,11 @@ def _add_missing_columns(conn, df, dialect):
     return existing
 
 
+def _ensure_loss_index(conn):
+    if inspect(conn).has_table("losses"):
+        conn.execute(text("CREATE INDEX IF NOT EXISTS losses_loss_date_idx ON losses (loss_date)"))
+
+
 def ensure_schema():
     engine = get_engine()
     with engine.begin() as conn:
@@ -137,28 +167,50 @@ def ensure_schema():
         for col in ("office_id", "block_id", "status_employee_id"):
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE losses ADD COLUMN {col} TEXT"))
+        _ensure_loss_index(conn)
 
 
-def load_data(start, end):
+def known_columns():
+    """None — таблицы нет. Иначе множество колонок. Повторный показ не ходит в каталог."""
+    global _columns_cache
+    with _cache_lock:
+        if _columns_cache is not None and _columns_cache[0] == _generation:
+            found = _columns_cache[1]
+            return None if found == () else found
+        generation = _generation
     engine = get_engine()
     try:
         with engine.connect() as conn:
             if not inspect(conn).has_table("losses"):
-                return analytics.prepare_losses(pd.DataFrame())
-            existing = {col["name"] for col in inspect(conn).get_columns("losses")}
+                found = ()
+            else:
+                found = frozenset(col["name"] for col in inspect(conn).get_columns("losses"))
     except Exception as exc:
         if is_missing_table(exc):
-            return analytics.prepare_losses(pd.DataFrame())
-        raise DataError(f"Не удалось получить данные из базы: {public_error(exc)}") from exc
-    cols = [col for col in READ_COLUMNS if col in existing]
-    if "loss_date" not in cols:
+            found = ()
+        else:
+            raise DataError(f"Не удалось получить данные из базы: {public_error(exc)}") from exc
+    with _cache_lock:
+        if _generation == generation:
+            _columns_cache = (generation, found)
+        elif _columns_cache is not None and _columns_cache[0] == _generation:
+            found = _columns_cache[1]
+    return None if found == () else found
+
+
+def load_data(start, end, columns):
+    existing = known_columns()
+    if not existing:
+        return analytics.prepare_losses(pd.DataFrame())
+    if "loss_date" not in existing:
         raise DataError("В таблице losses нет колонки loss_date")
+    cols = [col for col in columns if col in existing]
     params = {"start": start.isoformat(), "end": (end + timedelta(days=1)).isoformat()}
     sql = text(
         "SELECT " + ", ".join(cols) + " FROM losses WHERE loss_date >= :start AND loss_date < :end"
     )
     try:
-        df = pd.read_sql(sql, engine, params=params)
+        df = pd.read_sql(sql, get_engine(), params=params)
     except Exception as exc:
         if is_missing_table(exc):
             return analytics.prepare_losses(pd.DataFrame())
@@ -166,17 +218,59 @@ def load_data(start, end):
     return analytics.prepare_losses(df)
 
 
-def load_cached(start, end):
-    key = (start.isoformat(), end.isoformat())
+def load_cached(start, end, kind="report"):
+    """Кадр только для чтения: отчёт его не копирует и не меняет."""
+    columns = FRAME_COLUMNS[kind]
+    key = (kind, start.isoformat(), end.isoformat())
     now = time.monotonic()
+    generation = cache_generation()
     with _cache_lock:
         hit = _cache.get(key)
-        if hit and now - hit[0] < CACHE_TTL:
-            return hit[1].copy()
-    df = load_data(start, end)
+        if hit and now - hit[0] < CACHE_TTL and hit[2] == generation:
+            return hit[1]
+    df = load_data(start, end, columns)
     with _cache_lock:
-        _cache[key] = (time.monotonic(), df)
-    return df.copy()
+        if generation == _generation:
+            _cache[key] = (time.monotonic(), df, generation)
+    return df
+
+
+def ready_key(kind, period):
+    prev_start = period.get("_prev_start")
+    prev_end = period.get("_prev_end")
+    return (
+        kind,
+        period.get("mode") or "",
+        period.get("compare", True) is not False,
+        period["_start"].isoformat(),
+        period["_end"].isoformat(),
+        prev_start.isoformat() if prev_start else "",
+        prev_end.isoformat() if prev_end else "",
+    )
+
+
+def get_ready(key):
+    now = time.monotonic()
+    with _cache_lock:
+        hit = _ready.get(key)
+        if hit and now - hit[0] < CACHE_TTL and hit[2] == _generation:
+            return hit[1]
+        if hit:
+            _ready.pop(key, None)
+    return None
+
+
+def put_ready(key, payload, generation):
+    from fastapi.encoders import jsonable_encoder
+    body = json.dumps(
+        jsonable_encoder(payload),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    with _cache_lock:
+        if generation == _generation:
+            _ready[key] = (time.monotonic(), body, generation)
+    return body
 
 
 def empty_summary():
@@ -253,6 +347,7 @@ def replace_period(df, d_min, d_max):
                     df.loc[:, use].to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
             elif len(df):
                 df.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
+            _ensure_loss_index(conn)
         clear_cache()
 
 

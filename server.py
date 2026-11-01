@@ -12,7 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -36,8 +37,20 @@ class ConfirmIn(BaseModel):
     confirm: bool = False
 
 
+class JsonBody(JSONResponse):
+    """Русский текст остаётся буквами, без пробелов между полями."""
+
+    def render(self, content):
+        import json
+        return json.dumps(content, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
 def fail(status, message):
-    return JSONResponse(status_code=status, content={"error": message})
+    return JsonBody(status_code=status, content={"error": message})
+
+
+def _json(body: bytes):
+    return Response(content=body, media_type="application/json")
 
 
 def sweep_pending():
@@ -57,7 +70,8 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="Аналитика списаний", lifespan=lifespan)
+app = FastAPI(title="Аналитика списаний", lifespan=lifespan, default_response_class=JsonBody)
+app.add_middleware(GZipMiddleware, minimum_size=800)
 
 
 @app.get("/api/health")
@@ -90,38 +104,78 @@ def bootstrap():
         }
 
 
-@app.get("/api/report")
-def report(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
+def _period(mode, anchor, start, end):
+    """(period, None) либо (None, ответ с ошибкой)."""
     if mode not in analytics.MODES:
-        return fail(400, "Неизвестный разрез")
+        return None, fail(400, "Неизвестный разрез")
     try:
         today = analytics.business_today()
         if mode == "Свободный":
             if not start or not end:
-                return fail(400, "Укажите начало и конец периода")
-            period = analytics.compute_free_period(start, end)
-            current = db.load_cached(period["_start"], period["_end"])
-            previous = pd.DataFrame()
+                return None, fail(400, "Укажите начало и конец периода")
+            return analytics.compute_free_period(start, end), None
+        if anchor:
+            anchor_day = date.fromisoformat(anchor)
         else:
-            if anchor:
-                anchor_day = date.fromisoformat(anchor)
-            else:
-                summary = db.get_summary()
-                anchor_day = date.fromisoformat(summary["max_date"]) if summary.get("max_date") else today
-            period = analytics.compute_period(mode, anchor_day, today)
-            current = db.load_cached(period["_start"], period["_end"])
-            previous = db.load_cached(period["_prev_start"], period["_prev_end"])
-        return analytics.build_report(current, previous, period)
+            summary = db.get_summary()
+            anchor_day = date.fromisoformat(summary["max_date"]) if summary.get("max_date") else today
+        return analytics.compute_period(mode, anchor_day, today), None
     except (db.DataError, db.ConfigError) as exc:
-        return fail(503, str(exc))
+        return None, fail(503, str(exc))
     except ValueError as exc:
         msg = str(exc)
         if any(part in msg for part in ("дата", "период", "разрез", "дней")):
-            return fail(400, msg)
-        return fail(400, "Некорректная дата")
+            return None, fail(400, msg)
+        return None, fail(400, "Некорректная дата")
     except Exception as exc:
-        log.exception("report")
+        log.exception("period")
+        return None, fail(500, db.public_error(exc))
+
+
+def _cached_json(kind, period, build):
+    key = db.ready_key(kind, period)
+    cached = db.get_ready(key)
+    if cached is not None:
+        return _json(cached)
+    generation = db.cache_generation()
+    try:
+        payload = build(period)
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    except Exception as exc:
+        log.exception(kind)
         return fail(500, db.public_error(exc))
+    return _json(db.put_ready(key, payload, generation))
+
+
+def _report_payload(period):
+    current = db.load_cached(period["_start"], period["_end"], "report")
+    if period.get("compare") is False:
+        previous = pd.DataFrame()
+    else:
+        previous = db.load_cached(period["_prev_start"], period["_prev_end"], "report")
+    return analytics.build_report(current, previous, period)
+
+
+def _employees_payload(period):
+    current = db.load_cached(period["_start"], period["_end"], "employees")
+    return {"employees": analytics.build_employees(current)}
+
+
+@app.get("/api/report")
+def report(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
+    period, error = _period(mode, anchor, start, end)
+    if error is not None:
+        return error
+    return _cached_json("report", period, _report_payload)
+
+
+@app.get("/api/employees")
+def employees(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
+    period, error = _period(mode, anchor, start, end)
+    if error is not None:
+        return error
+    return _cached_json("employees", period, _employees_payload)
 
 
 @app.post("/api/admin/cache/clear")

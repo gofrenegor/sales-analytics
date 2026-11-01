@@ -10,6 +10,10 @@ const state = {
   group: "",
   block: "",
   report: null,
+  employees: null,
+  employeesKey: "",
+  employeesLoading: false,
+  employeesError: "",
   badgeDraft: "",
   badgeQuery: "",
   employeeOpen: null,
@@ -377,6 +381,7 @@ function go(patch, push = true) {
   }
   writeUrl(push);
   render();
+  if (state.view === "employees") loadEmployees();
 }
 
 function goBack(view) {
@@ -1051,8 +1056,52 @@ async function waitAnimating() {
 }
 
 let loadSeq = 0;
+let employeesSeq = 0;
+
+function resetEmployees() {
+  employeesSeq += 1;
+  state.employees = null;
+  state.employeesKey = "";
+  state.employeesLoading = false;
+  state.employeesError = "";
+}
+
+async function loadEmployees() {
+  if (freeRangePending() || !state.report || state.report.empty) return;
+  const key = periodKey();
+  if (state.employees && state.employeesKey === key) return;
+  if (state.employeesLoading && state.employeesKey === key) return;
+  const seq = ++employeesSeq;
+  state.employeesLoading = true;
+  state.employeesError = "";
+  state.employees = null;
+  state.employeesKey = key;
+  if (state.view === "employees") render();
+  try {
+    const params = new URLSearchParams({ mode: state.mode });
+    if (state.mode === "Свободный") {
+      params.set("start", state.rangeStart);
+      params.set("end", state.rangeEnd);
+    } else {
+      params.set("anchor", state.anchor);
+    }
+    const response = await fetch(`/api/employees?${params.toString()}`);
+    const data = await response.json();
+    if (seq !== employeesSeq) return;
+    if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    state.employees = data.employees || [];
+    state.employeesLoading = false;
+  } catch (error) {
+    if (seq !== employeesSeq) return;
+    state.employeesLoading = false;
+    state.employeesError = error.message;
+  }
+  if (state.view === "employees") render();
+}
+
 async function loadReport(options = {}) {
   const seq = ++loadSeq;
+  resetEmployees();
   if (options.spin) beginLoadSpin();
   const screen = document.getElementById("screen");
   if (screen) screen.setAttribute("aria-busy", "true");
@@ -1075,6 +1124,7 @@ async function loadReport(options = {}) {
     state.report = data;
     render();
     setStatus("");
+    if (state.view === "employees") loadEmployees();
   } catch (error) {
     if (seq !== loadSeq) return;
     setBanner(error.message);
@@ -1560,7 +1610,7 @@ function empKey(row) {
 
 function renderEmployees(screen) {
   const report = state.report;
-  const all = (report && report.employees) || [];
+  const all = state.employees || [];
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
   const rows = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
   const shownLosses = rows.reduce((sum, row) => sum + (Number(row.losses) || 0), 0);
@@ -1613,6 +1663,14 @@ function renderEmployees(screen) {
   }
   if (report.empty) {
     screen.append(el("p", { class: "box warn" }, "⚠️ Нет данных за этот период."));
+    return;
+  }
+  if (state.employeesError) {
+    screen.append(el("p", { class: "box bad" }, state.employeesError));
+    return;
+  }
+  if (state.employeesLoading || state.employees == null) {
+    screen.append(el("p", { class: "hint" }, "Загрузка сотрудников…"));
     return;
   }
   screen.append(
@@ -2291,7 +2349,10 @@ function wireChrome() {
         setBanner("");
         render();
       } else loadReport({ spin: true });
-    } else render();
+    } else {
+      render();
+      if (state.view === "employees") loadEmployees();
+    }
   });
 }
 

@@ -416,9 +416,7 @@ def prepare_losses(df):
     for col in ("block_id", "office_id", "status_block_id", "reason", "block_name", "status_before"):
         if col not in df.columns:
             df[col] = None
-    if "status_employee_id" not in df.columns:
-        df["status_employee_id"] = ""
-    else:
+    if "status_employee_id" in df.columns:
         df["status_employee_id"] = df["status_employee_id"].map(badge_id)
     if "loss_sum" not in df.columns:
         df["loss_sum"] = 0
@@ -789,51 +787,80 @@ def reason_rows(frame):
     return head
 
 
-def _excluded_sum(other_curr, group, key, name):
+def _as_name(value):
+    try:
+        missing = value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return ""
+    return str(value)
+
+
+def _split(frame, key):
+    """Один groupby вместо маски на каждую карточку."""
+    if frame is None or len(frame) == 0 or key not in getattr(frame, "columns", []):
+        return {}
+    return {_as_name(name): part for name, part in frame.groupby(key, sort=False)}
+
+
+def _details_by_name(frame, key):
+    """LR по имени площадки/этапа одним проходом по агрегату, не по сырым строкам."""
+    if frame is None or len(frame) == 0 or key not in getattr(frame, "columns", []):
+        return {}
+    if "reason" not in frame.columns:
+        return {}
+    agg = frame.groupby([key, "reason"], sort=False)[["loss_sum", "loss_qty"]].sum().reset_index()
+    buckets = {}
+    for rec in agg.itertuples(index=False):
+        name = _as_name(getattr(rec, key))
+        amount = _f(rec.loss_sum)
+        qty = _f(rec.loss_qty)
+        bucket = buckets.get(name)
+        if bucket is None:
+            bucket = {"sum": 0.0, "qty": 0.0, "rows": []}
+            buckets[name] = bucket
+        bucket["sum"] += amount
+        bucket["qty"] += qty
+        bucket["rows"].append({"reason": str(rec.reason), "sum": amount, "qty": qty})
+    for bucket in buckets.values():
+        total = bucket["sum"]
+        bucket["rows"].sort(key=lambda row: row["sum"], reverse=True)
+        for row in bucket["rows"]:
+            row["pct"] = (row["sum"] / total * 100) if total else 0.0
+    return buckets
+
+
+def _excluded_by_name(other_curr, group, key):
     if other_curr is None or len(other_curr) == 0:
-        return None
+        return {}
     if "block_group" not in other_curr.columns or key not in other_curr.columns:
-        return None
-    oc = other_curr[(other_curr["block_group"] == group) & (other_curr[key] == name)]
-    if oc.empty:
-        return None
-    return _f(oc["loss_sum"].sum())
-
-
-def make_detail(d1, d0, flow_title, group, name, key, other_curr, has_prev):
-    noun = {"process_stage": "Этап", "status_before": "Статус"}.get(key, "Площадка")
-    total_sum = _sum(d1, "loss_sum")
-    total_qty = _sum(d1, "loss_qty")
-    rows = []
-    if d1 is not None and len(d1) and "reason" in d1.columns:
-        lr = d1.groupby("reason")[["loss_sum", "loss_qty"]].sum().reset_index()
-        total = _f(lr["loss_sum"].sum())
-        lr = lr.sort_values("loss_sum", ascending=False)
-        for rec in lr.itertuples(index=False):
-            amount = _f(rec.loss_sum)
-            rows.append({
-                "reason": str(rec.reason),
-                "sum": amount,
-                "qty": _f(rec.loss_qty),
-                "pct": (amount / total * 100) if total else 0.0,
-            })
-    return {
-        "title": f"{noun}: {name} ({flow_title}, блок «{group}»)",
-        "sum": total_sum,
-        "qty": total_qty,
-        "delta_text": get_delta_text(total_sum, total_qty, _sum(d0, "loss_sum"), _sum(d0, "loss_qty")) if has_prev else None,
-        "excluded_sum": _excluded_sum(other_curr, group, key, name),
-        "rows": rows,
-    }
+        return {}
+    part = other_curr[other_curr["block_group"] == group]
+    if part.empty:
+        return {}
+    series = part.groupby(key, sort=False)["loss_sum"].sum()
+    return {_as_name(i): _f(v) for i, v in series.items()}
 
 
 def leaves(grouped, dc, dp, key, flow_title, group, other_curr, has_prev):
+    current = _details_by_name(dc, key)
+    previous = _details_by_name(dp, key)
+    excluded = _excluded_by_name(other_curr, group, key)
+    noun = {"process_stage": "Этап", "status_before": "Статус"}.get(key, "Площадка")
     out = []
     for rec in pack_cards(grouped, has_prev):
         name = rec["name"]
-        d1 = dc[dc[key] == name] if key in getattr(dc, "columns", []) else dc.iloc[0:0]
-        d0 = dp[dp[key] == name] if key in getattr(dp, "columns", []) else dp.iloc[0:0]
-        rec["detail"] = make_detail(d1, d0, flow_title, group, name, key, other_curr, has_prev)
+        d1 = current.get(name) or {"sum": 0.0, "qty": 0.0, "rows": []}
+        d0 = previous.get(name) or {"sum": 0.0, "qty": 0.0, "rows": []}
+        rec["detail"] = {
+            "title": f"{noun}: {name} ({flow_title}, блок «{group}»)",
+            "sum": d1["sum"],
+            "qty": d1["qty"],
+            "delta_text": get_delta_text(d1["sum"], d1["qty"], d0["sum"], d0["qty"]) if has_prev else None,
+            "excluded_sum": excluded.get(name),
+            "rows": d1["rows"],
+        }
         out.append(rec)
     return out
 
@@ -898,12 +925,21 @@ def flow_names(flow_title):
 
 def flow_cards(dc, dp, flow_title, has_prev, other_curr):
     grouped = ensure(build(dc, dp, "block_group"), flow_names(flow_title))
+    dc_parts = _split(dc, "block_group")
+    dp_parts = _split(dp, "block_group")
+    blank_c = dc.iloc[0:0]
+    blank_p = dp.iloc[0:0]
     cards = []
     for rec in pack_cards(grouped, has_prev):
         gname = rec["name"]
-        gdc = dc[dc["block_group"] == gname] if "block_group" in dc.columns else dc.iloc[0:0]
-        gdp = dp[dp["block_group"] == gname] if "block_group" in dp.columns else dp.iloc[0:0]
-        rec["group_view"] = build_group_view(gdc, gdp, flow_title, gname, other_curr, has_prev)
+        rec["group_view"] = build_group_view(
+            dc_parts.get(gname, blank_c),
+            dp_parts.get(gname, blank_p),
+            flow_title,
+            gname,
+            other_curr,
+            has_prev,
+        )
         cards.append(rec)
     return cards
 
@@ -974,35 +1010,40 @@ def build_employees(df):
     """LR 5 по бейджику. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса."""
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return []
-    part = df[df["reason"].astype(str) == "5"]
+    wanted = [col for col in ("status_employee_id", "barcode", "loss_sum", "status_before") if col in df.columns]
+    part = df.loc[df["reason"].astype(str) == "5", wanted].copy()
     if part.empty:
         return []
-    part = part.copy()
     if "status_employee_id" not in part.columns:
-        part["status_employee_id"] = ""
+        part["badge"] = ""
     else:
-        part["status_employee_id"] = part["status_employee_id"].map(badge_id)
+        part["badge"] = part["status_employee_id"].map(badge_id)
     if "barcode" not in part.columns:
         part["barcode"] = ""
+    else:
+        part["barcode"] = part["barcode"].map(plain_code)
+    if "loss_sum" not in part.columns:
+        part["loss_sum"] = 0.0
+    part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     if "status_before" not in part.columns:
-        part["status_before"] = ""
+        part["wmi"] = False
+    else:
+        part["wmi"] = part["status_before"].astype(str) == "WMI"
+    part = part.sort_values(["badge", "loss_sum", "barcode"], ascending=[True, False, True], kind="mergesort")
     rows = []
-    for badge, group in part.groupby("status_employee_id", sort=False):
-        items = []
-        for rec in group[["barcode", "loss_sum", "status_before"]].itertuples(index=False):
-            is_wmi = str(rec.status_before) == "WMI"
-            items.append({
-                "barcode": plain_code(rec.barcode),
-                "sum": _f(rec.loss_sum),
-                "wmi": is_wmi,
-            })
-        items.sort(key=lambda item: (-item["sum"], item["barcode"]))
-        badge_text = str(badge or "")
+    for badge, group in part.groupby("badge", sort=False):
+        sums = group["loss_sum"].to_numpy()
+        codes = group["barcode"].tolist()
+        flags = group["wmi"].tolist()
+        items = [
+            {"barcode": codes[i] or "", "sum": _f(sums[i]), "wmi": bool(flags[i])}
+            for i in range(len(codes))
+        ]
         rows.append({
-            "badge": badge_text,
-            "losses": int(len(group)),
-            "sum": _f(group["loss_sum"].sum()),
-            "wmi": any(item["wmi"] for item in items),
+            "badge": str(badge or ""),
+            "losses": len(items),
+            "sum": _f(sums.sum()),
+            "wmi": bool(any(flags)),
             "items": items,
         })
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
@@ -1021,7 +1062,6 @@ def empty_report(period):
         "chart_grain": "day",
         "chart_time_missing": False,
         "flows": None,
-        "employees": [],
     }
 
 
@@ -1124,5 +1164,4 @@ def build_report(df_curr, df_prev, period):
         "chart_grain": chart_grain,
         "chart_time_missing": chart_time_missing,
         "flows": flows,
-        "employees": build_employees(df_curr),
     }
