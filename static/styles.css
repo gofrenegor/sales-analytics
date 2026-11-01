@@ -205,31 +205,19 @@ main {
   min-height: 0;
   padding: 0;
   border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
   font-size: 13px;
   font-weight: 750;
   line-height: 1;
+  color: var(--text);
 }
-.emp-lrs button.lr5 {
-  color: #123a86;
-  background: #d7e4fb;
-  border: 1px solid #b7cdef;
+.emp-lrs button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: #fff;
 }
-.emp-lrs button.lr27 {
-  color: #145c32;
-  background: #d7f0e1;
-  border: 1px solid #b7dcc6;
-}
-.emp-lrs button.lr5[aria-pressed="true"] {
-  color: #123a86;
-  background: #c5d8f8;
-  border-color: #123a86;
-}
-.emp-lrs button.lr27[aria-pressed="true"] {
-  color: #145c32;
-  background: #c3e8d0;
-  border-color: #145c32;
-}
-.badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.2rem 0 0.9rem; }
+.badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.5rem 0 0.9rem; }
 .badge-search input {
   flex: 1 1 12rem;
   height: 40px;
