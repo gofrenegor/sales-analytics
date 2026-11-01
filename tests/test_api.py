@@ -131,16 +131,25 @@ def test_access_grant_and_view_role(client):
     assert client.get("/api/report", params={"mode": "Месяц"}).status_code == 401
     assert client.post("/api/auth/login", json={"id": 99}).status_code == 401
     assert client.post("/api/auth/login", json={"id": 1}).status_code == 200
+    own = client.post("/api/admin/access/phone", json={"phone": "8 900 000-00-01"})
+    assert own.status_code == 200
+    assert own.json()["phone"] == "79000000001"
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"id": 1, "phone": "70000000000"}).status_code == 401
+    assert client.post("/api/auth/login", json={"id": 1, "phone": "+7 900 000-00-01"}).status_code == 200
     assert client.get("/api/admin/access/next").json()["id"] == 2
-    assert client.post("/api/admin/access", json={"role": "root"}).status_code == 400
-    granted = client.post("/api/admin/access", json={"role": "view"})
+    assert client.post("/api/admin/access", json={"role": "root", "phone": "79001112233"}).status_code == 400
+    assert client.post("/api/admin/access", json={"role": "view", "phone": "123"}).status_code == 400
+    granted = client.post("/api/admin/access", json={"role": "view", "phone": "89001112233"})
     assert granted.status_code == 200
-    assert granted.json() == {"id": 2, "role": "view"}
+    assert granted.json() == {"id": 2, "role": "view", "phone": "79001112233"}
+    assert client.post("/api/admin/access", json={"role": "view", "phone": "+7 900 111-22-33"}).status_code == 400
     assert client.get("/api/admin/access/next").json()["id"] == 3
-    admin_again = client.post("/api/admin/access", json={"role": "admin"})
+    admin_again = client.post("/api/admin/access", json={"role": "admin", "phone": "79002223344"})
     assert admin_again.json()["id"] == 3
     client.post("/api/auth/logout")
-    assert client.post("/api/auth/login", json={"id": 2}).status_code == 200
+    assert client.post("/api/auth/login", json={"id": 2}).status_code == 401
+    assert client.post("/api/auth/login", json={"id": 2, "phone": "79001112233"}).status_code == 200
     assert client.get("/api/bootstrap").status_code == 200
     assert client.post("/api/admin/truncate", json={"confirm": True}).status_code == 403
     assert client.post("/api/admin/access", json={"role": "view"}).status_code == 403

@@ -166,7 +166,13 @@ def ensure_schema():
     with engine.begin() as conn:
         conn.execute(text(
             "CREATE TABLE IF NOT EXISTS access_users ("
-            "id INTEGER PRIMARY KEY, role TEXT NOT NULL)"
+            "id INTEGER PRIMARY KEY, role TEXT NOT NULL, phone TEXT)"
+        ))
+        access_cols = {col["name"] for col in inspect(conn).get_columns("access_users")}
+        if "phone" not in access_cols:
+            conn.execute(text("ALTER TABLE access_users ADD COLUMN phone TEXT"))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS access_users_phone_idx ON access_users (phone)"
         ))
         conn.execute(text(
             "INSERT INTO access_users (id, role) "
@@ -209,6 +215,24 @@ def known_columns():
     return None if found == () else found
 
 
+def normalize_phone(value):
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if len(digits) == 11 and digits.startswith("8"):
+        digits = "7" + digits[1:]
+    elif len(digits) == 10:
+        digits = "7" + digits
+    if len(digits) != 11 or not digits.startswith("7"):
+        raise ValueError("Некорректный номер")
+    return digits
+
+
+def _access_row(row):
+    if row is None or row.role not in ACCESS_ROLES:
+        return None
+    phone = row.phone or None
+    return {"id": int(row.id), "role": row.role, "phone": phone}
+
+
 def get_access_user(user_id):
     engine = get_engine()
     try:
@@ -216,16 +240,30 @@ def get_access_user(user_id):
             if not inspect(conn).has_table("access_users"):
                 return None
             row = conn.execute(
-                text("SELECT id, role FROM access_users WHERE id = :id"),
+                text("SELECT id, role, phone FROM access_users WHERE id = :id"),
                 {"id": int(user_id)},
             ).one_or_none()
     except Exception as exc:
         if is_missing_table(exc):
             return None
         raise DataError(f"Не удалось прочитать доступ: {public_error(exc)}") from exc
-    if row is None or row.role not in ACCESS_ROLES:
+    return _access_row(row)
+
+
+def match_login(user_id, phone_raw):
+    """Пара ID + телефон. Пока номер не записан, пускает по одному ID."""
+    user = get_access_user(user_id)
+    if not user:
         return None
-    return {"id": int(row.id), "role": row.role}
+    if not user.get("phone"):
+        return user
+    try:
+        phone = normalize_phone(phone_raw)
+    except ValueError:
+        return None
+    if phone != user["phone"]:
+        return None
+    return user
 
 
 def next_access_id():
@@ -238,23 +276,57 @@ def next_access_id():
     return int(value or 1)
 
 
-def grant_access(role):
+def _phone_taken(conn, phone, user_id):
+    row = conn.execute(
+        text("SELECT id FROM access_users WHERE phone = :phone AND id != :id"),
+        {"phone": phone, "id": int(user_id)},
+    ).one_or_none()
+    return row is not None
+
+
+def grant_access(role, phone):
     if role not in ACCESS_ROLES:
         raise ValueError("Выберите права")
+    normalized = normalize_phone(phone)
     with _write_lock:
         engine = get_engine()
         try:
             with engine.begin() as conn:
+                if _phone_taken(conn, normalized, 0):
+                    raise ValueError("Номер уже выдан")
                 next_id = int(conn.execute(
                     text("SELECT COALESCE(MAX(id), 0) + 1 FROM access_users")
                 ).scalar() or 1)
                 conn.execute(
-                    text("INSERT INTO access_users (id, role) VALUES (:id, :role)"),
-                    {"id": next_id, "role": role},
+                    text("INSERT INTO access_users (id, role, phone) VALUES (:id, :role, :phone)"),
+                    {"id": next_id, "role": role, "phone": normalized},
                 )
+        except ValueError:
+            raise
         except Exception as exc:
             raise DataError(f"Не удалось выдать доступ: {public_error(exc)}") from exc
-    return {"id": next_id, "role": role}
+    return {"id": next_id, "role": role, "phone": normalized}
+
+
+def set_access_phone(user_id, phone):
+    normalized = normalize_phone(phone)
+    with _write_lock:
+        engine = get_engine()
+        try:
+            with engine.begin() as conn:
+                if _phone_taken(conn, normalized, user_id):
+                    raise ValueError("Номер уже выдан")
+                result = conn.execute(
+                    text("UPDATE access_users SET phone = :phone WHERE id = :id"),
+                    {"phone": normalized, "id": int(user_id)},
+                )
+                if not result.rowcount:
+                    raise ValueError("Нет такого ID")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise DataError(f"Не удалось записать номер: {public_error(exc)}") from exc
+    return get_access_user(user_id)
 
 
 def load_data(start, end, columns):

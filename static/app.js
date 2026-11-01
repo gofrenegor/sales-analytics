@@ -2041,9 +2041,13 @@ function wireGrant() {
   const toggle = document.getElementById("grant-toggle");
   const panel = document.getElementById("grant-panel");
   const value = document.getElementById("grant-id-value");
+  const phone = document.getElementById("grant-phone");
   const submit = document.getElementById("grant-submit");
   const status = document.getElementById("grant-status");
   if (!toggle || !panel) return;
+  phone?.addEventListener("input", () => {
+    phone.value = phoneDraft(phone.value);
+  });
   const chosen = () => panel.querySelector("input[name='grant-role']:checked");
   const refreshId = async () => {
     const data = await readJson(await fetch("/api/admin/access/next"));
@@ -2068,16 +2072,17 @@ function wireGrant() {
   });
   submit.addEventListener("click", async () => {
     const role = chosen()?.value;
-    if (!role) return;
+    if (!role || !phone) return;
     submit.disabled = true;
     try {
       const data = await readJson(await fetch("/api/admin/access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ role }),
+        body: JSON.stringify({ role, phone: phone.value }),
       }));
       status.hidden = false;
-      status.textContent = `Выдан ID ${data.id} · ${data.role === "admin" ? "админка" : "просмотр"}`;
+      status.textContent = `Выдан ID ${data.id} · +${data.phone} · ${data.role === "admin" ? "админка" : "просмотр"}`;
+      phone.value = "";
       await refreshId();
     } catch (error) {
       setAdminStatus(error.message);
@@ -2087,8 +2092,35 @@ function wireGrant() {
   });
 }
 
+function wireOwnPhone() {
+  const input = document.getElementById("own-phone");
+  const button = document.getElementById("own-phone-save");
+  if (!input || !button) return;
+  input.addEventListener("input", () => {
+    input.value = phoneDraft(input.value);
+  });
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const data = await readJson(await fetch("/api/admin/access/phone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone: input.value }),
+      }));
+      state.user = { ...state.user, ...data, ok: true };
+      input.value = data.phone ? `+${data.phone}` : "";
+      setAdminStatus("Номер сохранён");
+    } catch (error) {
+      setAdminStatus(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 function wireAdmin() {
   wireGrant();
+  wireOwnPhone();
   document.getElementById("cache-btn").addEventListener("click", async () => {
     try {
       const data = await readJson(await fetch("/api/admin/cache/clear", { method: "POST" }));
@@ -2425,7 +2457,13 @@ function showGate() {
   if (toggle) toggle.hidden = true;
   if (who) who.hidden = true;
   setAdminOpen(false);
-  document.getElementById("gate-id")?.focus();
+  document.getElementById("gate-phone")?.focus();
+}
+
+function phoneDraft(value) {
+  const cleaned = String(value || "").replace(/[^\d+]/g, "");
+  const plus = cleaned.startsWith("+") ? "+" : "";
+  return (plus + cleaned.replace(/\+/g, "")).slice(0, 16);
 }
 
 function applySession() {
@@ -2439,6 +2477,8 @@ function applySession() {
   const admin = user && user.role === "admin";
   if (toggle) toggle.hidden = !admin;
   if (!admin) setAdminOpen(false);
+  const own = document.getElementById("own-phone");
+  if (own && document.activeElement !== own) own.value = user.phone ? `+${user.phone}` : "";
   if (!who) return;
   who.hidden = false;
   who.replaceChildren(
@@ -2457,8 +2497,12 @@ async function logout() {
 
 function wireAuth() {
   const form = document.getElementById("gate-form");
+  const phone = document.getElementById("gate-phone");
   const input = document.getElementById("gate-id");
-  if (!form || !input) return;
+  if (!form || !input || !phone) return;
+  phone.addEventListener("input", () => {
+    phone.value = phoneDraft(phone.value);
+  });
   input.addEventListener("input", () => {
     input.value = digitsOnly(input.value).slice(0, 9);
   });
@@ -2470,7 +2514,7 @@ function wireAuth() {
       const data = await readJson(await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({ id, phone: phone.value }),
       }));
       state.user = data;
       applySession();

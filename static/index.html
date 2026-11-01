@@ -19,6 +19,7 @@
   <div id="gate" class="gate" hidden>
     <p class="gate-title">вы не зарегистрированы</p>
     <form id="gate-form" class="gate-form">
+      <input id="gate-phone" inputmode="tel" autocomplete="tel" placeholder="телефон" aria-label="Телефон" enterkeyhint="next">
       <input id="gate-id" inputmode="numeric" autocomplete="off" placeholder="ID" aria-label="ID" enterkeyhint="go">
       <button type="submit" class="primary">Войти</button>
     </form>
@@ -29,12 +30,21 @@
   <div class="layout" hidden>
     <aside id="sidebar">
       <h2>👤 Админ-панель</h2>
+      <label class="grant-phone">
+        <span class="grant-id-kicker">Мой номер</span>
+        <input id="own-phone" inputmode="tel" autocomplete="tel" placeholder="+7" aria-label="Мой номер">
+      </label>
+      <button type="button" id="own-phone-save" class="wide ghost">Сохранить мой номер</button>
       <button type="button" id="grant-toggle" class="wide ghost" aria-expanded="false" aria-controls="grant-panel">Выдать доступ</button>
       <div id="grant-panel" class="grant-panel" hidden>
         <div class="grant-id" aria-disabled="true">
           <span class="grant-id-kicker">ID</span>
           <span class="grant-id-value" id="grant-id-value">—</span>
         </div>
+        <label class="grant-phone">
+          <span class="grant-id-kicker">Телефон</span>
+          <input id="grant-phone" inputmode="tel" autocomplete="off" placeholder="+7" aria-label="Телефон для этого ID">
+        </label>
         <div class="grant-roles" role="radiogroup" aria-label="Права">
           <label class="grant-role">
             <input type="radio" name="grant-role" value="view">

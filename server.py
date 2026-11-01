@@ -47,10 +47,16 @@ class JsonBody(JSONResponse):
 
 class LoginIn(BaseModel):
     id: int
+    phone: str = ""
 
 
 class GrantIn(BaseModel):
     role: str
+    phone: str = ""
+
+
+class PhoneIn(BaseModel):
+    phone: str
 
 
 def fail(status, message):
@@ -119,19 +125,24 @@ def health():
 @app.get("/api/auth/me")
 def auth_me(user=Depends(actor)):
     if not user:
-        return {"ok": False, "id": None, "role": None}
-    return {"ok": True, "id": user["id"], "role": user["role"]}
+        return {"ok": False, "id": None, "role": None, "phone": None}
+    return {"ok": True, "id": user["id"], "role": user["role"], "phone": user.get("phone")}
 
 
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn):
     try:
-        user = db.get_access_user(body.id) if body.id > 0 else None
+        user = db.match_login(body.id, body.phone) if body.id > 0 else None
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     if not user:
         return fail(401, "вы не зарегистрированы")
-    response = JsonBody({"ok": True, "id": user["id"], "role": user["role"]})
+    response = JsonBody({
+        "ok": True,
+        "id": user["id"],
+        "role": user["role"],
+        "phone": user.get("phone"),
+    })
     return _auth_cookie(response, user["id"])
 
 
@@ -288,11 +299,27 @@ def access_grant(body: GrantIn, user=Depends(actor)):
     if blocked:
         return blocked
     try:
-        return db.grant_access(body.role)
+        return db.grant_access(body.role, body.phone)
     except ValueError as exc:
         return fail(400, str(exc))
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
+
+
+@app.post("/api/admin/access/phone")
+def access_phone(body: PhoneIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    try:
+        saved = db.set_access_phone(user["id"], body.phone)
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    if not saved:
+        return fail(404, "Нет такого ID")
+    return saved
 
 
 @app.get("/api/admin/summary")
