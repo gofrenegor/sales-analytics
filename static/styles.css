@@ -490,7 +490,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .daily-chart { grid-area: daily; min-width: 0; }
 .loss-stack { width: 100%; max-width: 560px; margin: 0 auto; }
 .loss-figure { display: flex; align-items: center; justify-content: center; }
-.loss-donut-wrap { position: relative; width: 345px; max-width: 100%; }
+.loss-donut-wrap { position: relative; width: calc(345px * 1.24); max-width: 100%; }
 .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; pointer-events: none; }
 .loss-donut text { font-family: Manrope, sans-serif; }
 .loss-pct {
