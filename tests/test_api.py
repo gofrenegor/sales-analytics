@@ -17,6 +17,9 @@ def client(tmp_path, monkeypatch):
     db.reset_engine()
     server.pending.clear()
     with TestClient(server.app) as test_client:
+        logged = test_client.post("/api/auth/login", json={"id": 1})
+        assert logged.status_code == 200
+        assert logged.json()["role"] == "admin"
         yield test_client
     db.reset_engine()
     server.pending.clear()
@@ -122,9 +125,34 @@ def test_bad_upload_and_mode(client):
     assert client.post("/api/admin/commit", json={"token": "missing"}).status_code == 404
 
 
+def test_access_grant_and_view_role(client):
+    assert client.post("/api/auth/logout").status_code == 200
+    assert client.get("/api/auth/me").json()["ok"] is False
+    assert client.get("/api/report", params={"mode": "Месяц"}).status_code == 401
+    assert client.post("/api/auth/login", json={"id": 99}).status_code == 401
+    assert client.post("/api/auth/login", json={"id": 1}).status_code == 200
+    assert client.get("/api/admin/access/next").json()["id"] == 2
+    assert client.post("/api/admin/access", json={"role": "root"}).status_code == 400
+    granted = client.post("/api/admin/access", json={"role": "view"})
+    assert granted.status_code == 200
+    assert granted.json() == {"id": 2, "role": "view"}
+    assert client.get("/api/admin/access/next").json()["id"] == 3
+    admin_again = client.post("/api/admin/access", json={"role": "admin"})
+    assert admin_again.json()["id"] == 3
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"id": 2}).status_code == 200
+    assert client.get("/api/bootstrap").status_code == 200
+    assert client.post("/api/admin/truncate", json={"confirm": True}).status_code == 403
+    assert client.post("/api/admin/access", json={"role": "view"}).status_code == 403
+    assert client.get("/api/admin/access/next").status_code == 403
+    assert client.post("/api/admin/cache/clear").status_code == 403
+
+
 def test_index_injects_asset_version(client):
     html = client.get("/").text
     assert "admin-toggle" in html
+    assert "вы не зарегистрированы" in html
+    assert "grant-toggle" in html
     match = re.search(r"/static/app\.js\?v=(\d+)", html)
     assert match
     assert f'/static/styles.css?v={match.group(1)}' in html

@@ -16,12 +16,40 @@
   </script>
 </head>
 <body>
-  <button type="button" id="admin-toggle" class="admin-toggle" aria-controls="sidebar" aria-expanded="false" aria-label="Админ-панель">
+  <div id="gate" class="gate" hidden>
+    <p class="gate-title">вы не зарегистрированы</p>
+    <form id="gate-form" class="gate-form">
+      <input id="gate-id" inputmode="numeric" autocomplete="off" placeholder="ID" aria-label="ID" enterkeyhint="go">
+      <button type="submit" class="primary">Войти</button>
+    </form>
+  </div>
+  <button type="button" id="admin-toggle" class="admin-toggle" hidden aria-controls="sidebar" aria-expanded="false" aria-label="Админ-панель">
     <span class="hamburger" aria-hidden="true"><span></span><span></span><span></span></span>
   </button>
-  <div class="layout">
+  <div class="layout" hidden>
     <aside id="sidebar">
       <h2>👤 Админ-панель</h2>
+      <button type="button" id="grant-toggle" class="wide ghost" aria-expanded="false" aria-controls="grant-panel">Выдать доступ</button>
+      <div id="grant-panel" class="grant-panel" hidden>
+        <div class="grant-id" aria-disabled="true">
+          <span class="grant-id-kicker">ID</span>
+          <span class="grant-id-value" id="grant-id-value">—</span>
+        </div>
+        <div class="grant-roles" role="radiogroup" aria-label="Права">
+          <label class="grant-role">
+            <input type="radio" name="grant-role" value="view">
+            <b>Просмотр</b>
+            <span>смотреть сайт, блоки, потоки, деталку</span>
+          </label>
+          <label class="grant-role">
+            <input type="radio" name="grant-role" value="admin">
+            <b>Админка</b>
+            <span>весь функционал</span>
+          </label>
+        </div>
+        <button type="button" id="grant-submit" class="wide primary" disabled>Выдать</button>
+        <p id="grant-status" class="hint" hidden></p>
+      </div>
       <button type="button" id="cache-btn" class="wide ghost">🔄 Сбросить кэш данных</button>
       <button type="button" id="theme" class="wide ghost">🌓 Тема</button>
       <p id="admin-status" class="hint" hidden></p>
@@ -54,6 +82,7 @@
     <main>
       <header class="top">
         <h1>📦 Аналитика списаний</h1>
+        <div id="who" class="who" hidden></div>
         <label class="search">
           <span class="sr">Поиск LR или площадки</span>
           <input id="search" type="search" placeholder="LR или площадка" autocomplete="off" enterkeyhint="search">

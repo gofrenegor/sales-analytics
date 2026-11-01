@@ -153,6 +153,9 @@ def _add_missing_columns(conn, df, dialect):
     return existing
 
 
+ACCESS_ROLES = ("view", "admin")
+
+
 def _ensure_loss_index(conn):
     if inspect(conn).has_table("losses"):
         conn.execute(text("CREATE INDEX IF NOT EXISTS losses_loss_date_idx ON losses (loss_date)"))
@@ -161,6 +164,14 @@ def _ensure_loss_index(conn):
 def ensure_schema():
     engine = get_engine()
     with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS access_users ("
+            "id INTEGER PRIMARY KEY, role TEXT NOT NULL)"
+        ))
+        conn.execute(text(
+            "INSERT INTO access_users (id, role) "
+            "SELECT 1, 'admin' WHERE NOT EXISTS (SELECT 1 FROM access_users WHERE id = 1)"
+        ))
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
@@ -196,6 +207,54 @@ def known_columns():
         elif _columns_cache is not None and _columns_cache[0] == _generation:
             found = _columns_cache[1]
     return None if found == () else found
+
+
+def get_access_user(user_id):
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            if not inspect(conn).has_table("access_users"):
+                return None
+            row = conn.execute(
+                text("SELECT id, role FROM access_users WHERE id = :id"),
+                {"id": int(user_id)},
+            ).one_or_none()
+    except Exception as exc:
+        if is_missing_table(exc):
+            return None
+        raise DataError(f"Не удалось прочитать доступ: {public_error(exc)}") from exc
+    if row is None or row.role not in ACCESS_ROLES:
+        return None
+    return {"id": int(row.id), "role": row.role}
+
+
+def next_access_id():
+    engine = get_engine()
+    try:
+        with engine.connect() as conn:
+            value = conn.execute(text("SELECT COALESCE(MAX(id), 0) + 1 FROM access_users")).scalar()
+    except Exception as exc:
+        raise DataError(f"Не удалось прочитать доступ: {public_error(exc)}") from exc
+    return int(value or 1)
+
+
+def grant_access(role):
+    if role not in ACCESS_ROLES:
+        raise ValueError("Выберите права")
+    with _write_lock:
+        engine = get_engine()
+        try:
+            with engine.begin() as conn:
+                next_id = int(conn.execute(
+                    text("SELECT COALESCE(MAX(id), 0) + 1 FROM access_users")
+                ).scalar() or 1)
+                conn.execute(
+                    text("INSERT INTO access_users (id, role) VALUES (:id, :role)"),
+                    {"id": next_id, "role": role},
+                )
+        except Exception as exc:
+            raise DataError(f"Не удалось выдать доступ: {public_error(exc)}") from exc
+    return {"id": next_id, "role": role}
 
 
 def load_data(start, end, columns):

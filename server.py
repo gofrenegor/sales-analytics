@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -45,12 +45,49 @@ class JsonBody(JSONResponse):
         return json.dumps(content, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+class LoginIn(BaseModel):
+    id: int
+
+
+class GrantIn(BaseModel):
+    role: str
+
+
 def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
 
 
 def _json(body: bytes):
     return Response(content=body, media_type="application/json")
+
+
+def actor(access_id: str | None = Cookie(default=None)):
+    if not access_id or not str(access_id).isdigit():
+        return None
+    try:
+        return db.get_access_user(int(access_id))
+    except (db.DataError, db.ConfigError):
+        return None
+
+
+def denied(user, admin=False):
+    if not user:
+        return fail(401, "вы не зарегистрированы")
+    if admin and user.get("role") != "admin":
+        return fail(403, "Недостаточно прав")
+    return None
+
+
+def _auth_cookie(response, user_id):
+    response.set_cookie(
+        "access_id",
+        str(user_id),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 365,
+        path="/",
+    )
+    return response
 
 
 def sweep_pending():
@@ -79,8 +116,37 @@ def health():
     return {"ok": True}
 
 
+@app.get("/api/auth/me")
+def auth_me(user=Depends(actor)):
+    if not user:
+        return {"ok": False, "id": None, "role": None}
+    return {"ok": True, "id": user["id"], "role": user["role"]}
+
+
+@app.post("/api/auth/login")
+def auth_login(body: LoginIn):
+    try:
+        user = db.get_access_user(body.id) if body.id > 0 else None
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    if not user:
+        return fail(401, "вы не зарегистрированы")
+    response = JsonBody({"ok": True, "id": user["id"], "role": user["role"]})
+    return _auth_cookie(response, user["id"])
+
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    response = JsonBody({"ok": True})
+    response.delete_cookie("access_id", path="/")
+    return response
+
+
 @app.get("/api/bootstrap")
-def bootstrap():
+def bootstrap(user=Depends(actor)):
+    blocked = denied(user)
+    if blocked:
+        return blocked
     today = analytics.business_today().isoformat()
     try:
         summary = db.get_summary()
@@ -163,7 +229,16 @@ def _employees_payload(period):
 
 
 @app.get("/api/report")
-def report(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
+def report(
+    mode: str = "Месяц",
+    anchor: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    user=Depends(actor),
+):
+    blocked = denied(user)
+    if blocked:
+        return blocked
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
@@ -171,7 +246,16 @@ def report(mode: str = "Месяц", anchor: str | None = None, start: str | Non
 
 
 @app.get("/api/employees")
-def employees(mode: str = "Месяц", anchor: str | None = None, start: str | None = None, end: str | None = None):
+def employees(
+    mode: str = "Месяц",
+    anchor: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    user=Depends(actor),
+):
+    blocked = denied(user)
+    if blocked:
+        return blocked
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
@@ -179,13 +263,43 @@ def employees(mode: str = "Месяц", anchor: str | None = None, start: str | 
 
 
 @app.post("/api/admin/cache/clear")
-def clear_cache():
+def clear_cache(user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
     db.clear_cache()
     return {"ok": True, "message": "Кэш сброшен!"}
 
 
+@app.get("/api/admin/access/next")
+def access_next(user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    try:
+        return {"id": db.next_access_id()}
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+
+
+@app.post("/api/admin/access")
+def access_grant(body: GrantIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    try:
+        return db.grant_access(body.role)
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+
+
 @app.get("/api/admin/summary")
-def admin_summary():
+def admin_summary(user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
     try:
         return db.get_summary()
     except (db.DataError, db.ConfigError) as exc:
@@ -193,7 +307,10 @@ def admin_summary():
 
 
 @app.post("/api/admin/preview")
-async def preview(files: list[UploadFile] = File(...)):
+async def preview(files: list[UploadFile] = File(...), user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
     sweep_pending()
     frames = []
     for upload in files:
@@ -230,7 +347,10 @@ async def preview(files: list[UploadFile] = File(...)):
 
 
 @app.post("/api/admin/commit")
-def commit(body: TokenIn):
+def commit(body: TokenIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
     with pending_lock:
         item = pending.pop(body.token, None)
     if item is None:
@@ -254,7 +374,10 @@ def commit(body: TokenIn):
 
 
 @app.post("/api/admin/truncate")
-def truncate(body: ConfirmIn):
+def truncate(body: ConfirmIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
     if not body.confirm:
         return fail(400, "Подтвердите удаление")
     try:

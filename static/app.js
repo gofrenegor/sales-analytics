@@ -17,6 +17,7 @@ const state = {
   badgeDraft: "",
   badgeQuery: "",
   empLr: "5",
+  user: null,
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
@@ -1088,6 +1089,11 @@ async function loadEmployees() {
     const response = await fetch(`/api/employees?${params.toString()}`);
     const data = await response.json();
     if (seq !== employeesSeq) return;
+    if (response.status === 401) {
+      state.employeesLoading = false;
+      showGate();
+      return;
+    }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
     const pack = data.employees;
     state.employees = pack && !Array.isArray(pack) ? pack : { "5": pack || [], "27": [] };
@@ -1119,6 +1125,10 @@ async function loadReport(options = {}) {
     const response = await fetch(`/api/report?${params.toString()}`);
     const data = await response.json();
     if (seq !== loadSeq) return;
+    if (response.status === 401) {
+      showGate();
+      return;
+    }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
     await waitAnimating();
     if (seq !== loadSeq) return;
@@ -2027,7 +2037,58 @@ async function readJson(response) {
   return data;
 }
 
+function wireGrant() {
+  const toggle = document.getElementById("grant-toggle");
+  const panel = document.getElementById("grant-panel");
+  const value = document.getElementById("grant-id-value");
+  const submit = document.getElementById("grant-submit");
+  const status = document.getElementById("grant-status");
+  if (!toggle || !panel) return;
+  const chosen = () => panel.querySelector("input[name='grant-role']:checked");
+  const refreshId = async () => {
+    const data = await readJson(await fetch("/api/admin/access/next"));
+    value.textContent = String(data.id);
+  };
+  toggle.addEventListener("click", async () => {
+    if (!panel.hidden) {
+      panel.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+      return;
+    }
+    try {
+      await refreshId();
+      panel.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+    } catch (error) {
+      setAdminStatus(error.message);
+    }
+  });
+  panel.addEventListener("change", () => {
+    submit.disabled = !chosen();
+  });
+  submit.addEventListener("click", async () => {
+    const role = chosen()?.value;
+    if (!role) return;
+    submit.disabled = true;
+    try {
+      const data = await readJson(await fetch("/api/admin/access", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+      }));
+      status.hidden = false;
+      status.textContent = `Выдан ID ${data.id} · ${data.role === "admin" ? "админка" : "просмотр"}`;
+      await refreshId();
+    } catch (error) {
+      setAdminStatus(error.message);
+    } finally {
+      submit.disabled = !chosen();
+    }
+  });
+}
+
 function wireAdmin() {
+  wireGrant();
   document.getElementById("cache-btn").addEventListener("click", async () => {
     try {
       const data = await readJson(await fetch("/api/admin/cache/clear", { method: "POST" }));
@@ -2353,13 +2414,97 @@ function wireChrome() {
   });
 }
 
+function showGate() {
+  state.user = null;
+  const gate = document.getElementById("gate");
+  const layout = document.querySelector(".layout");
+  const toggle = document.getElementById("admin-toggle");
+  const who = document.getElementById("who");
+  if (gate) gate.hidden = false;
+  if (layout) layout.hidden = true;
+  if (toggle) toggle.hidden = true;
+  if (who) who.hidden = true;
+  setAdminOpen(false);
+  document.getElementById("gate-id")?.focus();
+}
+
+function applySession() {
+  const user = state.user;
+  const gate = document.getElementById("gate");
+  const layout = document.querySelector(".layout");
+  const toggle = document.getElementById("admin-toggle");
+  const who = document.getElementById("who");
+  if (gate) gate.hidden = true;
+  if (layout) layout.hidden = false;
+  const admin = user && user.role === "admin";
+  if (toggle) toggle.hidden = !admin;
+  if (!admin) setAdminOpen(false);
+  if (!who) return;
+  who.hidden = false;
+  who.replaceChildren(
+    document.createTextNode(`ID ${user.id}`),
+    el("button", { type: "button", onclick: () => logout() }, "выйти"),
+  );
+}
+
+async function logout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch (error) {}
+  state.report = null;
+  showGate();
+}
+
+function wireAuth() {
+  const form = document.getElementById("gate-form");
+  const input = document.getElementById("gate-id");
+  if (!form || !input) return;
+  input.addEventListener("input", () => {
+    input.value = digitsOnly(input.value).slice(0, 9);
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = Number(digitsOnly(input.value));
+    if (!id) return;
+    try {
+      const data = await readJson(await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      }));
+      state.user = data;
+      applySession();
+      await openApp();
+    } catch (error) {}
+  });
+}
+
 async function boot() {
+  try {
+    const data = await readJson(await fetch("/api/auth/me"));
+    if (!data.ok) {
+      showGate();
+      return;
+    }
+    state.user = data;
+    applySession();
+    await openApp();
+  } catch (error) {
+    showGate();
+  }
+}
+
+async function openApp() {
   readUrl();
   syncForm(true);
   setStatus("Загрузка…");
   try {
     const response = await fetch("/api/bootstrap");
     const data = await response.json();
+    if (response.status === 401) {
+      showGate();
+      return;
+    }
     state.today = data.today || "";
     if (!state.anchor) state.anchor = data.max_date || data.today;
     if (!state.rangeStart) state.rangeStart = state.anchor;
@@ -2386,4 +2531,5 @@ async function boot() {
 
 wireChrome();
 wireAdmin();
+wireAuth();
 boot();
