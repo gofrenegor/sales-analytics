@@ -330,25 +330,52 @@ input[type="date"]:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 3px var(--blue-dim);
 }
+.ymd.bad { border-color: var(--red); }
+.ymd.bad:focus-within { box-shadow: 0 0 0 3px var(--red-dim); }
 .ymd .ymd-dot {
-  display: inline;
+  display: block;
+  flex: 0 0 auto;
   margin: 0;
   padding: 0 1px;
+  font-size: 16px;
   font-weight: 500;
-  color: var(--muted);
+  line-height: 1;
+  color: var(--text);
 }
 .ymd input {
   border: 0;
   background: transparent;
-  padding: 0.3rem 0;
+  padding: 0.28rem 0;
   font-size: 16px;
+  letter-spacing: 0;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
-.ymd input:focus { outline: none; box-shadow: none; }
-.ymd input::placeholder { color: var(--muted); opacity: 1; }
-.ymd-day, .ymd-month { width: 2.4ch; flex: 0 0 auto; }
-.ymd-year { width: 5.2ch; flex: 0 0 auto; }
+.ymd input:focus,
+.ymd input:focus-visible { outline: none; box-shadow: none; background: var(--blue-dim); border-radius: 4px; }
+.ymd input::placeholder { color: var(--muted); opacity: 1; font-size: 0.8em; }
+.ymd-day, .ymd-month {
+  width: 2ch;
+  min-width: 2ch;
+  max-width: 2ch;
+  flex: 0 0 2ch;
+  overflow: hidden;
+}
+.ymd-year {
+  width: 4ch;
+  min-width: 4ch;
+  max-width: 4ch;
+  flex: 0 0 4ch;
+  overflow: hidden;
+}
+.ymd-error {
+  margin: 0.28rem 0 0;
+  color: var(--red);
+  font-size: 0.8rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.ymd-error[hidden] { display: none; }
 .range .anchor { min-width: min(100%, 16.5rem); }
 .ymd-cal {
   position: absolute;
@@ -368,6 +395,11 @@ input[type="date"]:focus {
   border: 0;
   opacity: 0;
   cursor: pointer;
+}
+.ymd .ymd-native:focus {
+  border: 0;
+  outline: none;
+  box-shadow: none;
 }
 .range {
   display: flex;

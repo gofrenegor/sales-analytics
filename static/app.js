@@ -194,6 +194,26 @@ function isoFromParts(parts) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function dateKind(parts) {
+  if (!parts.day && !parts.month) return "empty";
+  if (parts.day.length === 2 && (+parts.day < 1 || +parts.day > 31)) return "invalid";
+  if (parts.month.length === 2 && (+parts.month < 1 || +parts.month > 12)) return "invalid";
+  if (parts.day.length < 2 || parts.month.length < 2 || parts.year.length !== 4) return "partial";
+  if (!isoFromParts(parts)) return "invalid";
+  return "ok";
+}
+
+function setDateError(prefix, on) {
+  const box = partEl(prefix, "day").closest(".ymd");
+  const error = document.getElementById(`${prefix}-error`);
+  if (box) box.classList.toggle("bad", !!on);
+  if (error) error.hidden = !on;
+}
+
+function assignPart(input, value) {
+  if (input.value !== value) input.value = value;
+}
+
 function writeParts(prefix, iso, force) {
   const day = partEl(prefix, "day");
   const month = partEl(prefix, "month");
@@ -201,24 +221,48 @@ function writeParts(prefix, iso, force) {
   const parts = readParts(prefix);
   const current = isoFromParts(parts);
   if (!force) {
-    if (current === (iso || "")) return;
+    if (current === (iso || "")) {
+      if (dateKind(parts) !== "invalid") setDateError(prefix, false);
+      return;
+    }
     if ([day, month, year].includes(document.activeElement)) return;
     if (!partsUntouched(parts)) return;
   }
   if (iso && /^\d{4}-\d{2}-\d{2}$/.test(iso)) {
     const [y, m, d] = iso.split("-");
-    day.value = d;
-    month.value = m;
-    year.value = y;
+    assignPart(day, d);
+    assignPart(month, m);
+    assignPart(year, y);
+    setDateError(prefix, false);
     return;
   }
-  day.value = "";
-  month.value = "";
-  year.value = DEFAULT_YEAR;
+  assignPart(day, "");
+  assignPart(month, "");
+  assignPart(year, DEFAULT_YEAR);
+  setDateError(prefix, false);
+}
+
+function storedIso(prefix) {
+  if (prefix === "anchor") return state.anchor;
+  if (prefix === "range-start") return state.rangeStart;
+  return state.rangeEnd;
+}
+
+function refreshDate(prefix) {
+  const kind = dateKind(readParts(prefix));
+  setDateError(prefix, kind === "invalid");
+  if (kind !== "ok") return;
+  const iso = isoFromParts(readParts(prefix));
+  const native = document.getElementById(prefix);
+  delete native.dataset.seed;
+  if (native.value === iso && storedIso(prefix) === iso) return;
+  native.value = iso;
+  onControlsChange();
 }
 
 function committedOrKeep(prefix, previous) {
   const parts = readParts(prefix);
+  if (dateKind(parts) === "invalid") return previous || "";
   const iso = isoFromParts(parts);
   if (iso) return iso;
   if (partsUntouched(parts)) return "";
@@ -238,13 +282,12 @@ function syncForm(force) {
   const free = state.mode === "Свободный";
   const anchorWrap = document.getElementById("anchor-wrap");
   const rangeWrap = document.getElementById("range-wrap");
-  const anchor = document.getElementById("anchor");
   anchorWrap.hidden = free;
   rangeWrap.hidden = !free;
-  anchor.required = !free;
-  anchor.value = state.anchor || "";
+  writeParts("anchor", state.anchor, force);
   writeParts("range-start", state.rangeStart, force);
   writeParts("range-end", state.rangeEnd, force);
+  syncNative("anchor", state.anchor);
   syncNative("range-start", state.rangeStart);
   syncNative("range-end", state.rangeEnd);
   document.getElementById("anchor-label").textContent = ANCHOR_LABELS[state.mode] || ANCHOR_LABELS["Месяц"];
@@ -1115,12 +1158,40 @@ function wireAdminPanel() {
   });
 }
 
-function wireDigits(input, size, next, replaceFull) {
+function wireDigits(input, size, next, replaceFull, prev, prefix) {
+  const afterEdit = () => {
+    let clean = digitsOnly(input.value).slice(0, size);
+    if (size === 2 && clean.length === 1) {
+      const n = Number(clean);
+      const jump = input.classList.contains("ymd-day") ? n >= 4 : input.classList.contains("ymd-month") && n >= 2;
+      if (jump) clean = `0${clean}`;
+    }
+    if (input.value !== clean) input.value = clean;
+    const invalidDay = input.classList.contains("ymd-day") && clean.length === 2 && (+clean < 1 || +clean > 31);
+    if (clean.length === size && next && document.activeElement === input && !invalidDay) next.focus();
+    refreshDate(prefix);
+  };
   input.addEventListener("focus", () => input.select());
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Backspace" && !input.value && input.dataset.prev) {
-      const prev = document.getElementById(input.dataset.prev);
+    if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      const yearField = input.classList.contains("ymd-year");
+      if (event.key === "ArrowRight") {
+        if (yearField) return;
+        event.preventDefault();
+        if (next) next.focus();
+        return;
+      }
+      if (yearField) {
+        const start = input.selectionStart ?? 0;
+        const end = input.selectionEnd ?? 0;
+        if (start !== 0 || end !== 0) return;
+      }
+      event.preventDefault();
       if (prev) prev.focus();
+      return;
+    }
+    if (event.key === "Backspace" && !input.value && prev) {
+      prev.focus();
       return;
     }
     if (event.key.length === 1 && !/\d/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -1135,13 +1206,10 @@ function wireDigits(input, size, next, replaceFull) {
       event.preventDefault();
       input.value = event.key;
       input.setSelectionRange(1, 1);
+      afterEdit();
     }
   });
-  input.addEventListener("input", () => {
-    const clean = digitsOnly(input.value).slice(0, size);
-    if (input.value !== clean) input.value = clean;
-    if (clean.length === size && next && document.activeElement === input) next.focus();
-  });
+  input.addEventListener("input", afterEdit);
 }
 
 function pasteDate(event, prefix) {
@@ -1150,7 +1218,7 @@ function pasteDate(event, prefix) {
   if (!match) return;
   event.preventDefault();
   writeParts(prefix, `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}`, true);
-  onControlsChange();
+  refreshDate(prefix);
 }
 
 function bindRangeField(prefix) {
@@ -1159,19 +1227,21 @@ function bindRangeField(prefix) {
   const year = partEl(prefix, "year");
   month.dataset.prev = `${prefix}-day`;
   year.dataset.prev = `${prefix}-month`;
-  wireDigits(day, 2, month, false);
-  wireDigits(month, 2, null, false);
-  wireDigits(year, 4, null, true);
+  wireDigits(day, 2, month, false, null, prefix);
+  wireDigits(month, 2, null, false, day, prefix);
+  wireDigits(year, 4, null, true, month, prefix);
   const padOnBlur = (input) => {
     input.addEventListener("blur", () => {
       const n = digitsOnly(input.value);
-      if (n) input.value = n.padStart(2, "0");
+      if (n.length === 1) input.value = n.padStart(2, "0");
+      refreshDate(prefix);
     });
   };
   padOnBlur(day);
   padOnBlur(month);
   year.addEventListener("blur", () => {
     if (!digitsOnly(year.value)) year.value = DEFAULT_YEAR;
+    refreshDate(prefix);
   });
   for (const input of [day, month, year]) input.addEventListener("paste", (event) => pasteDate(event, prefix));
   const native = document.getElementById(prefix);
@@ -1202,7 +1272,7 @@ function wireChrome() {
     render();
   });
   document.getElementById("dates").addEventListener("submit", (event) => event.preventDefault());
-  for (const prefix of ["range-start", "range-end"]) bindRangeField(prefix);
+  for (const prefix of ["anchor", "range-start", "range-end"]) bindRangeField(prefix);
   document.getElementById("dates").addEventListener("change", onControlsChange);
   window.addEventListener("popstate", () => {
     const prevDepth = VIEW_DEPTH[state.view] ?? 0;
