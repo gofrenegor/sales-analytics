@@ -1,5 +1,6 @@
 """Postgres (боевая база) и SQLite (проверка). Схема таблицы не пересоздаётся."""
 
+import gzip
 import json
 import logging
 import os
@@ -448,7 +449,7 @@ def get_ready(key):
     with _cache_lock:
         hit = _ready.get(key)
         if hit and now - hit[0] < CACHE_TTL and hit[2] == _generation:
-            return hit[1]
+            return hit[1], hit[3]
         if hit:
             _ready.pop(key, None)
     return None
@@ -461,10 +462,11 @@ def put_ready(key, payload, generation):
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+    packed = gzip.compress(body, compresslevel=9, mtime=0)
     with _cache_lock:
         if generation == _generation:
-            _ready[key] = (time.monotonic(), body, generation)
-    return body
+            _ready[key] = (time.monotonic(), body, generation, packed)
+    return body, packed
 
 
 def empty_summary():

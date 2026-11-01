@@ -11,7 +11,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, File, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -69,8 +69,12 @@ def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
 
 
-def _json(body: bytes):
-    return Response(content=body, media_type="application/json")
+def _ready_response(body, packed, request):
+    headers = {"Vary": "Accept-Encoding"}
+    if packed and "gzip" in request.headers.get("accept-encoding", "").lower():
+        headers["Content-Encoding"] = "gzip"
+        return Response(content=packed, media_type="application/json", headers=headers)
+    return Response(content=body, media_type="application/json", headers=headers)
 
 
 def actor(access_id: str | None = Cookie(default=None)):
@@ -223,11 +227,11 @@ def _period(mode, anchor, start, end):
         return None, fail(500, db.public_error(exc))
 
 
-def _cached_json(kind, period, build):
+def _cached_json(kind, period, build, request):
     key = db.ready_key(kind, period)
     cached = db.get_ready(key)
     if cached is not None:
-        return _json(cached)
+        return _ready_response(cached[0], cached[1], request)
     generation = db.cache_generation()
     try:
         payload = build(period)
@@ -236,7 +240,8 @@ def _cached_json(kind, period, build):
     except Exception as exc:
         log.exception(kind)
         return fail(500, db.public_error(exc))
-    return _json(db.put_ready(key, payload, generation))
+    body, packed = db.put_ready(key, payload, generation)
+    return _ready_response(body, packed, request)
 
 
 def _report_payload(period):
@@ -255,6 +260,7 @@ def _employees_payload(period):
 
 @app.get("/api/report")
 def report(
+    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -267,11 +273,12 @@ def report(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("report", period, _report_payload)
+    return _cached_json("report", period, _report_payload, request)
 
 
 @app.get("/api/employees")
 def employees(
+    request: Request,
     mode: str = "Месяц",
     anchor: str | None = None,
     start: str | None = None,
@@ -284,7 +291,7 @@ def employees(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employees", period, _employees_payload)
+    return _cached_json("employees", period, _employees_payload, request)
 
 
 @app.post("/api/admin/cache/clear")
@@ -463,4 +470,17 @@ def favicon():
     return Response(status_code=204)
 
 
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+class CachedStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code != 200:
+            return response
+        query = scope.get("query_string") or b""
+        if b"v=" in query:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.endswith(".woff2"):
+            response.headers["Cache-Control"] = "public, max-age=2592000"
+        return response
+
+
+app.mount("/static", CachedStatic(directory=STATIC), name="static")

@@ -276,50 +276,69 @@ function queryBare(query) {
   return String(query || "").trim().toLowerCase().replace(/^lr\s+/, "");
 }
 
-function searchHits(query) {
-  const bare = queryBare(query);
-  if (!bare || !state.report || state.report.empty || !state.report.flows) return [];
-  const numeric = /^\d+$/.test(bare);
-  const hits = [];
-  for (const code of ["in", "out"]) {
-    const flow = state.report.flows[code];
-    if (!flow) continue;
-    for (const card of flow.cards || []) {
-      if (!numeric && String(card.name).toLowerCase().includes(bare)) {
-        hits.push({
+let searchIndexReport = null;
+let searchIndexRows = null;
+
+function searchIndex() {
+  const report = state.report;
+  if (searchIndexReport === report && searchIndexRows) return searchIndexRows;
+  const rows = [];
+  if (report && !report.empty && report.flows) {
+    for (const code of ["in", "out"]) {
+      const flow = report.flows[code];
+      if (!flow) continue;
+      for (const card of flow.cards || []) {
+        rows.push({
           kind: "Блок",
+          name: String(card.name).toLowerCase(),
           title: card.name,
           meta: flow.title,
           sum: card.loss_sum,
           go: { view: "group", flow: code, group: card.name, block: "" },
         });
-      }
-      for (const section of (card.group_view && card.group_view.sections) || []) {
-        for (const item of section.cards || []) {
-          if (!numeric && String(item.name).toLowerCase().includes(bare)) {
-            hits.push({
+        for (const section of (card.group_view && card.group_view.sections) || []) {
+          for (const item of section.cards || []) {
+            rows.push({
               kind: "Площадка",
+              name: String(item.name).toLowerCase(),
               title: item.name,
               meta: `${flow.title} · ${card.name}`,
               sum: item.loss_sum,
               go: { view: "block_detail", flow: code, group: card.name, block: item.name },
             });
-          }
-          for (const row of (item.detail && item.detail.rows) || []) {
-            const reason = String(row.reason).toLowerCase();
-            const match = numeric ? reason === bare : reason.includes(bare);
-            if (!match) continue;
-            hits.push({
-              kind: "LR",
-              title: `LR ${row.reason}`,
-              meta: `${flow.title} · ${card.name} · ${item.name}`,
-              sum: row.sum,
-              go: { view: "block_detail", flow: code, group: card.name, block: item.name },
-            });
+            for (const row of (item.detail && item.detail.rows) || []) {
+              rows.push({
+                kind: "LR",
+                lr: true,
+                name: String(row.reason).toLowerCase(),
+                title: `LR ${row.reason}`,
+                meta: `${flow.title} · ${card.name} · ${item.name}`,
+                sum: row.sum,
+                go: { view: "block_detail", flow: code, group: card.name, block: item.name },
+              });
+            }
           }
         }
       }
     }
+  }
+  searchIndexReport = report;
+  searchIndexRows = rows;
+  return rows;
+}
+
+function searchHits(query) {
+  const bare = queryBare(query);
+  if (!bare || !state.report || state.report.empty || !state.report.flows) return [];
+  const numeric = /^\d+$/.test(bare);
+  const hits = [];
+  for (const row of searchIndex()) {
+    if (row.lr) {
+      if (!(numeric ? row.name === bare : row.name.includes(bare))) continue;
+    } else if (numeric || !row.name.includes(bare)) {
+      continue;
+    }
+    hits.push(row);
   }
   hits.sort((a, b) => (Number(b.sum) || 0) - (Number(a.sum) || 0));
   return hits.slice(0, 12);
