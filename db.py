@@ -31,14 +31,14 @@ READ_COLUMNS = (
     "status_employee_id",
 )
 WRITE_COLUMNS = READ_COLUMNS
-# Главный экран не читает ШК и бейджик: они только у раздела «Сотрудники».
+# Главный экран не читает ШК и бейджик. Сотрудники читают бейджик, без списка ШК.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
         "reason", "status_before", "block_id", "office_id",
     ),
     "employees": (
-        "loss_date", "barcode", "block_name", "loss_sum",
+        "loss_date", "block_name", "loss_sum",
         "reason", "status_before", "block_id", "office_id",
         "status_employee_id",
     ),

@@ -454,27 +454,6 @@ def badge_id(value):
     return re.sub(r"\D", "", text)
 
 
-def plain_code(value):
-    """ШК текстом без хвоста «.0»."""
-    try:
-        missing = value is None or pd.isna(value)
-    except (TypeError, ValueError):
-        missing = value is None
-    if missing:
-        return ""
-    if isinstance(value, float):
-        if math.isnan(value) or math.isinf(value):
-            return ""
-        if value.is_integer():
-            return str(int(value))
-    text = str(value).strip()
-    if text.lower() in {"nan", "none", "nat", "<na>"}:
-        return ""
-    if re.fullmatch(r"\d+\.0+", text):
-        return text.split(".")[0]
-    return text
-
-
 def _employee_raw(df):
     """Серия бейджика до обрезки колонок.
 
@@ -1007,10 +986,10 @@ def build_quality(curr, other_curr):
 
 
 def build_employees(df):
-    """LR 5 по бейджику. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса."""
+    """LR 5 по бейджику. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. Без списка ШК."""
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return []
-    wanted = [col for col in ("status_employee_id", "barcode", "loss_sum", "status_before") if col in df.columns]
+    wanted = [col for col in ("status_employee_id", "loss_sum", "status_before") if col in df.columns]
     part = df.loc[df["reason"].astype(str) == "5", wanted].copy()
     if part.empty:
         return []
@@ -1018,10 +997,6 @@ def build_employees(df):
         part["badge"] = ""
     else:
         part["badge"] = part["status_employee_id"].map(badge_id)
-    if "barcode" not in part.columns:
-        part["barcode"] = ""
-    else:
-        part["barcode"] = part["barcode"].map(plain_code)
     if "loss_sum" not in part.columns:
         part["loss_sum"] = 0.0
     part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
@@ -1029,22 +1004,14 @@ def build_employees(df):
         part["wmi"] = False
     else:
         part["wmi"] = part["status_before"].astype(str) == "WMI"
-    part = part.sort_values(["badge", "loss_sum", "barcode"], ascending=[True, False, True], kind="mergesort")
     rows = []
     for badge, group in part.groupby("badge", sort=False):
-        sums = group["loss_sum"].to_numpy()
-        codes = group["barcode"].tolist()
         flags = group["wmi"].tolist()
-        items = [
-            {"barcode": codes[i] or "", "sum": _f(sums[i]), "wmi": bool(flags[i])}
-            for i in range(len(codes))
-        ]
         rows.append({
             "badge": str(badge or ""),
-            "losses": len(items),
-            "sum": _f(sums.sum()),
+            "losses": int(len(group)),
+            "sum": _f(group["loss_sum"].sum()),
             "wmi": bool(any(flags)),
-            "items": items,
         })
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
     return rows

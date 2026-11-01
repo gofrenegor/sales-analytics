@@ -213,7 +213,6 @@ main {
 }
 .badge-search button.primary { padding: 0 1.15rem; }
 .emp-list { display: flex; flex-direction: column; gap: 8px; }
-.emp-card { min-width: 0; }
 .emp-row {
   width: 100%;
   display: grid;
@@ -226,11 +225,6 @@ main {
   border-radius: 12px;
   padding: 10px 12px;
   min-height: 3.1rem;
-}
-.emp-row:hover { background: var(--card-hover); }
-.emp-card.open .emp-row {
-  border-color: var(--blue);
-  border-radius: 12px 12px 0 0;
 }
 .emp-badge {
   font-variant-numeric: tabular-nums;
@@ -250,26 +244,6 @@ main {
   text-align: center;
 }
 .emp-bang.idle { visibility: hidden; }
-.emp-drop {
-  border: 1px solid var(--blue);
-  border-top: 0;
-  border-radius: 0 0 12px 12px;
-  background: var(--card);
-  padding: 2px 12px 8px;
-}
-.emp-shk {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-  padding: 7px 0;
-  border-bottom: 1px solid var(--line);
-  font-variant-numeric: tabular-nums;
-}
-.emp-shk:last-child { border-bottom: 0; }
-.emp-shk .code { min-width: 0; overflow-wrap: anywhere; }
-.emp-shk .wmi { color: var(--red); font-weight: 800; margin-left: 8px; }
-.emp-shk b { flex: 0 0 auto; font-weight: 700; }
 .sr {
   position: absolute;
   width: 1px;

@@ -16,7 +16,6 @@ const state = {
   employeesError: "",
   badgeDraft: "",
   badgeQuery: "",
-  employeeOpen: null,
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
@@ -1604,10 +1603,6 @@ function renderHeatmap(rows) {
   );
 }
 
-function empKey(row) {
-  return row.badge ? String(row.badge) : "—";
-}
-
 function renderEmployees(screen) {
   const report = state.report;
   const all = state.employees || [];
@@ -1632,7 +1627,6 @@ function renderEmployees(screen) {
       event.preventDefault();
       state.badgeQuery = String(state.badgeDraft || "").replace(/\D/g, "");
       state.badgeDraft = state.badgeQuery;
-      state.employeeOpen = null;
       render();
     },
   }, input, el("button", { type: "submit", class: "primary" }, "Найти"));
@@ -1643,14 +1637,13 @@ function renderEmployees(screen) {
       onclick: () => {
         state.badgeQuery = "";
         state.badgeDraft = "";
-        state.employeeOpen = null;
         render();
       },
     }, "Сброс"));
   }
   screen.append(
     el("div", { class: "screen-head" }, el("h2", null, "Сотрудники")),
-    el("p", { class: "hint" }, "Тест: только LR 5. Сверху — у кого больше потерь. Красный «!» — среди потерь есть статус WMI. Нажмите строку: ШК и сумма каждой потери."),
+    el("p", { class: "hint" }, "Тест: только LR 5. Сверху — у кого больше потерь. Красный «!» — среди потерь есть статус WMI."),
     form,
   );
   if (freeRangePending()) {
@@ -1691,21 +1684,10 @@ function renderEmployees(screen) {
   }
   const list = el("div", { class: "emp-list" });
   for (const row of rows) {
-    const key = empKey(row);
-    const open = state.employeeOpen === key;
     const label = row.badge ? String(row.badge) : "не указан";
-    const card = el("div", { class: open ? "emp-card open" : "emp-card" });
-    card.append(el(
-      "button",
-      {
-        type: "button",
-        class: "emp-row",
-        "aria-expanded": open ? "true" : "false",
-        onclick: () => {
-          state.employeeOpen = open ? null : key;
-          render();
-        },
-      },
+    list.append(el(
+      "div",
+      { class: "emp-row" },
       el("span", { class: "emp-badge" }, label),
       el("span", { class: "emp-losses" }, `${fmtInt(row.losses)} ${lossLabel(row.losses)}`),
       el("span", { class: "emp-sum" }, fmtRub(row.sum)),
@@ -1713,16 +1695,6 @@ function renderEmployees(screen) {
         ? el("span", { class: "emp-bang", title: "Есть потеря после статуса WMI" }, "!")
         : el("span", { class: "emp-bang idle", "aria-hidden": "true" }, "!"),
     ));
-    if (open) {
-      const drop = el("div", { class: "emp-drop" });
-      for (const item of row.items || []) {
-        const code = el("span", { class: "code" }, item.barcode || "—");
-        if (item.wmi) code.append(el("span", { class: "wmi", title: "Статус перед списанием — WMI" }, "!"));
-        drop.append(el("div", { class: "emp-shk" }, code, el("b", null, fmtRub(item.sum))));
-      }
-      card.append(drop);
-    }
-    list.append(card);
   }
   screen.append(list);
 }
@@ -1990,6 +1962,8 @@ function syncSections() {
   if (staff) staff.setAttribute("aria-pressed", employees ? "true" : "false");
   const search = document.querySelector("header .search");
   if (search) search.hidden = employees;
+  const title = document.querySelector("header.top h1");
+  if (title) title.textContent = employees ? "📦 аналитика лошков и бедолаг" : "📦 Аналитика списаний";
 }
 
 function render() {
