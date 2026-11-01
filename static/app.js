@@ -1621,6 +1621,7 @@ function renderEmployees(screen) {
   for (const code of ["5", "27"]) {
     lrs.append(el("button", {
       type: "button",
+      class: code === "27" ? "lr27" : "lr5",
       "aria-pressed": lr === code ? "true" : "false",
       onclick: () => {
         if (state.empLr === code) return;
