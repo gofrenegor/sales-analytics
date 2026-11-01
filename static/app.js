@@ -1868,14 +1868,24 @@ function renderEmployees(screen) {
   }
   screen.append(list);
   if (pages.length > 1) {
-    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы бейджиков" });
-    pages.forEach((item, index) => {
+    const nav = el("nav", { class: "emp-pages", "aria-label": "Вкладки бейджиков" });
+    if (pageIndex > 0) {
       nav.append(el("button", {
         type: "button",
-        "aria-pressed": index === pageIndex ? "true" : "false",
-        onclick: () => showEmpPage(index),
-      }, `${fmtInt(item.start + 1)}–${fmtInt(item.end)}`));
-    });
+        class: "emp-page-arrow",
+        "aria-label": "Предыдущая вкладка",
+        onclick: () => showEmpPage(pageIndex - 1),
+      }, "←"));
+    }
+    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, `вкладка ${pageIndex + 1}`));
+    if (pageIndex < pages.length - 1) {
+      nav.append(el("button", {
+        type: "button",
+        class: "emp-page-arrow",
+        "aria-label": "Следующая вкладка",
+        onclick: () => showEmpPage(pageIndex + 1),
+      }, "→"));
+    }
     screen.append(nav);
   }
 }

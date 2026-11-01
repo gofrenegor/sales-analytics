@@ -400,27 +400,36 @@ main {
 }
 .emp-pages {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
   margin-top: 12px;
 }
-.emp-pages button {
+.emp-pages button,
+.emp-page-tab {
   flex: 0 0 auto;
   height: 1.7rem;
   min-height: 0;
-  padding: 0 0.7rem;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--card);
   font-size: 13px;
   font-weight: 750;
   line-height: 1;
-  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
-.emp-pages button[aria-pressed="true"] {
+.emp-page-arrow {
+  width: 2.1rem;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+}
+.emp-page-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 0.85rem;
+  border: 1px solid var(--blue);
   background: var(--blue);
-  border-color: var(--blue);
   color: #fff;
 }
 .badge-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0.5rem 0 0.9rem; }
