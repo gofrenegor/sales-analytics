@@ -652,6 +652,66 @@ def hourly_series(frame, day, label):
     )
 
 
+def spark_by_group(frame, start, end):
+    """Дневные суммы по блоку. Ключ — имя группы, значение — сумма каждого дня периода."""
+    n_days = (end - start).days + 1
+    if n_days < 2:
+        return {}
+    if frame is None or len(frame) == 0 or "block_group" not in getattr(frame, "columns", []):
+        return {}
+    if "loss_date" not in frame.columns:
+        return {}
+    day = frame["loss_date"].dt.normalize()
+    ok = day.notna()
+    if not bool(ok.any()):
+        return {}
+    grouped = frame.loc[ok].groupby([day.loc[ok], frame.loc[ok, "block_group"]])["loss_sum"].sum()
+    origin = pd.Timestamp(start)
+    out = {}
+    for (ts, name), value in grouped.items():
+        pos = (_stamp(ts) - origin).days
+        if pos < 0 or pos >= n_days:
+            continue
+        key = "" if name is None else str(name)
+        bucket = out.setdefault(key, [0.0] * n_days)
+        bucket[pos] = _f(value)
+    return out
+
+
+def reason_rows(frame):
+    """Причины LR по убыванию суммы. Длинный хвост схлопывается в «остальные»."""
+    if frame is None or len(frame) == 0 or "reason" not in getattr(frame, "columns", []):
+        return []
+    lr = frame.groupby("reason")[["loss_sum", "loss_qty"]].sum().reset_index()
+    total = _f(lr["loss_sum"].sum())
+    lr = lr.sort_values(["loss_sum", "reason"], ascending=[False, True])
+    rows = []
+    for rec in lr.itertuples(index=False):
+        amount = _f(rec.loss_sum)
+        if amount == 0 and _f(rec.loss_qty) == 0:
+            continue
+        rows.append({
+            "reason": str(rec.reason),
+            "sum": amount,
+            "qty": _f(rec.loss_qty),
+            "pct": (amount / total * 100) if total else 0.0,
+        })
+    if len(rows) <= 24:
+        return rows
+    head = rows[:23]
+    rest = rows[23:]
+    rest_sum = _f(sum(item["sum"] for item in rest))
+    rest_qty = _f(sum(item["qty"] for item in rest))
+    head.append({
+        "reason": "остальные",
+        "sum": rest_sum,
+        "qty": rest_qty,
+        "pct": (rest_sum / total * 100) if total else 0.0,
+        "rest": True,
+    })
+    return head
+
+
 def _excluded_sum(other_curr, group, key, name):
     if other_curr is None or len(other_curr) == 0:
         return None
@@ -867,14 +927,31 @@ def build_report(df_curr, df_prev, period):
     for code, title in (("in", "Входящий поток"), ("out", "Исходящий поток")):
         dc = curr[curr["flow"] == title]
         dp = prev[prev["flow"] == title]
+        cards = flow_cards(dc, dp, title, has_prev, other_curr)
+        if period["days"] > 1:
+            sparks = spark_by_group(dc, period["_start"], period["_end"])
+            for card in cards:
+                series = sparks.get(card["name"])
+                if series and any(series):
+                    card["spark"] = series
         flows[code] = {
             "title": title,
             "sum": _sum(dc, "loss_sum"),
-            "cards": flow_cards(dc, dp, title, has_prev, other_curr),
+            "qty": _sum(dc, "loss_qty"),
+            "prev_sum": _sum(dp, "loss_sum"),
+            "prev_qty": _sum(dp, "loss_qty"),
+            "cards": cards,
         }
 
     in_sum = flows["in"]["sum"]
     out_sum = flows["out"]["sum"]
+    flow_total = in_sum + out_sum
+    for code in ("in", "out"):
+        item = flows[code]
+        item["share"] = (item["sum"] / flow_total * 100) if flow_total else 0.0
+        item["delta_text"] = (
+            get_delta_text(item["sum"], item["qty"], item["prev_sum"], item["prev_qty"]) if has_prev else None
+        )
     total_sum = _sum(curr, "loss_sum")
     total_qty = _sum(curr, "loss_qty")
     prev_sum = _sum(prev, "loss_sum")
@@ -915,6 +992,7 @@ def build_report(df_curr, df_prev, period):
             "prev_qty": prev_qty,
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
             "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
+            "reasons": reason_rows(curr),
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,
                 "has_rows": not other_curr.empty,

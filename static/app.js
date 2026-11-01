@@ -66,6 +66,261 @@ function shareText(pct, label) {
   return `${text} ${label}`;
 }
 
+function pctLabel(pct) {
+  const value = Number(pct) || 0;
+  if (value > 0 && value < 0.1) return "< 0.1%";
+  return `${value.toFixed(1)}%`;
+}
+
+function parseIso(iso) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function addUtcDays(date, days) {
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function csvCell(value) {
+  const text = value == null ? "" : String(value);
+  if (/[;"\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
+}
+
+function downloadCsv(filename, header, rows) {
+  const lines = [header, ...rows].map((row) => row.map(csvCell).join(";"));
+  const blob = new Blob([`\uFEFF${lines.join("\r\n")}`], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportName(suffix) {
+  const start = (state.report && state.report.period && state.report.period.start) || "period";
+  return `spisaniya-${suffix}-${start}.csv`;
+}
+
+function downloadButton(filename, header, rows) {
+  return el("button", {
+    type: "button",
+    class: "quiet",
+    onclick: () => downloadCsv(filename, header, rows),
+  }, "Скачать");
+}
+
+const PARETO_COLORS = ["#4C9AFF", "#3fb950", "#c4b5fd", "#e3b341", "#ff7b72", "#79c0ff", "#d2a8ff", "#ffa657"];
+const HEAT_MON = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
+
+function paretoModel(rows) {
+  const clean = (rows || []).filter((row) => Number(row.sum) > 0 && !row.rest);
+  if (!clean.length) return null;
+  const named = [];
+  let cum = 0;
+  for (const row of clean) {
+    if (cum >= 80 && named.length) break;
+    named.push(row);
+    cum += Number(row.pct) || 0;
+    if (named.length >= 8) break;
+  }
+  const namedPct = named.reduce((sum, row) => sum + (Number(row.pct) || 0), 0);
+  return {
+    named,
+    restPct: Math.max(0, 100 - namedPct),
+    count: named.length,
+    caption: pctLabel(namedPct),
+  };
+}
+
+function renderPareto(rows) {
+  const model = paretoModel(rows);
+  if (!model) return null;
+  const bar = el("div", {
+    class: "pareto",
+    role: "img",
+    "aria-label": `${model.count} LR = ${model.caption} суммы`,
+  });
+  model.named.forEach((row, index) => {
+    const seg = el("i", { style: `flex:${Math.max(Number(row.pct) || 0, 0.4)} 1 0;background:${PARETO_COLORS[index % PARETO_COLORS.length]}` });
+    seg.title = `LR ${row.reason} · ${pctLabel(row.pct)} · ${fmtRub(row.sum)}`;
+    bar.append(seg);
+  });
+  if (model.restPct > 0.05) {
+    const rest = el("i", { class: "pareto-rest", style: `flex:${Math.max(model.restPct, 0.4)} 1 0` });
+    rest.title = `остальные · ${pctLabel(model.restPct)}`;
+    bar.append(rest);
+  }
+  const legend = el("div", { class: "pareto-legend" });
+  model.named.forEach((row, index) => {
+    legend.append(el(
+      "span",
+      null,
+      el("i", { style: `background:${PARETO_COLORS[index % PARETO_COLORS.length]}` }),
+      `LR ${row.reason} ${pctLabel(row.pct)}`,
+    ));
+  });
+  if (model.restPct > 0.05) {
+    legend.append(el("span", null, el("i", { class: "pareto-rest" }), `остальные ${pctLabel(model.restPct)}`));
+  }
+  return el(
+    "div",
+    { class: "pareto-block" },
+    el("p", { class: "pareto-caption" }, `${model.count} LR = ${model.caption} суммы`),
+    bar,
+    legend,
+  );
+}
+
+function sparkline(values) {
+  if (!values || values.length < 2) return null;
+  const width = 120;
+  const height = 28;
+  const pad = 2;
+  const max = Math.max(...values, 0);
+  const span = max || 1;
+  const step = (width - pad * 2) / (values.length - 1);
+  const pts = values.map((value, index) => {
+    const x = pad + index * step;
+    const y = pad + (height - pad * 2) * (1 - (Number(value) || 0) / span);
+    return [x, y];
+  });
+  const line = pts.map((point, index) => `${index ? "L" : "M"}${point[0].toFixed(1)} ${point[1].toFixed(1)}`).join(" ");
+  const area = `${line} L${pts[pts.length - 1][0].toFixed(1)} ${(height - pad).toFixed(1)} L${pts[0][0].toFixed(1)} ${(height - pad).toFixed(1)} Z`;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "spark", "aria-hidden": "true" });
+  svg.append(svgEl("path", { d: area, class: "spark-area" }));
+  svg.append(svgEl("path", { d: line, class: "spark-line", fill: "none" }));
+  return svg;
+}
+
+function moverRows() {
+  const report = state.report;
+  if (!report || !report.has_prev || !report.flows) return { up: [], down: [] };
+  const items = [];
+  for (const code of ["in", "out"]) {
+    const flow = report.flows[code];
+    if (!flow) continue;
+    for (const card of flow.cards || []) {
+      const sum = Number(card.loss_sum) || 0;
+      const prev = Number(card.prev_sum) || 0;
+      const diff = sum - prev;
+      if (!diff) continue;
+      items.push({
+        name: card.name,
+        flow: code,
+        flowTitle: code === "in" ? "входящий" : "исходящий",
+        sum,
+        prev,
+        diff,
+        growth: prev > 0 ? (diff / prev) * 100 : null,
+        pct: card.pct,
+      });
+    }
+  }
+  return {
+    up: items.filter((item) => item.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 3),
+    down: items.filter((item) => item.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 3),
+  };
+}
+
+function moverColumn(title, items, kind) {
+  const col = el("div", { class: "test-col" });
+  col.append(el("h3", null, title));
+  if (!items.length) {
+    col.append(el("p", { class: "test-empty" }, kind === "up" ? "Нет взлётов" : "Нет падений"));
+    return col;
+  }
+  for (const item of items) {
+    const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
+    const pct = item.growth == null
+      ? "не было в прошлом периоде"
+      : `${item.growth > 0 ? "+" : ""}${item.growth.toFixed(1)}%`;
+    col.append(el(
+      "button",
+      {
+        type: "button",
+        class: "test-row",
+        onclick: () => go({ view: "group", flow: item.flow, group: item.name, block: "" }),
+      },
+      el("div", { class: "test-name" }, item.name),
+      el("div", { class: "test-meta" }, `${item.flowTitle} · ${pctLabel(item.pct)} потока`),
+      el("div", { class: "test-sum" }, fmtRub(item.sum)),
+      el("div", { class: "test-meta" }, `было ${fmtRub(item.prev)}`),
+      el("div", { class: `test-delta ${kind}` }, `${money} · ${pct}`),
+    ));
+  }
+  return col;
+}
+
+function renderMovers() {
+  const panel = el("section", { class: "test-panel", "aria-label": "тест" });
+  panel.append(el("div", { class: "test-title" }, "тест"));
+  if (!state.report || !state.report.has_prev) {
+    panel.append(el("p", { class: "test-empty" }, "Для этого разреза нет прошлого периода."));
+    return panel;
+  }
+  const { up, down } = moverRows();
+  panel.append(el("div", { class: "test-cols" }, moverColumn("Взлёты", up, "up"), moverColumn("Падения", down, "down")));
+  return panel;
+}
+
+function queryBare(query) {
+  return String(query || "").trim().toLowerCase().replace(/^lr\s+/, "");
+}
+
+function searchHits(query) {
+  const bare = queryBare(query);
+  if (!bare || !state.report || state.report.empty || !state.report.flows) return [];
+  const numeric = /^\d+$/.test(bare);
+  const hits = [];
+  for (const code of ["in", "out"]) {
+    const flow = state.report.flows[code];
+    if (!flow) continue;
+    for (const card of flow.cards || []) {
+      if (!numeric && String(card.name).toLowerCase().includes(bare)) {
+        hits.push({
+          kind: "Блок",
+          title: card.name,
+          meta: flow.title,
+          sum: card.loss_sum,
+          go: { view: "group", flow: code, group: card.name, block: "" },
+        });
+      }
+      for (const section of (card.group_view && card.group_view.sections) || []) {
+        for (const item of section.cards || []) {
+          if (!numeric && String(item.name).toLowerCase().includes(bare)) {
+            hits.push({
+              kind: "Площадка",
+              title: item.name,
+              meta: `${flow.title} · ${card.name}`,
+              sum: item.loss_sum,
+              go: { view: "block_detail", flow: code, group: card.name, block: item.name },
+            });
+          }
+          for (const row of (item.detail && item.detail.rows) || []) {
+            const reason = String(row.reason).toLowerCase();
+            const match = numeric ? reason === bare : reason.includes(bare);
+            if (!match) continue;
+            hits.push({
+              kind: "LR",
+              title: `LR ${row.reason}`,
+              meta: `${flow.title} · ${card.name} · ${item.name}`,
+              sum: row.sum,
+              go: { view: "block_detail", flow: code, group: card.name, block: item.name },
+            });
+          }
+        }
+      }
+    }
+  }
+  hits.sort((a, b) => (Number(b.sum) || 0) - (Number(a.sum) || 0));
+  return hits.slice(0, 12);
+}
+
 function setBanner(text) {
   const banner = document.getElementById("banner");
   banner.hidden = !text;
@@ -951,6 +1206,7 @@ function renderCards(cards, shareLabel, onOpen) {
       el("div", { class: "c-name" }, card.name),
       el("div", { class: "c-sum" }, fmtRub(card.loss_sum)),
       chip,
+      card.spark ? sparkline(card.spark) : null,
       bar,
       el("div", { class: "c-share" }, shareText(card.pct, shareLabel)),
       el("button", { type: "button", onclick: () => onOpen(card, index) }, "Открыть →"),
@@ -1001,6 +1257,15 @@ function buildTipBlock(row, dayDeltaChip) {
   if (dayDeltaChip) block.append(el("div", { class: "tip-day-delta" }, dayDeltaChip));
   for (const [key, pick] of TIP_FIELDS) block.append(tipCellLine(key, pick(row)));
   return block;
+}
+
+function dayTip(rows, day) {
+  const list = rows.filter((row) => row.day === day).slice().sort(
+    (a, b) => (TIP_PERIOD_ORDER[a.period] ?? 0) - (TIP_PERIOD_ORDER[b.period] ?? 0),
+  );
+  const current = rows.filter((row) => row.period === "Текущий период");
+  const prevDayCur = current.find((row) => row.day === day - 1);
+  return buildCompareTip(list, prevDayCur);
 }
 
 function buildCompareTip(sortedRows, prevDayCur) {
@@ -1190,11 +1455,6 @@ function renderChart(rows, grain) {
   line(previousPts, colors.previous, "5 4");
   line(currentPts, colors.current, "");
 
-  const byDay = new Map();
-  for (const row of rows) {
-    if (!byDay.has(row.day)) byDay.set(row.day, []);
-    byDay.get(row.day).push(row);
-  }
   const hit = svgEl("rect", { x: pad.l, y: pad.t, width: innerW, height: innerH, fill: "transparent" });
   hit.style.cursor = "crosshair";
   svg.append(hit);
@@ -1218,12 +1478,8 @@ function renderChart(rows, grain) {
         bestDist = dist;
       }
     }
-    const list = (byDay.get(best) || []).slice().sort(
-      (a, b) => (TIP_PERIOD_ORDER[a.period] ?? 0) - (TIP_PERIOD_ORDER[b.period] ?? 0),
-    );
-    const prevDayCur = current.find((row) => row.day === best - 1);
     tip.replaceChildren();
-    const body = buildCompareTip(list, prevDayCur);
+    const body = dayTip(rows, best);
     if (body) tip.append(body);
     const wasHidden = tip.hidden;
     tip.hidden = false;
@@ -1234,8 +1490,9 @@ function renderChart(rows, grain) {
     }
     const host = wrap.getBoundingClientRect();
     const anchor = svg.createSVGPoint();
+    const today = current.find((row) => row.day === best);
     anchor.x = x(best);
-    anchor.y = y((list[0] && list[0].sum) || 0);
+    anchor.y = y((today && today.sum) || 0);
     const screen = anchor.matrixTransform(svg.getScreenCTM());
     let left = screen.x - host.left + 14;
     let top = screen.y - host.top + 14;
@@ -1254,6 +1511,74 @@ function renderChart(rows, grain) {
   return el("div", null, wrap, legend);
 }
 
+function renderHeatmap(rows) {
+  const period = state.report.period || {};
+  const start = parseIso(period.start);
+  const end = parseIso(period.end);
+  if (!start || !end || end < start) return null;
+  const current = rows.filter((row) => row.period === "Текущий период");
+  const max = Math.max(1, ...current.map((row) => Number(row.sum) || 0));
+  const wrap = el("div", { class: "heat-wrap" });
+  const tip = el("div", { class: "chart-tip" });
+  tip.hidden = true;
+  const grid = el("div", { class: "heat" });
+  for (const name of ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]) grid.append(el("div", { class: "heat-head" }, name));
+  const lead = (start.getUTCDay() + 6) % 7;
+  for (let i = 0; i < lead; i += 1) grid.append(el("div", { class: "heat-pad" }));
+  const count = Math.round((end - start) / 86400000) + 1;
+  for (let index = 0; index < count; index += 1) {
+    const date = addUtcDays(start, index);
+    const day = index + 1;
+    const point = current.find((row) => row.day === day);
+    const sum = point ? Number(point.sum) || 0 : 0;
+    const heat = sum <= 0 ? 0.06 : 0.16 + 0.84 * Math.sqrt(sum / max);
+    const cell = el(
+      "button",
+      {
+        type: "button",
+        class: heat > 0.62 ? "heat-cell on" : "heat-cell",
+        style: `--heat:${heat.toFixed(3)}`,
+        title: `${fmtDate(date.toISOString().slice(0, 10))} · ${fmtRub(sum)}`,
+      },
+      el("strong", null, String(date.getUTCDate())),
+    );
+    if (date.getUTCDate() === 1 || index === 0) cell.append(el("span", null, HEAT_MON[date.getUTCMonth()]));
+    const show = () => {
+      const body = dayTip(rows, day);
+      tip.replaceChildren();
+      if (body) tip.append(body);
+      tip.hidden = !body;
+      if (!body) return;
+      const host = wrap.getBoundingClientRect();
+      const rect = cell.getBoundingClientRect();
+      tip.style.left = "0px";
+      tip.style.top = "0px";
+      let left = rect.left - host.left + rect.width + 8;
+      let top = rect.top - host.top;
+      if (left + tip.offsetWidth > host.width) left = Math.max(8, rect.left - host.left - tip.offsetWidth - 8);
+      if (top + tip.offsetHeight > host.height) top = Math.max(8, host.height - tip.offsetHeight - 8);
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    };
+    cell.addEventListener("pointerenter", show);
+    cell.addEventListener("focus", show);
+    cell.addEventListener("click", show);
+    grid.append(cell);
+  }
+  grid.addEventListener("pointerleave", () => { tip.hidden = true; });
+  grid.addEventListener("focusout", (event) => {
+    if (!grid.contains(event.relatedTarget)) tip.hidden = true;
+  });
+  wrap.append(grid, tip);
+  return el(
+    "div",
+    { class: "heatmap" },
+    el("h3", { class: "section-title" }, "Календарь"),
+    wrap,
+    el("p", { class: "hint" }, "Цвет клетки — сумма дня. Наведите или нажмите: те же подробности, что у графика."),
+  );
+}
+
 function renderDashboard(screen) {
   const dash = state.report.dashboard;
   const hero = el("div", { class: "hero" });
@@ -1261,11 +1586,20 @@ function renderDashboard(screen) {
   chart.innerHTML = dash.donut_svg;
   bindDonut(chart);
   const side = el("div");
-  for (const [code, title, amount] of [
-    ["out", "исходящий поток", dash.out_sum],
-    ["in", "входящий поток", dash.in_sum],
-  ]) {
+  for (const code of ["out", "in"]) {
+    const flow = state.report.flows[code];
+    const title = code === "in" ? "входящий поток" : "исходящий поток";
     const help = code === "in" ? "Открыть блоки входящего потока" : "Открыть блоки исходящего потока";
+    const copy = el(
+      "span",
+      { class: "flow-copy" },
+      el("span", { class: "flow-name" }, title),
+      el("span", { class: "flow-meta" }, `${pctLabel(flow.share)} · ${fmtInt(flow.qty)} шт`),
+    );
+    if (flow.delta_text) {
+      const kind = flow.delta_text.startsWith("+") ? "r" : flow.delta_text.startsWith("-") ? "g" : "n";
+      copy.append(el("span", { class: `chip chip-${kind}` }, flow.delta_text));
+    }
     side.append(el(
       "button",
       {
@@ -1274,11 +1608,12 @@ function renderDashboard(screen) {
         title: help,
         onclick: () => go({ view: "flow", flow: code, group: "", block: "" }),
       },
-      el("span", { class: "flow-name" }, title),
-      el("strong", null, fmtRub(amount)),
+      copy,
+      el("strong", null, fmtRub(flow.sum)),
     ));
   }
   side.className = "hero-side";
+  side.append(renderMovers());
   side.append(el("p", { class: "hint" }, "Клик по сегменту кольца или строке потока откроет выбор блоков."));
   const donutCol = el("div", { class: "loss-col" });
   donutCol.append(chart);
@@ -1291,16 +1626,20 @@ function renderDashboard(screen) {
     const note = hourly && state.report.chart_time_missing
       ? " В выгрузке время суток не найдено: все списания стоят на 00:00."
       : "";
-    hero.append(el(
+    const chartCol = el(
       "div",
       { class: "daily-chart" },
       el("h3", { class: "section-title" }, hourly ? "Динамика по часам" : "Динамика по дням"),
       renderChart(state.report.daily, state.report.chart_grain),
       el("p", { class: "hint" }, hint + note),
-    ));
+    );
+    const heat = !hourly && (state.mode === "Месяц" || state.mode === "Свободный") ? renderHeatmap(state.report.daily) : null;
+    hero.append(el("div", { class: heat ? "daily-board" : "daily-board solo" }, chartCol, heat));
   }
   screen.append(hero);
   if (dash.delta_text) screen.append(el("p", { class: "delta-line" }, `К прошлому периоду · ${dash.delta_text}`));
+  const reasons = renderPareto(dash.reasons);
+  if (reasons) screen.append(el("h3", { class: "section-title" }, "Причины"), reasons);
   if (dash.other && dash.other.show) {
     const box = el("div", { class: "aside-metric" });
     const label = el("div", { class: "aside-label" }, "Вне потоков ", el("span", null, "· не входит в диаграмму"));
@@ -1319,9 +1658,19 @@ function renderFlow(screen) {
     screen.append(missing("dashboard"));
     return;
   }
+  const csvRows = flow.cards.map((card) => [
+    card.name,
+    Math.round(card.loss_sum || 0),
+    Number(card.pct || 0).toFixed(1),
+    Math.round(card.prev_sum || 0),
+    Math.round((card.loss_sum || 0) - (card.prev_sum || 0)),
+  ]);
   screen.append(
     backButton("← Назад на главную", "dashboard"),
-    el("h2", null, `Выбран: ${flow.title}`),
+    el("div", { class: "screen-head" },
+      el("h2", null, `Выбран: ${flow.title}`),
+      downloadButton(exportName(`potok-${state.flow}`), ["Блок", "Сумма (₽)", "Доля (%)", "Прошлый период (₽)", "Изменение (₽)"], csvRows),
+    ),
     el("div", { class: "sub" }, "Общая сумма списаний по потоку:"),
     el("div", { class: "big-sum" }, fmtRub(flow.sum)),
     el("hr"),
@@ -1338,9 +1687,24 @@ function renderGroup(screen) {
     return;
   }
   const view = card.group_view;
+  const csvRows = [];
+  for (const section of view.sections) {
+    for (const item of section.cards) {
+      csvRows.push([
+        section.title || "",
+        item.name,
+        Math.round(item.loss_sum || 0),
+        Number(item.pct || 0).toFixed(1),
+        Math.round(item.prev_sum || 0),
+      ]);
+    }
+  }
   screen.append(
     backButton("← Назад к потокам", "flow"),
-    el("h2", null, `Блок: ${card.name} (${flow.title})`),
+    el("div", { class: "screen-head" },
+      el("h2", null, `Блок: ${card.name} (${flow.title})`),
+      downloadButton(exportName("blok"), ["Раздел", "Площадка", "Сумма (₽)", "Доля (%)", "Прошлый период (₽)"], csvRows),
+    ),
     el("div", { class: "sub" }, "Общая сумма списаний по блоку:"),
     el("div", { class: "big-sum" }, fmtRub(view.sum)),
     el("hr"),
@@ -1364,15 +1728,26 @@ function renderDetail(screen) {
     return;
   }
   const detail = card.detail;
+  const csvRows = detail.rows.map((row) => [
+    row.reason,
+    Math.round(row.sum || 0),
+    Math.round(row.qty || 0),
+    Number(row.pct || 0).toFixed(1),
+  ]);
   screen.append(
     backButton("← Назад к площадкам", "group"),
-    el("h2", null, detail.title),
+    el("div", { class: "screen-head" },
+      el("h2", null, detail.title),
+      downloadButton(exportName("lr"), ["Причина (LR)", "Сумма (₽)", "Кол-во (шт)", "Доля (%)"], csvRows),
+    ),
     el("div", { class: "metric-label" }, "Сумма списаний по площадке"),
     el("div", { class: "metric-value" }, fmtRub(detail.sum)),
   );
   const delta = deltaNode(detail.delta_text);
   if (delta) screen.append(delta);
   screen.append(el("hr"));
+  const pareto = renderPareto(detail.rows);
+  if (pareto) screen.append(pareto);
   if (detail.excluded_sum != null) {
     screen.append(el("p", { class: "hint" }, `ℹ️ Не включено: ${fmtRub(detail.excluded_sum)} со статусами вне потоков (какие именно — в админке, вкладка «Инфо»).`));
   }
@@ -1709,8 +2084,70 @@ function bindRangeField(prefix) {
   });
 }
 
+function wireSearch() {
+  const input = document.getElementById("search");
+  const hits = document.getElementById("search-hits");
+  if (!input || !hits) return;
+  let items = [];
+  const hide = () => {
+    hits.hidden = true;
+    hits.replaceChildren();
+    items = [];
+  };
+  const paint = () => {
+    items = searchHits(input.value);
+    hits.replaceChildren();
+    if (!input.value.trim()) {
+      hits.hidden = true;
+      return;
+    }
+    hits.hidden = false;
+    if (!items.length) {
+      hits.append(el("p", { class: "search-empty" }, "Ничего не найдено"));
+      return;
+    }
+    for (const item of items) {
+      hits.append(el(
+        "button",
+        {
+          type: "button",
+          class: "search-hit",
+          onclick: () => {
+            const target = item.go;
+            input.value = "";
+            hide();
+            go(target);
+          },
+        },
+        el("span", { class: "search-kind" }, item.kind),
+        el("span", { class: "search-main" }, el("b", null, item.title), el("span", null, item.meta)),
+        el("span", { class: "search-sum" }, fmtRub(item.sum)),
+      ));
+    }
+  };
+  input.addEventListener("input", paint);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      input.value = "";
+      hide();
+      return;
+    }
+    if (event.key === "Enter" && items[0]) {
+      event.preventDefault();
+      const target = items[0].go;
+      input.value = "";
+      hide();
+      go(target);
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".search")) hide();
+  });
+}
+
 function wireChrome() {
   wireAdminPanel();
+  wireSearch();
   document.getElementById("theme")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
