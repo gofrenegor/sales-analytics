@@ -1,0 +1,57 @@
+---
+description: Где что лежит в аналитике списаний, и что делать в конце задачи
+alwaysApply: true
+---
+
+Сначала читай эту карту. Не ищи по репозиторию то, что уже названо здесь. Ищи заново только если карты не хватает или файл разошёлся с ней.
+
+## Конец каждой задачи
+
+Пользователь всегда хочет это, даже если в сообщении нет этих строк:
+
+```
+/no-test
+после выполнения задачи отправь комманду которую я должен буду ввести в термукс чтобы подтянуть обновления на сайт
+```
+
+- Тесты, браузер и ручные прогоны не запускай, пока пользователь явно не попросит тест.
+- Пушь сразу в `main`. Pull Request не создавай.
+- В конце ответа дай команду для Termux. Сайт на сервере: `/var/www/sales-analytics`.
+
+Команда, которую отправить:
+
+```
+cd /var/www/sales-analytics && git pull
+```
+
+Если менялись `server.py`, `analytics.py`, `db.py` или зависимости, второй строкой:
+
+```
+systemctl restart sales-analytics
+```
+
+Фронт (`static/`) читается с диска. `server.py` подставляет `?v=` из mtime `app.js` и `styles.css`. Для правки только фронта рестарт не нужен, хватит pull и обновления страницы.
+
+## Сайт
+
+Аналитика списаний. FastAPI + статический фронт. Запуск локально: `sh run.sh` (uvicorn `server:app`, порт 8501). Прод: systemd `deploy/sales-analytics.service`, рабочая папка `/var/www/sales-analytics`, venv `venv/bin/python`, слушает `127.0.0.1:8501`.
+
+База: таблица `losses`. Строка подключения: `DATABASE_URL` или `secrets.toml` ключ `[database].connection_string`. Если своего `secrets.toml` нет, читается `.streamlit/secrets.toml`. Образец: `secrets.toml.example`. `APP_TODAY` подменяет «сегодня» (тесты). Кэш чтения: 1 час, сброс `POST /api/admin/cache/clear`.
+
+## Файлы
+
+- `server.py` — HTTP. `GET /`, `GET /api/health`, `GET /api/bootstrap`, `GET /api/report`, админка: `POST /api/admin/cache/clear`, `GET /api/admin/summary`, `POST /api/admin/preview`, `POST /api/admin/commit`, `POST /api/admin/truncate`.
+- `analytics.py` — периоды, классификация, отчёт. Режимы: `День`, `Неделя`, `Месяц`, `Свободный` (`MODES`, потолок `FREE_MAX_DAYS` = 366). `compute_period` / `compute_free_period` считают окно. `classify_losses` раскладывает строки. `build_report` собирает ответ. Справочники: `BLOCK_MAPPING`, `STAGE_MAPPING`, `INBOUND_STATUSES`, `OUTBOUND_STATUSES`, `OPERKA_STATUSES`, `ASSEMBLY_LR`, `DEFECT_STATUSES`.
+- `db.py` — движок, схема `losses` (таблицу не пересоздаёт, только добавляет колонки), `load_cached`, `get_summary`, `replace_period`, `truncate_losses`.
+- `static/index.html` — каркас страницы.
+- `static/app.js` — состояние, URL, загрузка отчёта, экраны.
+- `static/styles.css` — стили. Режимы: `.modes`, свободный диапазон: `.range`.
+- `tests/` — pytest (`test_api.py`, `test_analytics.py`, `test_entrypoint.py`). По умолчанию не запускать.
+
+## Экран
+
+Разрезы в `#dates`: радио `mode`. Для День/Неделя/Месяц одна дата `#anchor` (`state.anchor`). Для «Свободный» две даты: `#range-start` («С», `state.rangeStart`) и `#range-end` («По», `state.rangeEnd`). «По» пустое, пока пользователь сам его не выбрал (`freeRangePending`). Загрузка отчёта только когда обе даты есть. Календарь «По» открывается на 15-м числе месяца «С» (`armEndPicker`, класс `date-seed`): день у края месяца на Android уводит плашку на следующий месяц. Заготовка не считается выбором (`chosenEndValue` пустой, пока висит `dataset.seed`).
+
+Экраны: `dashboard` → `flow` → `group` → `block_detail`. Функции: `renderDashboard`, `renderFlow`, `renderGroup`, `renderDetail`, график `renderChart`. URL: `mode`, `anchor` либо `start`+`end`, `view`, `flow`, `group`, `block`. Запрос отчёта: `loadReport` → `GET /api/report`.
+
+Админка: кнопка `#admin-toggle`, панель `#sidebar`. Кэш `#cache-btn`, тема `#theme`, загрузка xlsx `#files`, сводка базы `#db-summary`, очистка `#wipe` (чекбокс `#sure`).
