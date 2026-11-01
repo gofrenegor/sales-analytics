@@ -388,7 +388,7 @@ function renderQuality() {
     body.append(el(
       "p",
       { class: "box info" },
-      `Для сверки: ${item.count} строк с ID блока 6800 не попали в оперку (статусы: ${item.statuses.join(", ")}), сумма ${fmtRub(item.sum)}`,
+      `Для сверки: ${item.count} строк своего офиса с ID блока 6800 не попали в оперку (статусы: ${item.statuses.join(", ")}), сумма ${fmtRub(item.sum)}`,
     ));
   }
 }

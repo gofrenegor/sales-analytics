@@ -428,6 +428,17 @@ def _leading_id(series):
     return series.map(one)
 
 
+def _office_key(series):
+    """Офис текстом без хвоста «.0». Пустое и NaN — пустая строка."""
+    return series.fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
+
+def _own_office_mask(off):
+    """Свой офис 301760. Пустой офис — старые строки, та же логика своих блоков."""
+    blank = (off == "") | (off.str.lower() == "nan")
+    return blank | (off == OWN_OFFICE_ID)
+
+
 def classify_losses(df):
     """flow, process_stage, block_group.
 
@@ -437,6 +448,9 @@ def classify_losses(df):
     свой диапазон остаётся на названии места, чужой ID — «Другие логобъекты».
     Офис, оперка и брак для них не перебивают блок.
     MRD и SLT — группа «Отставание входа» на входящем потоке, мимо блока и брака.
+    Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
+    статус из OPERKA_STATUSES и это не LR сборки. ID блока перед списанием не решает.
+    Чужой офис или блок вне 6800–6826 — «Другие логобъекты», не оперка.
     Приоритет блока у остальных, от слабого к сильному: свой блок по названию
     места списания, оперка, чужой ЛО, брак. LR сборки не попадает ни в оперку,
     ни в брак: исход и блок места потери.
@@ -464,16 +478,17 @@ def classify_losses(df):
     df.loc[is_lag, "process_stage"] = LAG_GROUP
 
     own = df["block_name"].map(BLOCK_MAPPING)
-    b_id = _leading_id(df["status_block_id"])
+    loss_id = _leading_id(df["block_id"])
+    loss_blk = pd.to_numeric(loss_id, errors="coerce")
+    off = _office_key(df["office_id"])
     is_operka = (
         df["status_before"].isin(OPERKA_STATUSES)
-        & (b_id == OPERKA_BLOCK_ID)
+        & (loss_id == OPERKA_BLOCK_ID)
+        & _own_office_mask(off)
         & ~is_assembly
         & ~by_block_id
         & ~is_lag
     )
-    loss_blk = pd.to_numeric(_leading_id(df["block_id"]), errors="coerce")
-    off = df["office_id"].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     foreign_blk = loss_blk.notna() & ((loss_blk < OWN_BLOCK_RANGE[0]) | (loss_blk > OWN_BLOCK_RANGE[1]))
     foreign_off = (off != "") & (off.str.lower() != "nan") & (off != OWN_OFFICE_ID)
     is_foreign = foreign_blk | foreign_off | (loss_blk.isna() & (off == "") & own.isna())
@@ -779,10 +794,18 @@ def build_quality(curr, other_curr):
         unmapped = []
 
     block_6800 = None
-    if len(curr) and "status_block_id" in curr.columns:
+    if len(curr) and "block_id" in curr.columns:
+        if "office_id" in curr.columns:
+            off = _office_key(curr["office_id"])
+        else:
+            off = pd.Series("", index=curr.index)
         chk = curr[
-            _leading_id(curr["status_block_id"]).eq("6800")
+            _leading_id(curr["block_id"]).eq(OPERKA_BLOCK_ID)
+            & _own_office_mask(off)
             & (curr["block_group"] != "Опер площадь")
+            & (curr["block_group"] != DEFECT_GROUP)
+            & (curr["block_group"] != LAG_GROUP)
+            & ~curr["status_before"].isin(PLACE_BY_BLOCK_ID)
             & ~curr["reason"].isin(ASSEMBLY_LR)
         ]
         if not chk.empty:

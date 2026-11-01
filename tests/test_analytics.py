@@ -43,7 +43,36 @@ def row(**overrides):
     "overrides,flow,group",
     [
         ({}, "Входящий поток", "Рязань Тюшевское 1"),
-        ({"status_before": "smc", "status_block_id": "6800.0"}, "Исходящий поток", "Опер площадь"),
+        (
+            {"status_before": "smc", "block_id": "6800", "status_block_id": "6810"},
+            "Исходящий поток",
+            "Опер площадь",
+        ),
+        (
+            {"status_before": "SMC", "block_id": "6802", "status_block_id": "6800"},
+            "Исходящий поток",
+            "Рязань Тюшевское 1",
+        ),
+        (
+            {"status_before": "EPR", "block_id": "6802", "status_block_id": "6800", "loss_sum": 887},
+            "Входящий поток",
+            "Рязань Тюшевское 1",
+        ),
+        (
+            {"status_before": "SMC", "block_id": "6800", "office_id": "999"},
+            "Исходящий поток",
+            FOREIGN_GROUP,
+        ),
+        (
+            {"status_before": "SMC", "block_id": "6800", "office_id": None},
+            "Исходящий поток",
+            "Опер площадь",
+        ),
+        (
+            {"status_before": "SMC", "reason": "5", "block_id": "6800"},
+            "Исходящий поток",
+            "Рязань Тюшевское 1",
+        ),
         ({"status_before": "SDL"}, "Входящий поток", DEFECT_GROUP),
         (
             {"status_before": "CTS", "reason": "5", "status_block_id": "6800"},
@@ -112,7 +141,7 @@ def test_forced_status_lr():
 
 
 def test_operka_stage():
-    frame = prepare_losses(pd.DataFrame([row(status_before="SMC", status_block_id="6800")]))
+    frame = prepare_losses(pd.DataFrame([row(status_before="SMC", block_id="6800", status_block_id="6811")]))
     assert frame.loc[0, "process_stage"] == "Сортировка"
     assert frame.loc[0, "block_group"] == "Опер площадь"
 
@@ -160,8 +189,9 @@ def test_structure_and_quality():
         row(barcode="a", loss_sum=150, loss_qty=2),
         row(barcode="b", block_name="Склад Х", block_id="6810", loss_sum=7, loss_qty=1),
         row(barcode="c", status_before="ZZZ", loss_sum=5, loss_qty=1, reason="8"),
-        row(barcode="d", status_before="ANV", status_block_id="6800", loss_sum=9, loss_qty=1),
-        row(barcode="e", status_before="SMC", status_block_id="6800", reason="3", loss_sum=50, loss_qty=4),
+        row(barcode="d", status_before="ANV", block_id="6800", status_block_id="6812", loss_sum=9, loss_qty=1),
+        row(barcode="e", status_before="SMC", block_id="6800", status_block_id="6811", reason="3", loss_sum=50, loss_qty=4),
+        row(barcode="f", status_before="EPR", block_id="6802", status_block_id="6800", loss_sum=887, loss_qty=1),
     ]))
     previous = prepare_losses(pd.DataFrame([
         row(barcode="p", loss_sum=100, loss_qty=1, loss_date=pd.Timestamp("2026-10-09")),
@@ -187,6 +217,8 @@ def test_structure_and_quality():
     assert quality["unmapped"][0]["name"] == "Склад Х"
     assert quality["other_rows"][0]["status"] == "ZZZ"
     assert quality["block_6800"]["count"] == 1
+    assert quality["block_6800"]["statuses"] == ["ANV"]
+    assert quality["block_6800"]["sum"] == 9
     assert report["dashboard"]["delta_text"].startswith("+")
     platform = grown["group_view"]["sections"][0]["cards"]
     home = next(card for card in platform if card["name"] == "Рязань Тюшевское 1")
