@@ -206,7 +206,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     in_start = (180 - in_span / 2) % 360
     out_start = (0 - out_span / 2) % 360
     n = len(center_text)
-    sum_size = 32 if n <= 12 else 24 if n <= 16 else 16
+    sum_size = 24 if n <= 12 else 21 if n <= 14 else 17 if n <= 17 else 14
     label = escape(center_text)
     aria = escape(
         f"Диаграмма потерь. Полная сумма списаний {center_text}. "
@@ -238,9 +238,9 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
   <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {arcs}
   {hits}
-  <text x="{cx}" y="{cy - 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62">Полная сумма</text>
-  <text x="{cx}" y="{cy - 8}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62">списаний</text>
-  <text class="loss-sum" x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" style="font-variant-numeric:tabular-nums">{label}</text>
+  <text x="{cx}" y="{cy - 22}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">Полная сумма</text>
+  <text x="{cx}" y="{cy - 4}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62" font-size="15" font-weight="600">списаний</text>
+  <text x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" font-weight="700" style="font-variant-numeric:tabular-nums">{label}</text>
 </svg>
 </div>
 <span class="loss-pct loss-pct-out">{out_share}</span>
