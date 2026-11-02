@@ -1378,11 +1378,11 @@ function deltaNode(text) {
 function tipDayDeltaChip(sum, prevSum) {
   if (prevSum == null) return null;
   const diff = sum - prevSum;
-  if (diff === 0) return el("span", { class: "chip chip-n tip-day-chip whitespace-nowrap" }, "0 ₽ •");
+  if (diff === 0) return el("span", { class: "chip chip-n tip-day-chip" }, "0 ₽ •");
   const kind = diff > 0 ? "r" : "g";
   const arrow = diff > 0 ? "▲" : "▼";
   const sign = diff > 0 ? "+" : "-";
-  return el("span", { class: `chip chip-${kind} tip-day-chip whitespace-nowrap` }, `${sign}${fmtInt(Math.abs(diff))} ₽ ${arrow}`);
+  return el("span", { class: `chip chip-${kind} tip-day-chip` }, `${sign}${fmtInt(Math.abs(diff))} ₽ ${arrow}`);
 }
 
 const TIP_PERIOD_ORDER = { "Прошлый период": 0, "Текущий период": 1 };
@@ -1397,19 +1397,12 @@ const TIP_FIELDS = [
 ];
 
 function tipCellLine(label, value) {
-  const money = label === "Дата" || label.includes("₽") || label.includes("шт");
-  const code = label.includes("LR");
-  return el(
-    "div",
-    { class: money ? "tip-line whitespace-nowrap" : "tip-line" },
-    el("span", { class: money ? "whitespace-nowrap" : "" }, label),
-    el("b", { class: money || code ? "whitespace-nowrap" : "" }, value),
-  );
+  return el("div", { class: "tip-line" }, el("span", null, label), el("b", null, value));
 }
 
 function tipDayDeltaSlot(chip) {
   const slot = el("div", { class: "tip-day-delta" });
-  slot.append(chip || el("span", { class: "tip-day-delta-spacer whitespace-nowrap", "aria-hidden": "true" }, "0 ₽ •"));
+  slot.append(chip || el("span", { class: "tip-day-delta-spacer", "aria-hidden": "true" }, "0 ₽ •"));
   return slot;
 }
 
