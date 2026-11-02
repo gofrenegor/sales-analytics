@@ -18,6 +18,7 @@ const state = {
   badgeQuery: "",
   empLr: "5",
   empSort: "qty",
+  empSortOpen: false,
   empPage: 0,
   empOpen: "",
   empDetail: null,
@@ -231,7 +232,7 @@ function moverColumn(item, kind, blocks) {
   const inner = el("div", { class: "mover-fold-inner" });
   blocks.forEach((block, index) => inner.append(moverBlockRow(block, kind, index)));
   fold.append(inner);
-  col.append(el("p", { class: "mover-more" }, `топ-${blocks.length}`), fold);
+  col.append(fold);
   return col;
 }
 
@@ -1717,12 +1718,77 @@ function showEmpPage(index) {
   if (list) list.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
 }
 
+function sortMark() {
+  const svg = svgEl("svg", { viewBox: "0 0 24 24", width: "18", height: "18", "aria-hidden": "true" });
+  svg.append(svgEl("path", {
+    fill: "currentColor",
+    d: "M3 18h6v-2H3v2zm0-5h12v-2H3v2zm0-7v2h18V6H3z",
+  }));
+  return svg;
+}
+
+function bindEmpSortDismiss() {
+  if (bindEmpSortDismiss.ready) return;
+  bindEmpSortDismiss.ready = true;
+  document.addEventListener("pointerdown", (event) => {
+    if (!state.empSortOpen) return;
+    if (event.target.closest && event.target.closest(".emp-sort")) return;
+    state.empSortOpen = false;
+    render();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (!state.empSortOpen || event.key !== "Escape") return;
+    state.empSortOpen = false;
+    render();
+  });
+}
+
+function empSortControl() {
+  bindEmpSortDismiss();
+  const sortMode = state.empSort === "sum" ? "sum" : "qty";
+  const menu = el("div", {
+    class: "emp-sort-menu",
+    role: "menu",
+    hidden: state.empSortOpen ? null : true,
+  });
+  for (const item of [["qty", "штуки"], ["sum", "рубли"]]) {
+    const code = item[0];
+    menu.append(el("button", {
+      type: "button",
+      role: "menuitemradio",
+      "aria-checked": sortMode === code ? "true" : "false",
+      onclick: () => {
+        const same = state.empSort === code;
+        state.empSortOpen = false;
+        if (!same) {
+          state.empSort = code;
+          state.empPage = 0;
+        }
+        render();
+      },
+    }, item[1]));
+  }
+  const button = el("button", {
+    type: "button",
+    class: "emp-sort-btn",
+    "aria-label": "Сортировка",
+    "aria-haspopup": "menu",
+    "aria-expanded": state.empSortOpen ? "true" : "false",
+    title: "Сортировка",
+    onclick: () => {
+      state.empSortOpen = !state.empSortOpen;
+      render();
+    },
+  }, sortMark());
+  return el("div", { class: "emp-sort" }, button, menu);
+}
+
 function renderEmployees(screen) {
   const report = state.report;
   const pack = empPack();
   const lr = state.empLr === "27" ? "27" : "5";
   const all = pack ? (pack[lr] || []) : [];
-  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "тест" });
+  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "LR" });
   for (const code of ["5", "27"]) {
     lrs.append(el("button", {
       type: "button",
@@ -1731,6 +1797,7 @@ function renderEmployees(screen) {
         if (state.empLr === code) return;
         state.empLr = code;
         state.empPage = 0;
+        state.empSortOpen = false;
         render();
       },
     }, `${code}лр`));
@@ -1775,7 +1842,7 @@ function renderEmployees(screen) {
   }
   screen.append(
     el("div", { class: "screen-head" }, el("h2", null, "Сотрудники")),
-    el("section", { class: "test-panel", "aria-label": "тест" }, el("div", { class: "test-title" }, "тест"), lrs),
+    lrs,
     form,
   );
   if (freeRangePending()) {
@@ -1798,28 +1865,12 @@ function renderEmployees(screen) {
     screen.append(el("p", { class: "hint" }, "Загрузка сотрудников…"));
     return;
   }
-  const sortMode = state.empSort === "sum" ? "sum" : "qty";
-  const sortBar = el("div", { class: "emp-sort", role: "group", "aria-label": "Сортировка" });
-  for (const item of [["qty", "штуки"], ["sum", "рубли"]]) {
-    const code = item[0];
-    sortBar.append(el("button", {
-      type: "button",
-      "aria-pressed": sortMode === code ? "true" : "false",
-      title: code === "sum" ? "Сортировка по потерям в рублях" : "Сортировка по штукам",
-      onclick: () => {
-        if (state.empSort === code) return;
-        state.empSort = code;
-        state.empPage = 0;
-        render();
-      },
-    }, item[1]));
-  }
   screen.append(
-    el("div", { class: "sub" }, query ? `Найдено бейджиков: ${fmtInt(rows.length)}` : `Бейджиков: ${fmtInt(rows.length)}`),
+    el("div", { class: "sub" }, query ? `Найдено сотрудников: ${fmtInt(rows.length)}` : `Сотрудников: ${fmtInt(rows.length)}`),
     el("div", { class: "big-sum" }, fmtRub(shownSum)),
     el("div", { class: "emp-toolbar" },
       el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
-      sortBar,
+      empSortControl(),
     ),
   );
   if (!all.length) {
@@ -1833,7 +1884,6 @@ function renderEmployees(screen) {
     screen.append(el("p", { class: "box warn" }, "Такой бейджик не найден."));
     return;
   }
-  screen.append(el("p", { class: "hint" }, "Нажмите строку: последний стикер до списания и было ли движение."));
   const pages = empPages(rows.length);
   let pageIndex = state.empPage;
   if (pageIndex >= pages.length) pageIndex = 0;
@@ -1874,21 +1924,21 @@ function renderEmployees(screen) {
   }
   screen.append(list);
   if (pages.length > 1) {
-    const nav = el("nav", { class: "emp-pages", "aria-label": "Вкладки бейджиков" });
+    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы сотрудников" });
     if (pageIndex > 0) {
       nav.append(el("button", {
         type: "button",
         class: "emp-page-arrow",
-        "aria-label": "Предыдущая вкладка",
+        "aria-label": "Предыдущая страница",
         onclick: () => showEmpPage(pageIndex - 1),
       }, "←"));
     }
-    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, `вкладка ${pageIndex + 1}`));
+    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)));
     if (pageIndex < pages.length - 1) {
       nav.append(el("button", {
         type: "button",
         class: "emp-page-arrow",
-        "aria-label": "Следующая вкладка",
+        "aria-label": "Следующая страница",
         onclick: () => showEmpPage(pageIndex + 1),
       }, "→"));
     }
@@ -1981,29 +2031,20 @@ function renderDashboard(screen) {
   }
   side.className = "hero-side";
   side.append(renderMovers());
-  side.append(el("p", { class: "hint" }, "Клик по сегменту кольца или строке потока откроет выбор блоков."));
   const donutCol = el("div", { class: "loss-col" });
   donutCol.append(chart);
   hero.append(donutCol, side);
   if (state.report.show_daily) {
     const hourly = state.report.chart_grain === "hour";
-    const hint = hourly
-      ? "По горизонтали — час из «Дата первого списания» (00–23). Наведите курсор на точку: топ-1 LR за час, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока."
-      : "По горизонтали — номер дня в периоде. Наведите курсор на точку: топ-1 LR за день, сумма, штуки, топ-1 блок и топ-1 LR внутри этого блока.";
-    const note = hourly && state.report.chart_time_missing
-      ? " В выгрузке время суток не найдено: все списания стоят на 00:00."
-      : "";
     const chartCol = el(
       "div",
       { class: "daily-chart" },
       el("h3", { class: "section-title" }, hourly ? "Динамика по часам" : "Динамика по дням"),
       renderChart(state.report.daily, state.report.chart_grain),
-      el("p", { class: "hint" }, hint + note),
     );
     hero.append(el("div", { class: "daily-board" }, chartCol));
   }
   screen.append(hero);
-  if (dash.delta_text) screen.append(el("p", { class: "delta-line" }, `К прошлому периоду · ${dash.delta_text}`));
   if (dash.other && dash.other.show) {
     const box = el("div", { class: "aside-metric" });
     const label = el("div", { class: "aside-label" }, "Вне потоков ", el("span", null, "· не входит в диаграмму"));
