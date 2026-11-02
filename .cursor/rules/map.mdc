@@ -47,7 +47,9 @@ systemctl restart sales-analytics
 - `db.py` — движок, схема `losses` (таблицу не пересоздаёт, только добавляет колонки), индексы `losses_loss_date_idx` и `losses_employee_date_idx`, `access_users.phone`, `access_users.email`, `normalize_phone`, `normalize_email`, `contact_kind`, `get_access_user`, `match_login`, `next_access_id`, `grant_access`, `set_access_contact`, `load_cached` (`report` без ШК и бейджика, `employees` с бейджиком, без ШК и без стикеров), `load_employee_slice` (один бейджик, со стикером и флагом, в кадр списка не кладётся), кэш готового JSON, `get_summary`, `replace_period`, `truncate_losses`. Бейджик — `status_employee_id`, колонка AC. Стикер — `last_sticker`, колонка AF. Флаг оприходования — `posted`, колонка Q.
 - `static/index.html` — каркас страницы.
 - `static/app.js` — состояние, URL, загрузка отчёта, экраны.
-- `static/styles.css` — стили. Режимы: `.modes`, меню периода: `.pickers`, свободный диапазон: `.range`.
+- `static/styles.css` — стили. Режимы: `.modes`, меню периода: `.pickers`, свободный диапазон: `.range`. Кривые движения: `--ease-out`, `--ease-in-out`, `--ease-drawer`.
+- `.agents/skills/emil-design-eng/SKILL.md` — вкус интерфейса (emilkowalski).
+- `.agents/skills/find-animation-opportunities/SKILL.md` — где анимация нужна, а где нет.
 - `tests/` — pytest (`test_api.py`, `test_analytics.py`, `test_entrypoint.py`). По умолчанию не запускать.
 
 ## Экран

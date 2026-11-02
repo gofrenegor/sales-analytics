@@ -2235,7 +2235,7 @@ function presentScreen(pane) {
   pane.addEventListener("animationend", (event) => {
     if (event.target === pane && event.animationName === inName) close();
   });
-  window.setTimeout(close, kind === "settle" ? 480 : 560);
+  window.setTimeout(close, 360);
   if (kind !== "settle" && host.getBoundingClientRect().top < 8) {
     host.scrollIntoView({ behavior: "smooth", block: "start" });
   }
