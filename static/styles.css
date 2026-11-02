@@ -1288,18 +1288,9 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .daily-chart { min-width: 0; }
 .loss-stack { width: 100%; margin: 0; }
 .loss-figure { width: 100%; }
-.loss-total-label {
-  margin: 0 0 8px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.25;
-  letter-spacing: 0.01em;
-}
 .loss-ring-row {
   position: relative;
-  width: min(calc(100% - 5.4rem), 28rem);
+  width: min(calc(100% - 5.9rem), 28rem);
   margin-inline: auto;
 }
 .loss-donut-wrap {
@@ -1326,6 +1317,14 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   text-align: center;
   pointer-events: none;
   transform: translate(-50%, -50%);
+}
+.loss-hole-label {
+  color: var(--muted);
+  font-size: clamp(11px, 3.2cqi, 13px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  text-wrap: balance;
 }
 .loss-hole-sum {
   max-width: 100%;
@@ -1355,13 +1354,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   left: 15.75%;
   color: var(--green-ink);
   text-align: right;
-  transform: translate(calc(-100% - 4px), -50%);
+  transform: translate(calc(-100% - 8px), -50%);
 }
 .loss-pct-out {
   left: 84.25%;
   color: var(--blue);
   text-align: left;
-  transform: translate(4px, -50%);
+  transform: translate(8px, -50%);
 }
 .loss-donut .loss-seg-hit {
   fill: none;
@@ -1775,8 +1774,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
     grid-template-areas:
       "ring ring"
       "in out";
-    column-gap: 12px;
-    row-gap: 6px;
+    column-gap: 24px;
+    row-gap: 12px;
     align-items: center;
   }
   .loss-donut-wrap { grid-area: ring; width: 100%; }
@@ -1870,7 +1869,6 @@ button.back:active { transform: translateX(-3px); }
   to { transform: rotate(360deg); }
 }
 .loss-donut-wrap.spin-loading .loss-hole,
-.loss-figure:has(.spin-loading) .loss-total-label,
 .loss-figure:has(.spin-loading) .loss-pct,
 #screen:has(.spin-loading) .flow-btn strong,
 #screen:has(.spin-loading) .delta-line,
