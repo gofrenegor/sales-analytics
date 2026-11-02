@@ -1788,8 +1788,8 @@ function renderEmployees(screen) {
   const pack = empPack();
   const lr = state.empLr === "27" ? "27" : "5";
   const all = pack ? (pack[lr] || []) : [];
-  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "LR" });
-  for (const code of ["5", "27"]) {
+  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "Операция" });
+  for (const [code, label] of [["5", "сборка"], ["27", "раскладка"]]) {
     lrs.append(el("button", {
       type: "button",
       "aria-pressed": lr === code ? "true" : "false",
@@ -1800,7 +1800,7 @@ function renderEmployees(screen) {
         state.empSortOpen = false;
         render();
       },
-    }, `${code}лр`));
+    }, label));
   }
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
   const matched = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
@@ -1841,7 +1841,7 @@ function renderEmployees(screen) {
     }, "Сброс"));
   }
   screen.append(
-    el("div", { class: "screen-head" }, el("h2", null, "Сотрудники")),
+    el("div", { class: "screen-head" }, el("h2", null, "Операция")),
     lrs,
     form,
   );

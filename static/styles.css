@@ -377,13 +377,20 @@ main {
   box-shadow: 0 6px 16px color-mix(in srgb, var(--blue) 32%, transparent);
 }
 .sections button[aria-pressed="true"]:hover { color: #fff; }
-.emp-lrs { display: flex; gap: 6px; }
+.emp-lrs {
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 6px;
+  margin-top: 6px;
+}
 .emp-lrs button {
-  flex: 0 0 auto;
-  width: 4.75rem;
+  width: auto;
+  min-width: 4.75rem;
   height: 1.7rem;
   min-height: 0;
-  padding: 0;
+  padding: 0 0.7rem;
+  white-space: nowrap;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--card);
