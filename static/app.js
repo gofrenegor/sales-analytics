@@ -160,12 +160,13 @@ function moverCard(item, kind) {
   }
   const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
   const flowTitle = item.flow === "in" ? "входящий" : item.flow === "out" ? "исходящий" : "";
+  const flowClass = item.flow === "in" || item.flow === "out" ? ` flow-${item.flow}` : "";
   const where = [item.block, flowTitle].filter(Boolean).join(" · ");
   return el(
     "button",
     {
       type: "button",
-      class: `mover ${kind}`,
+      class: `mover ${kind}${flowClass}`,
       onclick: () => {
         if (!item.flow || !item.block) return;
         go({ view: "group", flow: item.flow, group: item.block, block: "" });
@@ -214,7 +215,7 @@ function moverBlockRow(item, kind, index) {
     "button",
     {
       type: "button",
-      class: "mover-block",
+      class: `mover-block${item.flow === "in" || item.flow === "out" ? ` flow-${item.flow}` : ""}`,
       onclick: () => go({ view: "group", flow: item.flow, group: item.name, block: "" }),
     },
     el("span", { class: "mover-block-rank" }, String(index + 1)),
