@@ -128,7 +128,7 @@ function downloadButton(filename, header, rows) {
 function sparkline(values) {
   if (!values || values.length < 2) return null;
   const width = 120;
-  const height = 28;
+  const height = 32;
   const padX = 0.6;
   const padY = 2;
   const max = Math.max(...values, 0);
@@ -1546,7 +1546,7 @@ function renderChart(rows, grain) {
   const colors = seriesColors();
   const height = 400;
   const width = 1280;
-  const pad = { l: 78, r: 28, t: 16, b: 36 };
+  const pad = { l: 80, r: 32, t: 16, b: 40 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
   const maxDay = Math.max(1, ...rows.map((row) => row.day));
@@ -1574,7 +1574,7 @@ function renderChart(rows, grain) {
     svg.append(label);
   }
   for (const day of ticks) {
-    const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
+    const label = svgEl("text", { x: x(day), y: height - 16, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
     label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
     svg.append(label);
   }
