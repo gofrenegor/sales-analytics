@@ -1387,17 +1387,21 @@ function tipDayDeltaChip(sum, prevSum) {
 
 const TIP_PERIOD_ORDER = { "Прошлый период": 0, "Текущий период": 1 };
 
+function tipBlockName(value) {
+  return String(value ?? "—").replace(/Рязань\s+Тюшевское/gi, "РЗТ");
+}
+
 const TIP_FIELDS = [
   ["Дата", (row) => row.date],
   ["Топ-1 LR", (row) => row.top_lr],
   ["Сумма, ₽", (row) => fmtInt(row.sum)],
   ["Штуки, шт", (row) => fmtInt(row.qty)],
-  ["Топ-1 блок", (row) => row.top_block],
+  ["Топ-1 блок", (row) => tipBlockName(row.top_block)],
   ["Топ-1 LR в блоке", (row) => row.top_block_lr],
 ];
 
 function tipCellLine(label, value) {
-  const numeric = /₽|шт/.test(label);
+  const numeric = /₽|шт/.test(label) || label.startsWith("Топ-1 LR");
   return el("div", { class: numeric ? "tip-line tip-num" : "tip-line" }, el("span", null, label), el("b", null, value));
 }
 
@@ -1436,17 +1440,13 @@ function buildCompareTip(sortedRows, prevDayCur) {
   }
   const chip = prevDayCur ? tipDayDeltaChip(cur.sum, prevDayCur.sum) : null;
   const grid = el("div", { class: "tip-compare" });
-  const head = el("div", { class: "tip-compare-row tip-compare-head" });
   for (const [row, delta] of [[prev, null], [cur, chip]]) {
-    const cell = el("div", { class: "tip-compare-cell" });
+    const cell = el("div", { class: "tip-compare-cell tip-compare-head" });
     cell.append(el("div", { class: "tip-title" }, row.period), tipDayDeltaSlot(delta));
-    head.append(cell);
+    grid.append(cell);
   }
-  grid.append(head);
   for (const [label, pick] of TIP_FIELDS) {
-    const rowEl = el("div", { class: "tip-compare-row" });
-    for (const row of [prev, cur]) rowEl.append(el("div", { class: "tip-compare-cell" }, tipCellLine(label, pick(row))));
-    grid.append(rowEl);
+    for (const row of [prev, cur]) grid.append(el("div", { class: "tip-compare-cell" }, tipCellLine(label, pick(row))));
   }
   return grid;
 }

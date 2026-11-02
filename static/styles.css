@@ -1609,7 +1609,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   position: absolute;
   z-index: 5;
   min-width: 280px;
-  max-width: min(520px, calc(100vw - 24px));
+  width: max-content;
+  max-width: calc(100vw - 24px);
   background: var(--sidebar);
   color: var(--text);
   border: 1px solid var(--line-strong);
@@ -1620,15 +1621,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   font-size: 15px;
 }
 .chart-tip.tip-in { animation: tip-in 0.16s ease; }
-.tip-compare { display: flex; flex-direction: column; gap: 2px; }
-.tip-compare-row {
+.tip-compare {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: max-content max-content;
   column-gap: 12px;
-  align-items: stretch;
+  row-gap: 2px;
 }
-.tip-compare-cell { min-width: 0; }
-.tip-compare-row .tip-compare-cell + .tip-compare-cell {
+.tip-compare-cell:nth-child(2n) {
   border-left: 1px solid var(--line);
   padding-left: 12px;
 }
@@ -1643,9 +1642,9 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .tip-day-delta-spacer { visibility: hidden; }
 .tip-day-chip { font-size: 12px; }
 .tip-line { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 2px 0; min-height: 1.35em; }
-.tip-line span { color: var(--muted); flex: 0 0 auto; }
-.tip-line b { font-weight: 650; text-align: right; flex: 1 1 auto; min-width: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.tip-num b { white-space: nowrap; overflow-wrap: normal; }
+.tip-line span { color: var(--muted); flex: 0 0 auto; white-space: nowrap; }
+.tip-line b { font-weight: 650; text-align: right; flex: 0 0 auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tip-num b { white-space: nowrap; }
 
 @media (max-width: 1100px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
