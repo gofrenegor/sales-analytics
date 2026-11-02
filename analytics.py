@@ -176,7 +176,7 @@ def flow_share_labels(in_sum, out_sum):
 
 
 def build_loss_donut_svg(in_sum, out_sum, center_text):
-    """Кольцо потерь: вход слева, исход справа, в центре полная сумма."""
+    """Кольцо потерь: вход и исход, подпись в центре, доли в легенде снизу."""
     in_sum = max(_f(in_sum), 0.0)
     out_sum = max(_f(out_sum), 0.0)
     total = in_sum + out_sum
@@ -206,7 +206,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     in_start = (180 - in_span / 2) % 360
     out_start = (0 - out_span / 2) % 360
     n = len(center_text)
-    sum_size = 32 if n <= 12 else 24 if n <= 16 else 16
+    sum_size = 16 if n <= 11 else 12
     label = escape(center_text)
     aria = escape(
         f"Диаграмма потерь. Полная сумма списаний {center_text}. "
@@ -232,18 +232,22 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     hits = _seg_link("in", in_start, in_span) + _seg_link("out", out_start, out_span)
     return f'''<div class="loss-stack">
 <div class="loss-figure">
-<span class="loss-pct loss-pct-in">{in_share}</span>
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {arcs}
   {hits}
-  <text x="{cx}" y="{cy - 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62">Полная сумма</text>
-  <text x="{cx}" y="{cy - 8}" text-anchor="middle" dominant-baseline="central" fill="currentColor" opacity="0.62">списаний</text>
-  <text class="loss-sum" x="{cx}" y="{cy + 24}" text-anchor="middle" dominant-baseline="central" fill="currentColor" font-size="{sum_size}" style="font-variant-numeric:tabular-nums">{label}</text>
 </svg>
+<div class="loss-center">
+  <span class="loss-center-kicker">Полная сумма</span>
+  <span class="loss-center-kicker">списаний</span>
+  <strong class="loss-center-sum" style="font-size:{sum_size}px">{label}</strong>
 </div>
-<span class="loss-pct loss-pct-out">{out_share}</span>
+</div>
+</div>
+<div class="loss-legend">
+  <span class="loss-legend-item loss-legend-in"><i aria-hidden="true"></i>вход <b>{in_share}</b></span>
+  <span class="loss-legend-item loss-legend-out"><i aria-hidden="true"></i>исход <b>{out_share}</b></span>
 </div>
 </div>'''
 
