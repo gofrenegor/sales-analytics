@@ -52,6 +52,7 @@
   --lift: 0 8px 22px rgba(0, 0, 0, 0.22);
   --radius: 14px;
   --donut-purple: #c4b5fd;
+  --chart-guide: #2ee9ff;
   --flow-in-rgb: 8 96 54;
   --flow-out-rgb: 12 58 140;
   --wash-0: 0.48;
@@ -92,6 +93,7 @@
   --shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
   --lift: 0 8px 22px rgba(15, 23, 42, 0.07);
   --donut-purple: #7c3aed;
+  --chart-guide: #0e7490;
   --wash-0: 0.26;
   --wash-1: 0.15;
   --wash-2: 0.07;
@@ -128,6 +130,7 @@
     --shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
     --lift: 0 8px 22px rgba(15, 23, 42, 0.07);
     --donut-purple: #7c3aed;
+    --chart-guide: #0e7490;
     --wash-0: 0.26;
     --wash-1: 0.15;
     --wash-2: 0.07;
@@ -1686,6 +1689,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 
 .chart-wrap { position: relative; margin-top: 0.3rem; }
 .chart { width: 100%; height: auto; display: block; }
+.chart-guide {
+  stroke: var(--chart-guide);
+  stroke-width: 2;
+  stroke-dasharray: 10 7;
+  pointer-events: none;
+  vector-effect: non-scaling-stroke;
+}
 .chart text { fill: var(--muted); font-family: Manrope, sans-serif; font-weight: 500; font-variant-numeric: tabular-nums; }
 .legend { display: flex; gap: 16px; justify-content: center; color: var(--muted); font-size: 13px; margin-top: 4px; }
 .lg::before {
@@ -1898,7 +1908,7 @@ button.back:active { transform: translateX(-3px); }
 .chart-wrap.draw-once .chart-area { animation: area-in 280ms var(--ease-out) both; }
 .chart-wrap.draw-once .chart-line.cur { animation: fade-in 220ms var(--ease-out) both; }
 .chart-wrap.draw-once .chart-line.prev { animation: fade-in 180ms var(--ease-out) both; }
-.chart-wrap.draw-once .chart circle {
+.chart-wrap.draw-once .chart circle:not(.chart-focus) {
   transform-box: fill-box;
   transform-origin: center;
   animation: dot-pop 160ms var(--ease-out) both;
