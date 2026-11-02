@@ -176,7 +176,7 @@ def flow_share_labels(in_sum, out_sum):
 
 
 def build_loss_donut_svg(in_sum, out_sum, center_text):
-    """Кольцо потерь: вход слева, исход справа, в центре полная сумма."""
+    """Кольцо потерь: в дырке сумма списаний, вход слева, исход справа."""
     in_sum = max(_f(in_sum), 0.0)
     out_sum = max(_f(out_sum), 0.0)
     total = in_sum + out_sum
@@ -207,7 +207,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     out_start = (0 - out_span / 2) % 360
     label = escape(center_text)
     aria = escape(
-        f"Диаграмма потерь. Полная сумма списаний {center_text}. "
+        f"Диаграмма потерь. Сумма списаний {center_text}. "
         f"Вход {_fmt_share(in_pct)}, исход {_fmt_share(out_pct)}."
     )
     in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
@@ -230,6 +230,7 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     hits = _seg_link("in", in_start, in_span) + _seg_link("out", out_start, out_span)
     return f'''<div class="loss-stack">
 <div class="loss-figure">
+<div class="loss-ring-row">
 <span class="loss-pct loss-pct-in">{in_share}</span>
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
@@ -238,11 +239,12 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
   {hits}
 </svg>
 <p class="loss-hole" aria-hidden="true">
-<span class="loss-hole-label">Полная сумма списаний</span>
+<span class="loss-hole-label">сумма списаний</span>
 <span class="loss-hole-sum">{label}</span>
 </p>
 </div>
 <span class="loss-pct loss-pct-out">{out_share}</span>
+</div>
 </div>
 </div>'''
 

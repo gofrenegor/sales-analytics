@@ -160,12 +160,13 @@ function moverCard(item, kind) {
   }
   const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
   const flowTitle = item.flow === "in" ? "входящий" : item.flow === "out" ? "исходящий" : "";
+  const flowClass = item.flow === "in" || item.flow === "out" ? ` flow-${item.flow}` : "";
   const where = [item.block, flowTitle].filter(Boolean).join(" · ");
   return el(
     "button",
     {
       type: "button",
-      class: `mover ${kind}`,
+      class: `mover ${kind}${flowClass}`,
       onclick: () => {
         if (!item.flow || !item.block) return;
         go({ view: "group", flow: item.flow, group: item.block, block: "" });
@@ -214,7 +215,7 @@ function moverBlockRow(item, kind, index) {
     "button",
     {
       type: "button",
-      class: "mover-block",
+      class: `mover-block${item.flow === "in" || item.flow === "out" ? ` flow-${item.flow}` : ""}`,
       onclick: () => go({ view: "group", flow: item.flow, group: item.name, block: "" }),
     },
     el("span", { class: "mover-block-rank" }, String(index + 1)),
@@ -1616,6 +1617,38 @@ function renderChart(rows, grain) {
   line(previousPts, colors.previous, "5 4");
   line(currentPts, colors.current, "");
 
+  const guide = svgEl("line", {
+    class: "chart-guide",
+    x1: pad.l,
+    x2: pad.l,
+    y1: 1,
+    y2: height - 1,
+    visibility: "hidden",
+  });
+  svg.append(guide);
+  function focusDot(color) {
+    const dot = svgEl("circle", { class: "chart-focus", r: "3.6", fill: color, visibility: "hidden" });
+    svg.append(dot);
+    return dot;
+  }
+  const focusPrev = previousPts.length ? focusDot(colors.previous) : null;
+  const focusCur = focusDot(colors.current);
+  function placeFocus(dot, pts, day) {
+    const point = pts.find((item) => item.row.day === day);
+    if (!point) {
+      dot.setAttribute("visibility", "hidden");
+      return;
+    }
+    dot.setAttribute("cx", point.x);
+    dot.setAttribute("cy", point.y);
+    dot.setAttribute("visibility", "visible");
+  }
+  function hideGuide() {
+    guide.setAttribute("visibility", "hidden");
+    focusCur.setAttribute("visibility", "hidden");
+    if (focusPrev) focusPrev.setAttribute("visibility", "hidden");
+  }
+
   const hit = svgEl("rect", { x: pad.l, y: pad.t, width: innerW, height: innerH, fill: "transparent" });
   hit.style.cursor = "crosshair";
   svg.append(hit);
@@ -1639,6 +1672,12 @@ function renderChart(rows, grain) {
         bestDist = dist;
       }
     }
+    const gx = x(best);
+    guide.setAttribute("x1", gx);
+    guide.setAttribute("x2", gx);
+    guide.setAttribute("visibility", "visible");
+    placeFocus(focusCur, currentPts, best);
+    if (focusPrev) placeFocus(focusPrev, previousPts, best);
     tip.replaceChildren();
     const body = dayTip(rows, best);
     if (body) tip.append(body);
@@ -1665,7 +1704,10 @@ function renderChart(rows, grain) {
     tip.style.top = `${top}px`;
   }
   hit.addEventListener("pointermove", showTip);
-  hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+  hit.addEventListener("pointerleave", () => {
+    tip.hidden = true;
+    hideGuide();
+  });
 
   const legend = el("div", { class: "legend" }, el("span", { class: "lg cur" }, "Текущий период"));
   if (previous.length) legend.append(el("span", { class: "lg prev" }, "Прошлый период"));
