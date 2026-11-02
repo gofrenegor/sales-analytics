@@ -1357,10 +1357,10 @@ function renderCards(cards, shareLabel, onOpen) {
     grid.append(el(
       "article",
       { class: `card ${card.color}` },
-      el("div", { class: "c-name" }, card.name),
+      el("div", { class: "c-name", title: card.name }, card.name),
       el("div", { class: "c-sum" }, fmtRub(card.loss_sum)),
-      chip,
-      card.spark ? sparkline(card.spark) : null,
+      chip || el("span", { class: "chip chip-slot", "aria-hidden": "true" }, "\u00a0"),
+      card.spark ? sparkline(card.spark) : el("span", { class: "spark spark-slot", "aria-hidden": "true" }),
       bar,
       el("div", { class: "c-share" }, shareText(card.pct, shareLabel)),
       el("button", { type: "button", onclick: () => onOpen(card, index) }, "Открыть →"),
@@ -1397,7 +1397,8 @@ const TIP_FIELDS = [
 ];
 
 function tipCellLine(label, value) {
-  return el("div", { class: "tip-line" }, el("span", null, label), el("b", null, value));
+  const numeric = /₽|шт/.test(label);
+  return el("div", { class: numeric ? "tip-line tip-num" : "tip-line" }, el("span", null, label), el("b", null, value));
 }
 
 function tipDayDeltaSlot(chip) {
@@ -1461,7 +1462,12 @@ function lrTable(rows) {
     body.append(el("tr", null, el("td", { colspan: "4" }, "Нет списаний")));
   }
   for (const row of rows) {
-    const share = el("div", { class: "share-line" }, `${Number(row.pct).toFixed(1)}%`, el("div", { class: "bar" }, el("div", { style: `width:${Math.min(row.pct, 100).toFixed(1)}%` })));
+    const share = el(
+      "div",
+      { class: "share-line" },
+      el("div", { class: "bar" }, el("div", { style: `width:${Math.min(row.pct, 100).toFixed(1)}%` })),
+      el("span", { class: "share-num" }, `${Number(row.pct).toFixed(1)}%`),
+    );
     body.append(el("tr", null,
       el("td", null, row.reason),
       el("td", { class: "num" }, fmtRub(row.sum)),
@@ -1546,7 +1552,7 @@ function renderChart(rows, grain) {
   const colors = seriesColors();
   const height = 400;
   const width = 1280;
-  const pad = { l: 78, r: 28, t: 16, b: 36 };
+  const pad = { l: 96, r: 28, t: 18, b: 40 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
   const maxDay = Math.max(1, ...rows.map((row) => row.day));
@@ -1569,7 +1575,7 @@ function renderChart(rows, grain) {
     const value = maxY * i / 4;
     const yy = y(value);
     svg.append(svgEl("line", { x1: pad.l, x2: width - pad.r, y1: yy, y2: yy, stroke: colors.grid, "stroke-dasharray": i === 0 ? "0" : "3 4" }));
-    const label = svgEl("text", { x: pad.l - 8, y: yy + 4, "text-anchor": "end", "font-size": "12" });
+    const label = svgEl("text", { x: pad.l - 10, y: yy, "text-anchor": "end", "dominant-baseline": "middle", "font-size": "12" });
     label.textContent = fmtInt(value);
     svg.append(label);
   }
