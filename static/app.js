@@ -2377,7 +2377,9 @@ function renderDashboard(screen) {
   const blocksMode = state.slice === "blocks";
   const hero = el("div", { class: blocksMode ? "hero hero-blocks" : "hero" });
   const chart = el("div");
-  chart.innerHTML = blocksMode && dash.blocks && dash.blocks.donut_svg ? dash.blocks.donut_svg : dash.donut_svg;
+  state.donutToken = (state.donutToken || 0) + 1;
+  const donutSvg = blocksMode && dash.blocks && dash.blocks.donut_svg ? dash.blocks.donut_svg : dash.donut_svg;
+  chart.innerHTML = donutSvg.replaceAll("__DONUT__", String(state.donutToken));
   bindDonut(chart);
   const donutCol = el("div", { class: "loss-col" });
   donutCol.append(chart);

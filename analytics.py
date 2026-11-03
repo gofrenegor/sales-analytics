@@ -126,6 +126,7 @@ BLOCK_DONUT_COLORS = (
     "#39c5cf",
     "#f778ba",
 )
+DONUT_CORNER = 8
 # Доля меньше этого порога не пишет имя на дуге: подписи слипаются. Чип над кольцом.
 BLOCK_CALLOUT_PCT = 8.0
 # Угол дуги на экране. Истинный процент остаётся в подписи, тонкая доля всё ещё нажимается.
@@ -193,6 +194,109 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-se
     return (
         f'<path d="M {x1:.2f} {y1:.2f} A {r:.2f} {r:.2f} 0 {large} 1 {x2:.2f} {y2:.2f}" '
         f'fill="none" stroke="{color}" stroke-width="{sw}" stroke-linecap="butt" class="{css_class}"{draw} />'
+    )
+
+
+def _polar(cx, cy, radius, deg):
+    rad = math.radians(deg)
+    return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
+
+
+def _fillets_fit(span_deg, outer, inner, rho):
+    if rho <= 0 or outer <= inner or rho >= outer - inner:
+        return False
+    outer_c = outer - rho
+    inner_c = inner + rho
+    if outer_c <= rho or inner_c <= 0:
+        return False
+    try:
+        d_o = math.degrees(math.asin(rho / outer_c))
+        d_i = math.degrees(math.asin(rho / inner_c))
+    except ValueError:
+        return False
+    if span_deg <= 2 * max(d_o, d_i) + 0.4:
+        return False
+    reach_o = outer_c * math.cos(math.radians(d_o))
+    reach_i = inner_c * math.cos(math.radians(d_i))
+    return reach_o > reach_i + 0.8
+
+
+def _corner_radius(span_deg, outer, inner):
+    """Радиус скругления угла. На короткой дуге меньше, чтобы срезы не слиплись."""
+    if _fillets_fit(span_deg, outer, inner, DONUT_CORNER):
+        return DONUT_CORNER
+    lo, hi, best = 0.0, DONUT_CORNER, 0.0
+    for _ in range(20):
+        mid = (lo + hi) / 2
+        if _fillets_fit(span_deg, outer, inner, mid):
+            best = mid
+            lo = mid
+        else:
+            hi = mid
+    return best if best >= 1.5 else 0.0
+
+
+def _rounded_segment_path(cx, cy, outer, inner, start_deg, span_deg, rho):
+    outer_c = outer - rho
+    inner_c = inner + rho
+    d_o = math.degrees(math.asin(rho / outer_c))
+    d_i = math.degrees(math.asin(rho / inner_c))
+    a0 = start_deg
+    a1 = start_deg + span_deg
+    reach_o = outer_c * math.cos(math.radians(d_o))
+    reach_i = inner_c * math.cos(math.radians(d_i))
+    o_start = _polar(cx, cy, outer, a0 + d_o)
+    o_end = _polar(cx, cy, outer, a1 - d_o)
+    c_o_end = _polar(cx, cy, outer_c, a1 - d_o)
+    rad_o_end = _polar(cx, cy, reach_o, a1)
+    rad_i_end = _polar(cx, cy, reach_i, a1)
+    c_i_end = _polar(cx, cy, inner_c, a1 - d_i)
+    i_end = _polar(cx, cy, inner, a1 - d_i)
+    i_start = _polar(cx, cy, inner, a0 + d_i)
+    c_i_start = _polar(cx, cy, inner_c, a0 + d_i)
+    rad_i_start = _polar(cx, cy, reach_i, a0)
+    rad_o_start = _polar(cx, cy, reach_o, a0)
+    c_o_start = _polar(cx, cy, outer_c, a0 + d_o)
+
+    def sweep_of(center, start, end):
+        cross = (start[0] - center[0]) * (end[1] - center[1]) - (start[1] - center[1]) * (end[0] - center[0])
+        return 1 if cross > 0 else 0
+
+    def arc(radius, large, sweep, end):
+        return f"A {radius:.2f} {radius:.2f} 0 {large} {sweep} {end[0]:.2f} {end[1]:.2f}"
+
+    large_o = 1 if span_deg - 2 * d_o > 180 else 0
+    large_i = 1 if span_deg - 2 * d_i > 180 else 0
+    return " ".join([
+        f"M {o_start[0]:.2f} {o_start[1]:.2f}",
+        arc(outer, large_o, 1, o_end),
+        arc(rho, 0, sweep_of(c_o_end, o_end, rad_o_end), rad_o_end),
+        f"L {rad_i_end[0]:.2f} {rad_i_end[1]:.2f}",
+        arc(rho, 0, sweep_of(c_i_end, rad_i_end, i_end), i_end),
+        arc(inner, large_i, 0, i_start),
+        arc(rho, 0, sweep_of(c_i_start, i_start, rad_i_start), rad_i_start),
+        f"L {rad_o_start[0]:.2f} {rad_o_start[1]:.2f}",
+        arc(rho, 0, sweep_of(c_o_start, rad_o_start, o_start), o_start),
+        "Z",
+    ])
+
+
+def _donut_segment(cx, cy, r, sw, start_deg, span_deg, color, key):
+    """Дуга кольца блоков. Углы чуть срезает скруглённый контур, прорисовка та же."""
+    css = "loss-arc-seg"
+    arc = _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css)
+    if span_deg >= 359.2 or not arc:
+        return arc
+    outer, inner = r + sw / 2, r - sw / 2
+    rho = _corner_radius(span_deg, outer, inner)
+    path = _rounded_segment_path(cx, cy, outer, inner, start_deg, span_deg, rho) if rho else ""
+    if not path:
+        return arc
+    clip = f"loss-clip-{key}-__DONUT__"
+    arc = arc.replace("class=", f'clip-path="url(#{clip})" class=', 1)
+    return (
+        f'<clipPath id="{clip}" clipPathUnits="userSpaceOnUse"><path d="{path}"/></clipPath>'
+        f"{arc}"
     )
 
 
@@ -491,7 +595,7 @@ def build_blocks_donut_svg(items, center_text):
         pct_text = _fmt_share(pct)
         caption = escape(f"{face}, {pct_text}")
         href = escape("#block=" + quote(name, safe=""))
-        arcs.append(_donut_arc(cx, cy, r, sw, start, span, color, "loss-arc-seg"))
+        arcs.append(_donut_segment(cx, cy, r, sw, start, span, color, f"b{index}"))
         hit = _donut_arc(cx, cy, hit_r, hit_sw, start, span, "transparent", "loss-seg-hit")
         if hit:
             hits.append(
