@@ -1487,8 +1487,10 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .flow-btn:active { transform: scale(0.97); }
 .flow-btn.in { box-shadow: inset 3px 0 0 var(--green); }
 .flow-btn.out { box-shadow: inset 3px 0 0 var(--blue); }
+.flow-btn.pre { box-shadow: inset 3px 0 0 var(--muted); }
 .flow-btn.in:hover { background: var(--green-dim); }
 .flow-btn.out:hover { background: var(--blue-dim); }
+.flow-btn.pre:hover { background: var(--card-hover); }
 .flow-btn strong {
   margin-left: auto;
   font-size: 1.25rem;

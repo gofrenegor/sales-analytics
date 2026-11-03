@@ -393,8 +393,13 @@ function readUrl() {
     state.group = "";
     state.block = "";
   }
-  if (!params.get("view") && (state.flow === "in" || state.flow === "out")) state.view = "flow";
-  if ((state.view === "flow" || state.view === "group" || state.view === "block_detail") && !["in", "out"].includes(state.flow)) {
+  if (!params.get("view") && (state.flow === "in" || state.flow === "out" || state.flow === "pre")) state.view = "flow";
+  if (state.flow === "pre" && state.view !== "dashboard" && state.view !== "employees" && state.view !== "flow") {
+    state.view = "flow";
+    state.group = "";
+    state.block = "";
+  }
+  if ((state.view === "flow" || state.view === "group" || state.view === "block_detail") && !["in", "out", "pre"].includes(state.flow)) {
     state.view = "dashboard";
   }
   if (state.view === "group" && !state.group) state.view = "flow";
@@ -2045,6 +2050,20 @@ function renderDashboard(screen) {
   chart.innerHTML = dash.donut_svg;
   bindDonut(chart);
   const side = el("div");
+  side.append(el(
+    "button",
+    {
+      type: "button",
+      class: "flow-btn pre",
+      title: "Открыть предсписок",
+      onclick: () => go({ view: "flow", flow: "pre", group: "", block: "" }),
+    },
+    el(
+      "span",
+      { class: "flow-copy" },
+      el("span", { class: "flow-name" }, "предсписок"),
+    ),
+  ));
   for (const code of ["out", "in"]) {
     const flow = state.report.flows[code];
     const title = code === "in" ? "входящий поток" : "исходящий поток";
@@ -2100,6 +2119,16 @@ function renderDashboard(screen) {
 }
 
 function renderFlow(screen) {
+  if (state.flow === "pre") {
+    screen.append(
+      backButton("← Назад на главную", "dashboard"),
+      el("div", { class: "screen-head" }, el("h2", null, "Выбран: Предсписок")),
+      el("hr"),
+      el("h3", null, "Выберите блок для детализации:"),
+      renderCards([], "от потока", () => {}),
+    );
+    return;
+  }
   const flow = flowByCode(state.flow);
   if (!flow) {
     screen.append(missing("dashboard"));
