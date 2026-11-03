@@ -349,13 +349,9 @@ def build_block_lr_donut_svg(asm_sum, lay_sum, center_text):
 
 
 def _block_face(name):
-    """«Рязань Тюшевское 1» → «исход 1». Без номера — «исход». Остальные имена как есть."""
-    if name == _RYAZAN_BLOCK:
+    """«Рязань Тюшевское» и «Рязань Тюшевское 1» → «исход». Остальные имена как в маппинге."""
+    if name in (_RYAZAN_BLOCK, f"{_RYAZAN_BLOCK} 1"):
         return "исход"
-    prefix = _RYAZAN_BLOCK + " "
-    if name.startswith(prefix):
-        rest = name[len(prefix):].strip()
-        return f"исход {rest}" if rest else "исход"
     return name
 
 
