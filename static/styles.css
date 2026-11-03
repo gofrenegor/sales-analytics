@@ -1817,8 +1817,35 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .card:hover { background: var(--card-hover); }
 .card:active { transform: scale(0.97); }
-.card.red { border-color: color-mix(in srgb, var(--red) 65%, transparent); }
-.card.green { border-color: color-mix(in srgb, var(--green) 65%, transparent); }
+.card.red,
+.card.green {
+  color: #f4f7fb;
+}
+.card.red {
+  background: #4a1822;
+  border-color: #8a3948;
+}
+.card.green {
+  background: #0e3a28;
+  border-color: #1d7a52;
+}
+.card.red:hover { background: #5c2030; }
+.card.green:hover { background: #145038; }
+.card.red .c-name,
+.card.green .c-name,
+.card.red .c-share,
+.card.green .c-share { color: rgb(255 255 255 / 0.72); }
+.card.red .chip-r { background: rgb(255 180 180 / 0.16); color: #ffd0d0; }
+.card.green .chip-g { background: rgb(180 240 200 / 0.16); color: #c8f5d4; }
+.card.red .chip-n,
+.card.green .chip-n { background: rgb(255 255 255 / 0.12); color: rgb(255 255 255 / 0.8); }
+.card.red button,
+.card.green button {
+  color: #d5e4ff;
+  border-top-color: rgb(255 255 255 / 0.16);
+}
+.card.red button:hover,
+.card.green button:hover { color: #fff; }
 .c-name {
   min-height: 2.6em;
   color: var(--muted);

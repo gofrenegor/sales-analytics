@@ -756,9 +756,9 @@ def pack_cards(g, has_prev):
         prev = _f(rec.prev_sum)
         diff = loss - prev
         growth = diff / prev * 100 if prev > 0 else None
-        if growth is not None and growth >= 20:
+        if growth is not None and growth > 0:
             color = "red"
-        elif growth is not None and growth <= -20:
+        elif growth is not None and growth < 0:
             color = "green"
         else:
             color = "plain"

@@ -1416,6 +1416,15 @@ function backButton(label, view) {
   return el("button", { type: "button", class: "back", onclick: () => goBack(view) }, label);
 }
 
+function cardTone(card) {
+  const prev = Number(card.prev_sum) || 0;
+  const loss = Number(card.loss_sum) || 0;
+  if (!state.report || !state.report.has_prev || prev <= 0) return "plain";
+  if (loss > prev) return "red";
+  if (loss < prev) return "green";
+  return "plain";
+}
+
 function renderCards(cards, shareLabel, onOpen) {
   const grid = el("div", { class: "cards" });
   cards.forEach((card, index) => {
@@ -1423,7 +1432,7 @@ function renderCards(cards, shareLabel, onOpen) {
     const bar = el("div", { class: "bar" }, el("div", { style: `width:${Math.min(card.pct, 100).toFixed(1)}%` }));
     grid.append(el(
       "article",
-      { class: `card ${card.color}` },
+      { class: `card ${cardTone(card)}` },
       el("div", { class: "c-name", title: card.name }, card.name),
       el("div", { class: "c-sum" }, fmtRub(card.loss_sum)),
       chip || el("span", { class: "chip chip-slot", "aria-hidden": "true" }, "\u00a0"),
