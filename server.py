@@ -75,6 +75,10 @@ class ContactIn(BaseModel):
     domain: str = ""
 
 
+class PasswordIn(BaseModel):
+    password: str = ""
+
+
 def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
 
@@ -221,6 +225,20 @@ def auth_login(body: LoginIn):
         "email": user.get("email"),
     })
     return _auth_cookie(response, user["id"])
+
+
+@app.post("/api/auth/password")
+def auth_password(body: PasswordIn, user=Depends(actor)):
+    blocked = denied(user)
+    if blocked:
+        return blocked
+    try:
+        db.set_access_password_value(user["id"], body.password)
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    return {"ok": True}
 
 
 @app.post("/api/auth/logout")

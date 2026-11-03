@@ -135,6 +135,7 @@ def test_bad_upload_and_mode(client):
 
 def test_access_grant_and_view_role(client):
     assert client.post("/api/auth/logout").status_code == 200
+    assert client.post("/api/auth/password", json={"password": "12345678"}).status_code == 401
     assert client.get("/api/auth/me").json()["ok"] is False
     assert client.get("/api/report", params={"mode": "Месяц"}).status_code == 401
     bad = client.post("/api/auth/login", json={"contact": "79000000001", "password": "wrongpass"})
@@ -218,6 +219,17 @@ def test_access_grant_and_view_role(client):
     client.post("/api/auth/logout")
     assert client.post("/api/auth/login", json={
         "contact": "ivan", "domain": "gmail.com", "password": view_password,
+    }).status_code == 200
+    assert client.post("/api/auth/password", json={"password": "1234567"}).status_code == 400
+    changed = client.post("/api/auth/password", json={"password": "новый-пароль"})
+    assert changed.status_code == 200
+    assert changed.json() == {"ok": True}
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={
+        "contact": "ivan", "domain": "gmail.com", "password": view_password,
+    }).status_code == 401
+    assert client.post("/api/auth/login", json={
+        "contact": "79001112233", "password": "новый-пароль",
     }).status_code == 200
     assert client.get("/api/bootstrap").status_code == 200
     assert client.post("/api/admin/truncate", json={"confirm": True}).status_code == 403
@@ -316,6 +328,8 @@ def test_index_injects_asset_version(client):
     assert "gate-error" in html
     assert "grant-secret" in html
     assert "gate-id" not in html
+    assert "password-panel" in html
+    assert "password-next" in html
     match = re.search(r"/static/app\.js\?v=(\d+)", html)
     assert match
     assert f'/static/styles.css?v={match.group(1)}' in html

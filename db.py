@@ -458,6 +458,27 @@ def grant_access(role, phone, email, domain=""):
     }
 
 
+def set_access_password_value(user_id, password):
+    plain = str(password or "").strip()
+    if len(plain) < 8 or len(plain) > 64:
+        raise ValueError("Пароль от 8 до 64 символов")
+    hashed = hash_password(plain)
+    with _write_lock:
+        engine = get_engine()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(
+                    text("UPDATE access_users SET password_hash = :password_hash WHERE id = :id"),
+                    {"password_hash": hashed, "id": int(user_id)},
+                )
+                if not result.rowcount:
+                    raise ValueError("Нет такого ID")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise DataError(f"Не удалось записать пароль: {public_error(exc)}") from exc
+
+
 def set_access_password(user_id):
     plain = generate_password()
     hashed = hash_password(plain)
