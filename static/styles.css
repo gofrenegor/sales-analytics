@@ -474,11 +474,15 @@ main {
 }
 .sections button[aria-pressed="true"]:hover { color: #fff; }
 .emp-lrs {
-  display: inline-grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 6px;
+  --emp-gap: 6px;
+  display: flex;
+  align-items: stretch;
+  gap: var(--emp-gap);
+  width: 100%;
+  max-width: 100%;
   margin-top: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 .emp-lrs button {
   width: auto;
@@ -494,14 +498,111 @@ main {
   font-weight: 750;
   line-height: 1;
   color: var(--text);
-  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out), transform 160ms var(--ease-out);
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
 }
-.emp-lrs button:active { transform: scale(0.97); }
+.emp-lrs.is-measured .emp-asm,
+.emp-lrs.is-measured .emp-swap,
+.emp-lrs.is-measured .emp-swap > button {
+  width: var(--emp-op);
+}
+.emp-asm {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  transition: transform 160ms var(--ease-out), background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.emp-asm:active { transform: scale(0.97); }
+.emp-swap {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: 0 0 auto;
+}
+.emp-swap > button {
+  grid-area: 1 / 1;
+  transition: transform 300ms var(--ease-in-out), background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+}
+.emp-lrs.is-instant .emp-swap > button { transition: none; }
+.emp-lrs.is-layout .emp-rows,
+.emp-lrs.from-layout .emp-rows {
+  transform: translateX(calc(-100% - var(--emp-gap)));
+  pointer-events: none;
+}
+.emp-lrs.is-assembly .emp-lay,
+.emp-lrs.from-assembly .emp-lay {
+  transform: translateX(100%);
+}
+.emp-lrs.is-assembly .emp-rows:active { transform: scale(0.97); }
+.emp-lrs.is-layout .emp-lay:active,
+.emp-lrs.from-assembly .emp-lay:active { transform: scale(0.97); }
+.emp-lrs.is-assembly .emp-lay:active,
+.emp-lrs.from-layout .emp-lay:active { transform: translateX(100%) scale(0.97); }
+.emp-lrs.is-layout .emp-rows:active,
+.emp-lrs.from-layout .emp-rows:active { transform: translateX(calc(-100% - var(--emp-gap))) scale(0.97); }
 .emp-lrs button[aria-pressed="true"] {
   background: var(--blue);
   border-color: var(--blue);
   color: #fff;
 }
+.prob-total { margin: 0.1rem 0 0.35rem; }
+.prob-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 0.5rem;
+}
+.prob-card { display: flex; flex-direction: column; }
+.prob-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0.7rem 9.25rem 0.7rem 8.75rem;
+  column-gap: 0.35rem;
+  align-items: baseline;
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+button.prob-line {
+  min-height: 3.1rem;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  color: var(--text);
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+button.prob-line:hover,
+.prob-card.is-open > button.prob-line { background: var(--card-hover); border-color: var(--line-strong); }
+button.prob-line:active { transform: scale(0.97); }
+.prob-card.is-open > button.prob-line {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.prob-detail {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  padding: 2px 0 8px;
+  max-height: min(28rem, 60vh);
+  overflow: auto;
+  animation: pane-reveal 180ms var(--ease-out);
+}
+.prob-detail .prob-line { padding: 4px 12px; min-height: 1.9rem; }
+.prob-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prob-sep { text-align: center; color: var(--muted); }
+.prob-count,
+.prob-sum {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.prob-sum { text-align: right; font-weight: 750; }
 .emp-toolbar {
   display: flex;
   flex-wrap: wrap;

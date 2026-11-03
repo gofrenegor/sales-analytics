@@ -47,6 +47,12 @@ FRAME_COLUMNS = {
         "reason", "status_before", "block_id", "office_id",
         "status_employee_id",
     ),
+    # Проблемные ряды сборки: МХ и сумма. Бейджик и стикер не читаются.
+    # status_before нужен, чтобы ORS попал в LR 5 так же, как в списке сотрудников.
+    "rows": (
+        "loss_date", "block_name", "loss_sum",
+        "reason", "status_before", "block_id", "office_id", "mx",
+    ),
 }
 DETAIL_COLUMNS = (
     "loss_date", "block_name", "loss_sum", "loss_qty",

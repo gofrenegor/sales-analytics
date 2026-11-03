@@ -1206,6 +1206,55 @@ def build_employee_items(df, badge, lr):
     return items
 
 
+def aisle_name(value):
+    """Ряд из кода МХ. «РЗТК2.2.13.185.3.3» → «РЗТК2.2», первые два куска."""
+    text = sticker_text(value)
+    if not text:
+        return ""
+    parts = [part for part in text.split(".") if part]
+    if len(parts) >= 3:
+        return ".".join(parts[:2])
+    return text
+
+
+def build_problem_rows(df):
+    """Пропуски сборки (LR 5) по ряду МХ. Внутри ряда — полное место.
+
+    Строка места: код, число пропусков, сумма. Пустое МХ — «не указан».
+    """
+    if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
+        return []
+    part = df.loc[df["reason"].astype(str) == "5"]
+    if part.empty:
+        return []
+    places = part["mx"].map(sticker_text) if "mx" in part.columns else pd.Series("", index=part.index)
+    if "loss_sum" in part.columns:
+        sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
+    else:
+        sums = pd.Series(0.0, index=part.index)
+    frame = pd.DataFrame({"mx": places.to_numpy(), "sum": sums.to_numpy()}, index=part.index)
+    frame["row"] = frame["mx"].map(lambda value: aisle_name(value) or "не указан")
+    frame.loc[frame["mx"] == "", "mx"] = "не указан"
+    rows = []
+    for name, group in frame.groupby("row", sort=False):
+        spots = []
+        for mx, spot in group.groupby("mx", sort=False):
+            spots.append({
+                "mx": str(mx),
+                "skips": int(len(spot)),
+                "sum": _f(spot["sum"].sum()),
+            })
+        spots.sort(key=lambda item: (-item["skips"], -item["sum"], item["mx"]))
+        rows.append({
+            "row": str(name),
+            "skips": int(len(group)),
+            "sum": _f(group["sum"].sum()),
+            "places": spots,
+        })
+    rows.sort(key=lambda item: (-item["skips"], -item["sum"], item["row"]))
+    return rows
+
+
 def _flow_code(title):
     if title == "Входящий поток":
         return "in"

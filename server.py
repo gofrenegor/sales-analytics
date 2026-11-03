@@ -335,6 +335,15 @@ def _employees_payload(period):
     return {"employees": analytics.build_employees(current)}
 
 
+def _problem_rows_payload(period):
+    current = db.load_cached(period["_start"], period["_end"], "rows")
+    existing = db.known_columns() or ()
+    return {
+        "ready": "mx" in existing,
+        "rows": analytics.build_problem_rows(current),
+    }
+
+
 def _employee_items_payload(period, badge, lr):
     frame, columns_ready = db.load_employee_slice(period["_start"], period["_end"], badge)
     items = analytics.build_employee_items(frame, badge, lr)
@@ -379,6 +388,24 @@ def employees(
     if error is not None:
         return error
     return _cached_json("employees", period, _employees_payload)
+
+
+@app.get("/api/employees/rows")
+def employee_rows(
+    mode: str = "Месяц",
+    anchor: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    user=Depends(actor),
+):
+    """Проблемные ряды сборки: ряд, число пропусков, сумма. Список сотрудников это не читает."""
+    blocked = denied(user)
+    if blocked:
+        return blocked
+    period, error = _period(mode, anchor, start, end)
+    if error is not None:
+        return error
+    return _cached_json("employee-rows", period, _problem_rows_payload)
 
 
 @app.get("/api/employees/items")

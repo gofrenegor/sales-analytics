@@ -17,12 +17,21 @@ const state = {
   badgeDraft: "",
   badgeQuery: "",
   empLr: "5",
+  empLrMotion: "",
+  empRows: false,
   empSort: "qty",
   empSortOpen: false,
   empPage: 0,
   empOpen: "",
   empDetail: null,
   empCache: {},
+  rows: null,
+  rowsKey: "",
+  rowsLoading: false,
+  rowsError: "",
+  rowsReady: true,
+  rowOpen: "",
+  rowPage: 0,
   user: null,
 };
 
@@ -77,6 +86,15 @@ function lossLabel(count) {
   if (n1 === 1) return "потеря";
   if (n1 >= 2 && n1 <= 4) return "потери";
   return "потерь";
+}
+
+function skipLabel(count) {
+  const n = Math.abs(Number(count) || 0) % 100;
+  const n1 = n % 10;
+  if (n > 10 && n < 20) return "пропусков";
+  if (n1 === 1) return "пропуск";
+  if (n1 >= 2 && n1 <= 4) return "пропуска";
+  return "пропусков";
 }
 
 function fmtDate(iso) {
@@ -1130,6 +1148,7 @@ async function waitAnimating() {
 let loadSeq = 0;
 let employeesSeq = 0;
 let empDetailSeq = 0;
+let rowsSeq = 0;
 
 function resetEmployees() {
   employeesSeq += 1;
@@ -1142,6 +1161,15 @@ function resetEmployees() {
   state.empDetail = null;
   state.empCache = {};
   state.empPage = 0;
+  state.empRows = false;
+  state.empLrMotion = "";
+  state.rows = null;
+  state.rowsKey = "";
+  state.rowsLoading = false;
+  state.rowsError = "";
+  state.rowsReady = true;
+  state.rowOpen = "";
+  state.rowPage = 0;
 }
 
 function empKey(lr, badge) {
@@ -1234,6 +1262,38 @@ async function loadEmployees() {
     if (seq !== employeesSeq) return;
     state.employeesLoading = false;
     state.employeesError = error.message;
+  }
+  if (state.view === "employees") render();
+}
+
+async function loadProblemRows() {
+  if (freeRangePending() || !state.report || state.report.empty) return;
+  const key = periodKey();
+  if (state.rows && state.rowsKey === key) return;
+  if (state.rowsLoading && state.rowsKey === key) return;
+  const seq = ++rowsSeq;
+  state.rowsLoading = true;
+  state.rowsError = "";
+  state.rows = null;
+  state.rowsKey = key;
+  if (state.view === "employees") render();
+  try {
+    const response = await fetch(`/api/employees/rows?${periodParams().toString()}`);
+    const data = await parseJson(response);
+    if (seq !== rowsSeq) return;
+    if (response.status === 401) {
+      state.rowsLoading = false;
+      showGate();
+      return;
+    }
+    if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    state.rows = data.rows || [];
+    state.rowsReady = data.ready !== false;
+    state.rowsLoading = false;
+  } catch (error) {
+    if (seq !== rowsSeq) return;
+    state.rowsLoading = false;
+    state.rowsError = error.message;
   }
   if (state.view === "employees") render();
 }
@@ -1830,25 +1890,208 @@ function empSortControl() {
   return el("div", { class: "emp-sort" }, button, menu);
 }
 
+function measureEmpOps(lrs) {
+  const buttons = [...lrs.querySelectorAll("button")];
+  for (const button of buttons) button.style.width = "max-content";
+  const width = Math.ceil(Math.max(0, ...buttons.map((button) => button.getBoundingClientRect().width)));
+  for (const button of buttons) button.style.width = "";
+  if (width) lrs.style.setProperty("--emp-op", `${width}px`);
+  lrs.classList.add("is-measured");
+}
+
+function settleEmpOps(lrs) {
+  const motion = state.empLrMotion;
+  state.empLrMotion = "";
+  if (motion) lrs.classList.add("is-instant");
+  measureEmpOps(lrs);
+  if (!motion) return;
+  requestAnimationFrame(() => {
+    lrs.classList.remove("is-instant");
+    requestAnimationFrame(() => {
+      lrs.classList.remove("from-layout", "from-assembly");
+      lrs.classList.add(motion === "to-assembly" ? "is-assembly" : "is-layout");
+    });
+  });
+}
+
+function pickEmpLr(code) {
+  if (code === "5" && state.empLr === "5") {
+    if (!state.empRows) return;
+    state.empRows = false;
+    state.rowOpen = "";
+    render();
+    return;
+  }
+  if (code === "27" && state.empLr === "27") return;
+  state.empLr = code;
+  state.empRows = false;
+  state.rowOpen = "";
+  state.empPage = 0;
+  state.empSortOpen = false;
+  state.empOpen = "";
+  state.empLrMotion = code === "5" ? "to-assembly" : "to-layout";
+  render();
+}
+
+function openProblemRows() {
+  if (state.empLr !== "5") return;
+  state.empRows = true;
+  state.empOpen = "";
+  state.empSortOpen = false;
+  state.rowPage = 0;
+  render();
+  loadProblemRows();
+}
+
+function renderEmpOps(lr) {
+  const motion = state.empLrMotion;
+  let pose = lr === "5" ? "is-assembly" : "is-layout";
+  if (motion === "to-assembly") pose = "from-layout";
+  if (motion === "to-layout") pose = "from-assembly";
+  const rowsOn = lr === "5" && state.empRows;
+  const lrs = el("div", {
+    class: `emp-lrs ${pose}`,
+    role: "group",
+    "aria-label": "Операция",
+  });
+  lrs.append(el("button", {
+    type: "button",
+    class: "emp-asm",
+    "aria-pressed": lr === "5" ? "true" : "false",
+    onclick: () => pickEmpLr("5"),
+  }, "сборка"));
+  const swap = el("div", { class: "emp-swap" });
+  swap.append(el("button", {
+    type: "button",
+    class: "emp-rows",
+    "aria-pressed": rowsOn ? "true" : "false",
+    "aria-hidden": lr === "5" ? "false" : "true",
+    tabindex: lr === "5" ? "0" : "-1",
+    onclick: () => openProblemRows(),
+  }, "проблемные ряды"));
+  swap.append(el("button", {
+    type: "button",
+    class: "emp-lay",
+    "aria-pressed": lr === "27" ? "true" : "false",
+    onclick: () => pickEmpLr("27"),
+  }, "раскладка"));
+  lrs.append(swap);
+  return lrs;
+}
+
+function problemLine(name, count, sum, tag) {
+  const title = name || "не указан";
+  return el(tag, { class: "prob-line", title: `${title} - ${fmtInt(count)} ${skipLabel(count)} - ${fmtRub(sum)}` },
+    el("span", { class: "prob-name" }, title),
+    el("span", { class: "prob-sep", "aria-hidden": "true" }, "-"),
+    el("span", { class: "prob-count" }, `${fmtInt(count)} ${skipLabel(count)}`),
+    el("span", { class: "prob-sep", "aria-hidden": "true" }, "-"),
+    el("span", { class: "prob-sum" }, fmtRub(sum)),
+  );
+}
+
+function renderProblemRows(screen) {
+  if (freeRangePending()) {
+    screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
+    return;
+  }
+  if (!state.report) {
+    screen.append(el("p", { class: "hint" }, "Загрузка…"));
+    return;
+  }
+  if (state.report.empty) {
+    screen.append(el("p", { class: "box warn" }, "⚠️ Нет данных за этот период."));
+    return;
+  }
+  if (state.rowsError) {
+    screen.append(el("p", { class: "box bad" }, state.rowsError));
+    return;
+  }
+  if (state.rowsLoading || state.rows == null) {
+    screen.append(el("p", { class: "hint" }, "Загрузка рядов…"));
+    return;
+  }
+  const all = state.rows;
+  const skips = all.reduce((sum, row) => sum + (Number(row.skips) || 0), 0);
+  const total = all.reduce((sum, row) => sum + (Number(row.sum) || 0), 0);
+  screen.append(
+    el("div", { class: "sub" }, `Рядов: ${fmtInt(all.length)}`),
+    el("div", { class: "big-sum" }, fmtRub(total)),
+    el("p", { class: "hint prob-total" }, `${fmtInt(skips)} ${skipLabel(skips)}`),
+  );
+  const blank = !state.rowsReady || (all.length > 0 && all.every((row) => row.row === "не указан"));
+  if (blank) {
+    screen.append(el("p", { class: "hint" }, "МХ пустое. В выгрузке нужна колонка «МХ» или «Место хранения» — загрузите период ещё раз."));
+  }
+  if (!all.length) {
+    screen.append(el("p", { class: "box warn" }, "Нет пропусков сборки за этот период."));
+    return;
+  }
+  const pages = empPages(all.length);
+  let pageIndex = state.rowPage;
+  if (pageIndex >= pages.length) pageIndex = 0;
+  if (pageIndex !== state.rowPage) state.rowPage = pageIndex;
+  const page = pages[pageIndex];
+  const list = el("div", { class: "prob-list" });
+  for (const row of all.slice(page.start, page.end)) {
+    const name = String(row.row || "");
+    const open = state.rowOpen === name;
+    const card = el("div", { class: open ? "prob-card is-open" : "prob-card" });
+    const line = problemLine(name, row.skips, row.sum, "button");
+    line.type = "button";
+    line.setAttribute("aria-expanded", open ? "true" : "false");
+    line.onclick = () => {
+      state.rowOpen = open ? "" : name;
+      render();
+    };
+    card.append(line);
+    if (open) {
+      const detail = el("div", { class: "prob-detail" });
+      for (const place of row.places || []) {
+        detail.append(problemLine(place.mx, place.skips, place.sum, "div"));
+      }
+      card.append(detail);
+    }
+    list.append(card);
+  }
+  screen.append(list);
+  if (pages.length > 1) {
+    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы рядов" });
+    if (pageIndex > 0) {
+      nav.append(el("button", {
+        type: "button",
+        class: "emp-page-arrow",
+        "aria-label": "Предыдущая страница",
+        onclick: () => showRowPage(pageIndex - 1),
+      }, "←"));
+    }
+    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)));
+    if (pageIndex < pages.length - 1) {
+      nav.append(el("button", {
+        type: "button",
+        class: "emp-page-arrow",
+        "aria-label": "Следующая страница",
+        onclick: () => showRowPage(pageIndex + 1),
+      }, "→"));
+    }
+    screen.append(nav);
+  }
+}
+
+function showRowPage(index) {
+  if (state.rowPage === index) return;
+  state.rowPage = index;
+  state.rowOpen = "";
+  render();
+}
+
 function renderEmployees(screen) {
   const report = state.report;
   const pack = empPack();
   const lr = state.empLr === "27" ? "27" : "5";
+  const rowsMode = lr === "5" && state.empRows;
   const all = pack ? (pack[lr] || []) : [];
-  const lrs = el("div", { class: "emp-lrs", role: "group", "aria-label": "Операция" });
-  for (const [code, label] of [["5", "сборка"], ["27", "раскладка"]]) {
-    lrs.append(el("button", {
-      type: "button",
-      "aria-pressed": lr === code ? "true" : "false",
-      onclick: () => {
-        if (state.empLr === code) return;
-        state.empLr = code;
-        state.empPage = 0;
-        state.empSortOpen = false;
-        render();
-      },
-    }, label));
-  }
+  const lrs = renderEmpOps(lr);
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
   const matched = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
   const rows = sortEmployees(matched, state.empSort);
@@ -1890,8 +2133,14 @@ function renderEmployees(screen) {
   screen.append(
     el("div", { class: "screen-head" }, el("h2", null, "Операция")),
     lrs,
-    form,
   );
+  if (!rowsMode) screen.append(form);
+  settleEmpOps(lrs);
+  if (rowsMode) {
+    renderProblemRows(screen);
+    loadProblemRows();
+    return;
+  }
   if (freeRangePending()) {
     screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
     return;
