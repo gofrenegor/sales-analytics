@@ -456,10 +456,33 @@ def _block_donut_color(index):
     return BLOCK_DONUT_COLORS[index % len(BLOCK_DONUT_COLORS)]
 
 
-def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
-    """Имя и доля снаружи дуги, около 8px от внешнего края. Процент под именем."""
-    font = 11 if len(face) > 12 else 13
-    line = font + 2
+_RING_NUMBERS = (1, 3, 2, 4)
+
+
+def _ring_number(name):
+    match = re.search(r"(\d+)\s*$", str(name or ""))
+    if not match:
+        return None
+    number = int(match.group(1))
+    return number if number in _RING_NUMBERS else None
+
+
+def _arrange_ring_items(items):
+    """По кругу: блок 1, затем 3, затем 2, затем 4. Остальные — после, по сумме."""
+    by_number = {}
+    rest = []
+    for item in items or []:
+        number = _ring_number(item.get("name"))
+        if number is not None and str(item.get("name") or "") in ALL_BLOCKS and number not in by_number:
+            by_number[number] = item
+        else:
+            rest.append(item)
+    ordered = [by_number[number] for number in _RING_NUMBERS if number in by_number]
+    rest.sort(key=lambda item: (-_f(item.get("sum")), str(item.get("name") or "")))
+    return ordered + rest
+
+
+def _text_side(mid):
     cos_m = math.cos(math.radians(mid))
     sin_m = math.sin(math.radians(mid))
     if cos_m >= 0.35:
@@ -468,20 +491,36 @@ def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
         anchor = "end"
     else:
         anchor = "middle"
-    outer = r + sw / 2
+    return anchor, cos_m, sin_m
+
+
+def _text_ys(anchor, sin_m, y, font):
+    line = font + 2
     if anchor == "middle" and sin_m > 0:
-        radius = outer + 8 + font * 0.8
-        y = cy + radius * sin_m
-        y_name, y_pct = y, y + line
-    elif anchor == "middle":
-        radius = outer + 8
-        y = cy + radius * sin_m
-        y_name, y_pct = y - line, y
+        return y, y + line
+    if anchor == "middle":
+        return y - line, y
+    return y - line / 2, y + line / 2
+
+
+def _text_box(x, y_name, y_pct, anchor, face, pct_text, font):
+    width = max(len(face), len(pct_text), 1) * font * 0.58
+    if anchor == "start":
+        left, right = x, x + width
+    elif anchor == "end":
+        left, right = x - width, x
     else:
-        radius = outer + 8 + 4
-        y = cy + radius * sin_m
-        y_name, y_pct = y - line / 2, y + line / 2
-    x = cx + radius * cos_m
+        left, right = x - width / 2, x + width / 2
+    top = min(y_name, y_pct) - font
+    bottom = max(y_name, y_pct) + 3
+    return (left, top, right, bottom)
+
+
+def _boxes_hit(a, b, pad=4):
+    return not (a[2] + pad < b[0] or b[2] + pad < a[0] or a[3] + pad < b[1] or b[3] + pad < a[1])
+
+
+def _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font):
     return (
         f'<text class="loss-seg-label" text-anchor="{anchor}" fill="{color}" '
         f'font-size="{font}" pointer-events="none">'
@@ -489,6 +528,57 @@ def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
         f'<tspan class="loss-seg-pct" x="{x:.2f}" y="{y_pct:.2f}">{escape(pct_text)}</tspan>'
         f"</text>"
     )
+
+
+def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
+    """Имя и доля снаружи дуги, около 8px от внешнего края. Процент под именем."""
+    font = 11 if len(face) > 12 else 13
+    anchor, cos_m, sin_m = _text_side(mid)
+    outer = r + sw / 2
+    if anchor == "middle" and sin_m > 0:
+        radius = outer + 8 + font * 0.8
+    elif anchor == "middle":
+        radius = outer + 8
+    else:
+        radius = outer + 8 + 4
+    x = cx + radius * cos_m
+    y = cy + radius * sin_m
+    y_name, y_pct = _text_ys(anchor, sin_m, y, font)
+    svg = _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font)
+    box = _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
+    return svg, box
+
+
+def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
+    """Короткая стрелка цвета блока от дуги к подписи рядом с кольцом."""
+    font = 11 if len(face) > 12 else 13
+    anchor, cos_m, sin_m = _text_side(mid)
+    outer = r + sw / 2
+    head = 6.0
+    stem = 14.0 + pad
+    r0 = outer + 2
+    r_tip = r0 + stem
+    r_text = r_tip + 5
+    x0, y0 = _polar(cx, cy, r0, mid)
+    x_base, y_base = _polar(cx, cy, r_tip - head, mid)
+    x_tip, y_tip = _polar(cx, cy, r_tip, mid)
+    ang = math.radians(mid)
+    dx, dy = math.cos(ang), math.sin(ang)
+    px, py = -dy, dx
+    wing = 2.6
+    left = (x_base + px * wing, y_base + py * wing)
+    right = (x_base - px * wing, y_base - py * wing)
+    x = cx + r_text * cos_m
+    y = cy + r_text * sin_m
+    y_name, y_pct = _text_ys(anchor, sin_m, y, font)
+    arrow = (
+        f'<line class="loss-leader" x1="{x0:.2f}" y1="{y0:.2f}" x2="{x_base:.2f}" y2="{y_base:.2f}" '
+        f'stroke="{color}" />'
+        f'<polygon class="loss-leader-head" fill="{color}" points="'
+        f'{x_tip:.2f},{y_tip:.2f} {left[0]:.2f},{left[1]:.2f} {right[0]:.2f},{right[1]:.2f}" />'
+    )
+    svg = arrow + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font)
+    return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
 
 
 def warehouse_block_items(curr, total):
@@ -544,32 +634,13 @@ def _block_gap(allocated):
     return 0.6
 
 
-def _block_callouts(specs):
-    """Чипы блоков, чья доля не помещается подписью на дуге. Имя — face, клик — настоящее имя."""
-    if not specs:
-        return ""
-    ordered = sorted(specs, key=lambda spec: (-spec["pct"], spec["face"]))
-    rows = []
-    for spec in ordered:
-        rows.append(
-            "<li>"
-            f'<a class="loss-callout" data-block="{escape(spec["name"])}" href="{spec["href"]}" '
-            f'style="--slice:{spec["color"]}">'
-            '<i aria-hidden="true"></i>'
-            f'<span>{escape(spec["face"])}</span>'
-            f'<b>{escape(spec["pct_text"])}</b>'
-            "</a></li>"
-        )
-    return '<ul class="loss-callouts">' + "".join(rows) + "</ul>"
-
-
 def build_blocks_donut_svg(items, center_text):
-    """Кольцо всех блоков. Крупные доли подписаны на дуге, мелкие — чипами над кольцом."""
+    """Кольцо всех блоков. Крупные доли подписаны у дуги, мелкие — стрелкой рядом."""
     cx, cy, r, sw = 200, 200, 112, 50
     outer, inner, outset = r + sw / 2, r - sw / 2, 8
     hit_r = (outer + outset + inner) / 2
     hit_sw = outer + outset - inner
-    rows = list(items or [])
+    rows = _arrange_ring_items(items)
     raws = [max(_f(item.get("pct")), 0.0) / 100 * 360 for item in rows]
     if len(raws) == 1:
         raws = [360.0]
@@ -577,7 +648,8 @@ def build_blocks_donut_svg(items, center_text):
         raws[-1] += 360.0 - sum(raws)
     allocated = _block_display_spans(raws)
 
-    arcs, hits, labels, callouts = [], [], [], []
+    arcs, hits, labels, leaders = [], [], [], []
+    placed = []
     cursor = -90.0
     for index, (item, raw) in enumerate(zip(rows, allocated)):
         raw = max(_f(raw), 0.0)
@@ -603,19 +675,34 @@ def build_blocks_donut_svg(items, center_text):
                 f"<title>{caption}</title>{hit}</a>"
             )
         if pct >= BLOCK_CALLOUT_PCT:
-            text = _block_label(cx, cy, r, sw, mid, face, pct_text, color)
+            text, box = _block_label(cx, cy, r, sw, mid, face, pct_text, color)
+            placed.append(box)
             labels.append(
                 f'<a class="loss-seg-label-link" data-block="{escape(name)}" href="{href}">{text}</a>'
             )
         else:
-            callouts.append({
-                "name": name,
+            leaders.append({
+                "mid": mid,
                 "face": face,
-                "pct": pct,
                 "pct_text": pct_text,
                 "color": color,
+                "name": name,
                 "href": href,
             })
+
+    for spec in sorted(leaders, key=lambda item: item["mid"]):
+        chosen = None
+        for step in range(4):
+            text, box = _leader_label(
+                cx, cy, r, sw, spec["mid"], spec["face"], spec["pct_text"], spec["color"], step * 18,
+            )
+            chosen = (text, box)
+            if not any(_boxes_hit(box, other) for other in placed):
+                break
+        placed.append(chosen[1])
+        labels.append(
+            f'<a class="loss-seg-label-link" data-block="{escape(spec["name"])}" href="{spec["href"]}">{chosen[0]}</a>'
+        )
 
     label = escape(center_text)
     described = ", ".join(
@@ -628,7 +715,6 @@ def build_blocks_donut_svg(items, center_text):
     return f'''<div class="loss-stack">
 <div class="loss-figure">
 <div class="loss-ring-row loss-ring-blocks">
-{_block_callouts(callouts)}
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>

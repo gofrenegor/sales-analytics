@@ -1630,66 +1630,21 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   pointer-events: auto;
   cursor: pointer;
 }
+.loss-leader {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: stroke;
+}
+.loss-leader-head {
+  stroke: none;
+  pointer-events: auto;
+}
 .loss-ring-blocks .loss-hole-label {
   font-size: clamp(13px, 3.2cqi, 22px);
 }
 .loss-ring-blocks .loss-hole-sum {
   font-size: clamp(16px, 4.6cqi, 40px);
-}
-.loss-callouts {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.loss-callouts li { margin: 0; padding: 0; }
-.loss-callout {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 8px 14px 8px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: var(--card);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.9375rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-  text-decoration: none;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
-}
-.loss-callout i {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--slice, var(--blue));
-  flex: 0 0 auto;
-}
-.loss-callout b {
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-.loss-callout:hover,
-.loss-callout.is-hot,
-.loss-callout:focus-visible {
-  background: color-mix(in srgb, var(--slice, var(--blue)) 18%, var(--card));
-  border-color: var(--slice, var(--blue));
-}
-.loss-callout:active { transform: scale(0.97); }
-.loss-callout:focus { outline: none; }
-.loss-callout:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 2px;
 }
 .loss-hole {
   position: absolute;
