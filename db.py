@@ -32,11 +32,11 @@ CACHE_TTL = 3600
 READ_COLUMNS = (
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
-    "status_employee_id", "last_sticker", "posted",
+    "status_employee_id", "last_sticker", "posted", "mx",
 )
 WRITE_COLUMNS = READ_COLUMNS
 # Главный экран не читает ШК и бейджик. Список сотрудников — бейджик, без стикеров.
-# Стикер и флаг оприходования читает только срез одного бейджика по клику.
+# Стикер, флаг и МХ читает только срез одного бейджика по клику.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
@@ -51,7 +51,7 @@ FRAME_COLUMNS = {
 DETAIL_COLUMNS = (
     "loss_date", "block_name", "loss_sum", "loss_qty",
     "reason", "status_before", "block_id", "office_id",
-    "status_employee_id", "last_sticker", "posted",
+    "status_employee_id", "last_sticker", "posted", "mx",
 )
 
 
@@ -205,7 +205,7 @@ def ensure_schema():
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
-        for col in ("office_id", "block_id", "status_employee_id", "last_sticker", "posted"):
+        for col in ("office_id", "block_id", "status_employee_id", "last_sticker", "posted", "mx"):
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE losses ADD COLUMN {col} TEXT"))
         _ensure_loss_index(conn)

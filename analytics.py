@@ -91,6 +91,20 @@ POSTED_HEADERS = (
     "признак оприходования",
     "оприходовано",
 )
+# МХ, с которого сборщик сделал пропуск. В деталке сборки, справа от стикера.
+MX_HEADERS = (
+    "мх",
+    "место хранения",
+    "название мх",
+    "наименование мх",
+    "код мх",
+    "мх перед списанием",
+    "место хранения перед списанием",
+    "последнее мх",
+    "последнее место хранения",
+    "мх пропуска",
+    "место пропуска",
+)
 
 GROUP_PROMPTS = {
     "stages": "Выберите этап для детализации:",
@@ -366,6 +380,7 @@ def process_excel(file):
     employee = _employee_raw(df)
     sticker = _pick_series(df, STICKER_HEADERS, STICKER_COL_INDEX, "стикер", _looks_sticker)
     posted = _pick_series(df, POSTED_HEADERS, POSTED_COL_INDEX, "оприход", _looks_posted)
+    mx = _mx_raw(df)
     cols_map = {
         "ШК": "barcode",
         "Наименование блока": "block_name",
@@ -402,6 +417,7 @@ def process_excel(file):
         df["status_employee_id"] = df["status_employee_id"].map(badge_id)
     df["last_sticker"] = sticker.map(sticker_text).to_numpy() if sticker is not None else ""
     df["posted"] = posted.map(posted_flag).to_numpy() if posted is not None else ""
+    df["mx"] = mx.map(sticker_text).to_numpy() if mx is not None else ""
     return df
 
 
@@ -555,6 +571,33 @@ def _looks_sticker(series):
         return False
     hits = sum("*" in sticker_text(value) for value in sample)
     return hits * 2 >= len(sample)
+
+
+_MX_WORD = re.compile(r"(?<![0-9a-zа-яё])мх(?![0-9a-zа-яё])")
+_MX_ID = re.compile(r"(?<![0-9a-zа-яё])(?:id|ид)(?![0-9a-zа-яё])")
+
+
+def _mx_raw(df):
+    """Серия МХ до обрезки колонок. Имя места важнее колонки «ID МХ»."""
+    folded = [(str(col).strip().lower().replace("ё", "е"), col) for col in df.columns]
+    by_name = {key: col for key, col in folded}
+    for name in MX_HEADERS:
+        if name in by_name:
+            return df[by_name[name]]
+    named = []
+    ids = []
+    for key, col in folded:
+        if "место хран" not in key and _MX_WORD.search(key) is None:
+            continue
+        if _MX_ID.search(key):
+            ids.append(col)
+        else:
+            named.append(col)
+    if named:
+        return df[named[0]]
+    if ids:
+        return df[ids[0]]
+    return None
 
 
 def _pick_series(df, headers, index, token, accept):
@@ -1122,6 +1165,7 @@ def build_employee_items(df, badge, lr):
 
     found: True — оприходование ИСТИНА (вещь нашли, было движение),
     False — ЛОЖЬ, None — флага нет.
+    mx — место хранения, с которого был пропуск. Пусто, если колонки не было.
     """
     code = str(lr)
     if code not in EMPLOYEE_LRS:
@@ -1136,12 +1180,15 @@ def build_employee_items(df, badge, lr):
         return []
     stickers = part["last_sticker"] if "last_sticker" in part.columns else pd.Series("", index=part.index)
     flags = part["posted"] if "posted" in part.columns else pd.Series("", index=part.index)
+    places = part["mx"] if "mx" in part.columns else pd.Series("", index=part.index)
     if "loss_sum" in part.columns:
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
     items = []
-    for sticker, flag, amount in zip(stickers.tolist(), flags.tolist(), sums.tolist()):
+    for sticker, flag, amount, place in zip(
+        stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(),
+    ):
         parsed = posted_flag(flag)
         if parsed == "1":
             found = True
@@ -1153,6 +1200,7 @@ def build_employee_items(df, badge, lr):
             "sticker": sticker_text(sticker),
             "found": found,
             "sum": _f(amount),
+            "mx": sticker_text(place),
         })
     items.sort(key=lambda row: (-row["sum"], row["sticker"]))
     return items

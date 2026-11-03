@@ -1965,7 +1965,7 @@ function renderEmployees(screen) {
       const detail = state.empDetail && state.empDetail.key === key
         ? state.empDetail
         : { key, loading: true, error: "", items: null, ready: true };
-      card.append(renderEmpDetail(detail));
+      card.append(renderEmpDetail(detail, lr));
     }
     list.append(card);
   }
@@ -1993,6 +1993,16 @@ function renderEmployees(screen) {
   }
 }
 
+function empMxNode(mx) {
+  const text = String(mx || "").trim();
+  return el(
+    "span",
+    { class: "emp-mx", title: text ? `МХ ${text}` : "МХ" },
+    el("span", { class: "emp-mx-k" }, "мх"),
+    el("span", { class: "emp-mx-v" }, text || "—"),
+  );
+}
+
 function empFoundNode(found) {
   if (found === true) {
     return el(
@@ -2013,8 +2023,9 @@ function empFoundNode(found) {
   return el("span", { class: "emp-found unknown" }, "нет флага");
 }
 
-function renderEmpDetail(detail) {
-  const box = el("div", { class: "emp-detail" });
+function renderEmpDetail(detail, lr) {
+  const showMx = String(lr) === "5";
+  const box = el("div", { class: showMx ? "emp-detail has-mx" : "emp-detail" });
   if (!detail || detail.loading || detail.items == null) {
     box.append(el("p", { class: "hint" }, "Загрузка стикеров…"));
     return box;
@@ -2031,13 +2042,22 @@ function renderEmpDetail(detail) {
     box.append(el("p", { class: "hint" }, "Нет строк за этот период."));
     return box;
   }
+  const missingMx = showMx && detail.items.every((item) => !String(item.mx || "").trim());
   for (const item of detail.items) {
-    box.append(el(
+    const row = el(
       "div",
       { class: "emp-item" },
       el("span", { class: "emp-sticker" }, item.sticker || "—"),
-      empFoundNode(item.found),
-      el("span", { class: "emp-sum" }, fmtRub(item.sum)),
+    );
+    if (showMx) row.append(empMxNode(item.mx));
+    row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
+    box.append(row);
+  }
+  if (missingMx) {
+    box.append(el(
+      "p",
+      { class: "hint emp-mx-hint" },
+      "МХ пустое. В выгрузке нужна колонка «МХ» или «Место хранения» — загрузите период ещё раз.",
     ));
   }
   return box;
