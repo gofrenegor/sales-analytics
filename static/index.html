@@ -22,15 +22,16 @@
     <p class="gate-title">вы не зарегистрированы</p>
     <form id="gate-form" class="gate-form">
       <span class="mail-line" id="gate-line">
-        <input id="gate-contact" autocomplete="off" placeholder="телефон или почта" aria-label="Телефон или ник почты" enterkeyhint="next">
+        <input id="gate-contact" autocomplete="username" placeholder="телефон или почта" aria-label="Телефон или ник почты" enterkeyhint="next">
         <span class="mail-at" id="gate-at" hidden aria-hidden="true">@</span>
         <select id="gate-domain" hidden aria-label="Домен почты">
           <option value="gmail.com">gmail.com</option>
           <option value="mail.ru">mail.ru</option>
         </select>
       </span>
-      <input id="gate-id" inputmode="numeric" autocomplete="off" placeholder="ID" aria-label="ID" enterkeyhint="go">
+      <input id="gate-password" type="password" autocomplete="current-password" placeholder="пароль" aria-label="Пароль" enterkeyhint="go">
       <button type="submit" class="primary">Войти</button>
+      <p id="gate-error" class="gate-error" hidden role="alert"></p>
     </form>
   </div>
   <button type="button" id="admin-toggle" class="admin-toggle" hidden aria-controls="sidebar" aria-expanded="false" aria-label="Админ-панель">
@@ -55,6 +56,11 @@
         </span>
       </label>
       <button type="button" id="own-phone-save" class="wide ghost">Сохранить мои контакты</button>
+      <div id="own-secret" class="grant-secret" hidden>
+        <span class="grant-id-kicker">Мой пароль</span>
+        <input id="own-secret-value" class="grant-secret-value" readonly spellcheck="false" autocomplete="off" aria-label="Мой пароль">
+      </div>
+      <button type="button" id="own-password" class="wide ghost">сгенерировать мой пароль</button>
       <button type="button" id="grant-toggle" class="wide ghost" aria-expanded="false" aria-controls="grant-panel">Выдать доступ</button>
       <div id="grant-panel" class="grant-panel" hidden>
         <div class="grant-id" aria-disabled="true">
@@ -89,6 +95,10 @@
           </label>
         </div>
         <button type="button" id="grant-submit" class="wide primary" disabled>Выдать</button>
+        <div id="grant-secret" class="grant-secret" hidden>
+          <span class="grant-id-kicker">Пароль</span>
+          <input id="grant-secret-value" class="grant-secret-value" readonly spellcheck="false" autocomplete="off" aria-label="Пароль пользователя">
+        </div>
         <p id="grant-status" class="hint" hidden></p>
       </div>
       <button type="button" id="cache-btn" class="wide ghost">🔄 Сбросить кэш данных</button>
