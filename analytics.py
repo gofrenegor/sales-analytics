@@ -1117,6 +1117,16 @@ def build_quality(curr, other_curr):
 EMPLOYEE_LRS = ("5", "27")
 
 
+def _found_count(group):
+    """Сколько потерь с оприходованием. None — флага в этих строках нет."""
+    if "posted" not in group.columns:
+        return None
+    flags = group["posted"].map(posted_flag)
+    if not flags.isin(["1", "0"]).any():
+        return None
+    return int((flags == "1").sum())
+
+
 def _employee_badges(part):
     rows = []
     for badge, group in part.groupby("badge", sort=False):
@@ -1126,17 +1136,18 @@ def _employee_badges(part):
             "losses": int(len(group)),
             "sum": _f(group["loss_sum"].sum()),
             "wmi": bool(any(flags)),
+            "found": _found_count(group),
         })
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
     return rows
 
 
 def build_employees(df):
-    """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. Без списка ШК."""
+    """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. found — сколько оприходовано. Без списка ШК."""
     empty = {lr: [] for lr in EMPLOYEE_LRS}
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return empty
-    wanted = [col for col in ("reason", "status_employee_id", "loss_sum", "status_before") if col in df.columns]
+    wanted = [col for col in ("reason", "status_employee_id", "loss_sum", "status_before", "posted") if col in df.columns]
     part = df.loc[df["reason"].astype(str).isin(EMPLOYEE_LRS), wanted].copy()
     if part.empty:
         return empty

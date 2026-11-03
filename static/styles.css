@@ -544,13 +544,22 @@ main {
 }
 .emp-swap > button {
   grid-area: 1 / 1;
-  transition: transform 300ms var(--ease-in-out), background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+  transition: transform 300ms var(--ease-in-out), opacity 300ms var(--ease-in-out), visibility 300ms var(--ease-in-out), background 160ms var(--ease-out), border-color 160ms var(--ease-out), color 160ms var(--ease-out);
 }
 .emp-lrs.is-instant .emp-swap > button { transition: none; }
-.emp-lrs.is-layout .emp-rows,
+.emp-rows {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
 .emp-lrs.from-layout .emp-rows {
   transform: translateX(calc(-100% - var(--emp-gap)));
-  pointer-events: none;
+}
+.emp-lrs.is-assembly .emp-rows,
+.emp-lrs.from-assembly .emp-rows {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
 }
 .emp-lrs.is-assembly .emp-lay,
 .emp-lrs.from-assembly .emp-lay {
@@ -745,7 +754,7 @@ button.prob-line:active { transform: scale(0.97); }
 }
 .badge-search button.primary { padding: 0 1.15rem; }
 .emp-list {
-  --emp-cols: 8.75rem 11rem minmax(0, 1fr) 1.5rem;
+  --emp-cols: 8.75rem max-content minmax(6.5rem, 1fr) 1.5rem;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -862,7 +871,7 @@ button.prob-line:active { transform: scale(0.97); }
 }
 .emp-losses {
   display: grid;
-  grid-template-columns: 4.75rem minmax(0, 1fr);
+  grid-template-columns: 4.75rem max-content max-content;
   column-gap: 0.4rem;
   align-items: baseline;
   color: var(--muted);
@@ -871,6 +880,12 @@ button.prob-line:active { transform: scale(0.97); }
 }
 .emp-qty { text-align: right; font-variant-numeric: tabular-nums; }
 .emp-loss-word { text-align: left; }
+.emp-found-share {
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  color: var(--green-ink);
+}
+.emp-found-share.is-empty { color: var(--muted); font-weight: 600; }
 .emp-sum {
   justify-self: end;
   font-weight: 750;
@@ -1435,9 +1450,9 @@ input[type="date"]:focus {
   .picker[data-picker="month"] { min-width: 0; flex: 1 1 7rem; }
 }
 @media (max-width: 420px) {
-  .emp-list { --emp-cols: 6.6rem 8.4rem minmax(0, 1fr) 1.1rem; }
+  .emp-list { --emp-cols: 6.6rem max-content minmax(4.5rem, 1fr) 1.1rem; }
   .emp-row { gap: 6px 8px; padding: 8px; }
-  .emp-losses { grid-template-columns: 3.2rem minmax(0, 1fr); column-gap: 0.3rem; }
+  .emp-losses { grid-template-columns: 3.2rem max-content max-content; column-gap: 0.3rem; }
   .emp-badge { padding: 0.15rem 0.4rem; }
 }
 

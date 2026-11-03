@@ -88,6 +88,23 @@ function lossLabel(count) {
   return "потерь";
 }
 
+function foundShare(row) {
+  const losses = Number(row && row.losses) || 0;
+  if (!row || row.found == null || losses <= 0) return null;
+  return (Number(row.found) / losses) * 100;
+}
+
+function foundShareText(pct) {
+  if (pct == null) return "—";
+  if (pct > 0 && pct < 0.5) return "<1%";
+  return `${Math.round(pct)}%`;
+}
+
+function foundShareTitle(row) {
+  if (!row || row.found == null) return "нет флага оприходования";
+  return `найдено ${fmtInt(row.found)} из ${fmtInt(row.losses)}`;
+}
+
 function skipLabel(count) {
   const n = Math.abs(Number(count) || 0) % 100;
   const n1 = n % 10;
@@ -2213,6 +2230,10 @@ function renderEmployees(screen) {
       el("span", { class: "emp-losses" },
         el("span", { class: "emp-qty" }, fmtInt(row.losses)),
         el("span", { class: "emp-loss-word" }, lossLabel(row.losses)),
+        el("span", {
+          class: row.found == null ? "emp-found-share is-empty" : "emp-found-share",
+          title: foundShareTitle(row),
+        }, foundShareText(foundShare(row))),
       ),
       el("span", { class: "emp-sum" }, fmtRub(row.sum)),
       row.wmi
