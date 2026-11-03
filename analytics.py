@@ -126,7 +126,6 @@ BLOCK_DONUT_COLORS = (
     "#39c5cf",
     "#f778ba",
 )
-_RYAZAN_BLOCK = "Рязань Тюшевское"
 # Доля меньше этого порога не пишет имя на дуге: подписи слипаются. Чип над кольцом.
 BLOCK_CALLOUT_PCT = 8.0
 # Угол дуги на экране. Истинный процент остаётся в подписи, тонкая доля всё ещё нажимается.
@@ -348,13 +347,6 @@ def build_block_lr_donut_svg(asm_sum, lay_sum, center_text):
 </div>'''
 
 
-def _block_face(name):
-    """«Рязань Тюшевское» и «Рязань Тюшевское 1» → «исход». Остальные имена как в маппинге."""
-    if name in (_RYAZAN_BLOCK, f"{_RYAZAN_BLOCK} 1"):
-        return "исход"
-    return name
-
-
 def _block_donut_color(index):
     """Цвет сегмента по порядку в кольце. Соседние блоки не делят один синий."""
     return BLOCK_DONUT_COLORS[index % len(BLOCK_DONUT_COLORS)]
@@ -396,7 +388,7 @@ def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
 
 
 def warehouse_block_items(curr, total):
-    """Группы block_group кадра склада: сначала блоки маппинга, затем остальные по сумме."""
+    """Группы block_group кадра склада без брака: сначала блоки маппинга, затем остальные по сумме."""
     total = _f(total)
     if total <= 0 or curr is None or len(curr) == 0 or "block_group" not in getattr(curr, "columns", []):
         return []
@@ -405,7 +397,7 @@ def warehouse_block_items(curr, total):
     for key, value in grouped.items():
         name = _as_name(key).strip()
         amount = _f(value)
-        if not name or amount <= 0:
+        if not name or amount <= 0 or name == DEFECT_GROUP:
             continue
         sums[name] = sums.get(name, 0.0) + amount
     known = set(ALL_BLOCKS)
@@ -416,7 +408,7 @@ def warehouse_block_items(curr, total):
     return [
         {
             "name": name,
-            "face": _block_face(name),
+            "face": name,
             "sum": sums[name],
             "pct": sums[name] / total * 100,
         }
@@ -1664,7 +1656,7 @@ def build_block_pages(curr, prev, period, items, has_prev, grain):
             sums[code] = _sum(part, "loss_sum")
         total = sums["5"] + sums["27"]
         pages[name] = {
-            "face": item.get("face") or _block_face(name),
+            "face": item.get("face") or name,
             "donut_svg": build_block_lr_donut_svg(sums["5"], sums["27"], fmt_rub(total)),
             "series": series,
         }
