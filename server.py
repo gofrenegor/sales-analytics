@@ -56,10 +56,10 @@ class JsonBody(JSONResponse):
 
 
 class LoginIn(BaseModel):
-    id: int
     contact: str = ""
     phone: str = ""
     domain: str = ""
+    password: str = ""
 
 
 class GrantIn(BaseModel):
@@ -208,11 +208,11 @@ def auth_me(user=Depends(actor)):
 def auth_login(body: LoginIn):
     try:
         contact = body.contact or body.phone
-        user = db.match_login(body.id, contact, body.domain) if body.id > 0 else None
+        user = db.match_login(contact, body.password, body.domain)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     if not user:
-        return fail(401, "вы не зарегистрированы")
+        return fail(401, "некорректный логин или пароль")
     response = JsonBody({
         "ok": True,
         "id": user["id"],
@@ -432,6 +432,23 @@ def access_grant(body: GrantIn, user=Depends(actor)):
         return fail(400, str(exc))
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
+
+
+@app.post("/api/admin/access/password")
+def access_password(body: ContactIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    try:
+        saved = db.set_access_contact(user["id"], body.phone, body.email, body.domain)
+        if not saved:
+            return fail(404, "Нет такого ID")
+        saved["password"] = db.set_access_password(user["id"])
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    return saved
 
 
 @app.post("/api/admin/access/contact")

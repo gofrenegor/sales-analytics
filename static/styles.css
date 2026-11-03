@@ -215,7 +215,15 @@ p { margin: 0.5rem 0; }
   box-shadow: 0 0 0 3px var(--blue-dim);
 }
 #gate-contact { width: 11.5rem; }
-#gate-id { width: 4.5rem; }
+#gate-password { width: 8.5rem; }
+.gate-error {
+  flex: 1 0 100%;
+  margin: 0.15rem 0 0;
+  color: var(--red);
+  font-size: 0.95rem;
+  font-weight: 650;
+}
+.gate-error[hidden] { display: none; }
 .mail-line { display: inline-flex; align-items: center; min-width: 0; }
 .mail-line select[hidden], .mail-at[hidden] { display: none; }
 .mail-at { color: var(--muted); font-weight: 750; padding: 0 0.15rem; }
@@ -302,7 +310,32 @@ p { margin: 0.5rem 0; }
   background: transparent;
   font-size: 0.92rem;
 }
-#own-phone-save { margin: 0.45rem 0 0.7rem; }
+#own-phone-save { margin: 0.45rem 0 0.45rem; }
+#own-password { margin: 0.45rem 0 0.7rem; }
+.grant-secret {
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+}
+.grant-secret[hidden] { display: none; }
+.grant-secret:not([hidden]) { animation: pane-reveal 180ms var(--ease-out) both; }
+.grant-secret-value {
+  width: 100%;
+  margin-top: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 1.35rem;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  font-variant-numeric: tabular-nums;
+}
+#grant-submit {
+  white-space: normal;
+  line-height: 1.25;
+  padding: 0.55rem 0.75rem;
+}
 .grant-roles { display: grid; gap: 8px; }
 .grant-role {
   position: relative;

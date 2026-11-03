@@ -18,9 +18,16 @@ def client(tmp_path, monkeypatch):
     db.reset_engine()
     server.pending.clear()
     with TestClient(server.app) as test_client:
-        logged = test_client.post("/api/auth/login", json={"id": 1})
+        db.set_access_contact(1, "79000000001", "root", "gmail.com")
+        password = db.set_access_password(1)
+        logged = test_client.post("/api/auth/login", json={
+            "contact": "+7 900 000-00-01",
+            "password": password,
+        })
         assert logged.status_code == 200
         assert logged.json()["role"] == "admin"
+        assert "password" not in logged.json()
+        test_client.admin_password = password
         yield test_client
     db.reset_engine()
     server.pending.clear()
@@ -130,24 +137,45 @@ def test_access_grant_and_view_role(client):
     assert client.post("/api/auth/logout").status_code == 200
     assert client.get("/api/auth/me").json()["ok"] is False
     assert client.get("/api/report", params={"mode": "Месяц"}).status_code == 401
-    assert client.post("/api/auth/login", json={"id": 99}).status_code == 401
-    assert client.post("/api/auth/login", json={"id": 1}).status_code == 200
+    bad = client.post("/api/auth/login", json={"contact": "79000000001", "password": "wrongpass"})
+    assert bad.status_code == 401
+    assert bad.json()["error"] == "некорректный логин или пароль"
+    assert client.post("/api/auth/login", json={"id": 1}).status_code == 401
+    assert client.post("/api/auth/login", json={
+        "contact": "+7 900 000-00-01",
+        "password": client.admin_password,
+    }).status_code == 200
     own = client.post("/api/admin/access/contact", json={
         "phone": "8 900 000-00-01", "email": "boss", "domain": "mail.ru",
     })
     assert own.status_code == 200
     assert own.json()["phone"] == "79000000001"
     assert own.json()["email"] == "boss@mail.ru"
+    assert "password" not in own.json()
     client.post("/api/auth/logout")
-    assert client.post("/api/auth/login", json={"id": 1}).status_code == 401
-    assert client.post("/api/auth/login", json={"id": 1, "contact": "70000000000"}).status_code == 401
-    assert client.post("/api/auth/login", json={"id": 1, "contact": "+7 900 000-00-01"}).status_code == 200
-    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"contact": "79000000001"}).status_code == 401
     assert client.post("/api/auth/login", json={
-        "id": 1, "contact": "boss", "domain": "gmail.com",
+        "contact": "70000000000", "password": client.admin_password,
     }).status_code == 401
     assert client.post("/api/auth/login", json={
-        "id": 1, "contact": "boss", "domain": "mail.ru",
+        "contact": "+7 900 000-00-01", "password": client.admin_password,
+    }).status_code == 200
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={
+        "contact": "boss", "domain": "gmail.com", "password": client.admin_password,
+    }).status_code == 401
+    assert client.post("/api/auth/login", json={
+        "contact": "boss", "domain": "mail.ru", "password": client.admin_password,
+    }).status_code == 200
+    minted = client.post("/api/admin/access/password", json={
+        "phone": "8 900 000-00-01", "email": "boss", "domain": "mail.ru",
+    })
+    assert minted.status_code == 200
+    assert re.fullmatch(r"[A-HJ-NP-Za-km-z2-9]{8}", minted.json()["password"])
+    client.admin_password = minted.json()["password"]
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={
+        "contact": "boss@mail.ru", "password": client.admin_password,
     }).status_code == 200
     assert client.get("/api/admin/access/next").json()["id"] == 2
     assert client.post("/api/admin/access", json={
@@ -163,9 +191,12 @@ def test_access_grant_and_view_role(client):
         "role": "view", "phone": "89001112233", "email": "ivan", "domain": "gmail.com",
     })
     assert granted.status_code == 200
-    assert granted.json() == {
-        "id": 2, "role": "view", "phone": "79001112233", "email": "ivan@gmail.com",
-    }
+    granted_body = granted.json()
+    assert granted_body["id"] == 2
+    assert granted_body["role"] == "view"
+    assert granted_body["phone"] == "79001112233"
+    assert granted_body["email"] == "ivan@gmail.com"
+    assert re.fullmatch(r"[A-HJ-NP-Za-km-z2-9]{8}", granted_body["password"])
     assert client.post("/api/admin/access", json={
         "role": "view", "phone": "79002223344", "email": "ivan@gmail.com",
     }).status_code == 400
@@ -176,17 +207,26 @@ def test_access_grant_and_view_role(client):
     assert admin_again.json()["id"] == 3
     assert admin_again.json()["email"] == "petr@mail.ru"
     client.post("/api/auth/logout")
-    assert client.post("/api/auth/login", json={"id": 2}).status_code == 401
-    assert client.post("/api/auth/login", json={"id": 2, "contact": "79001112233"}).status_code == 200
+    view_password = granted_body["password"]
+    assert client.post("/api/auth/login", json={"contact": "79001112233"}).status_code == 401
+    assert client.post("/api/auth/login", json={
+        "contact": "79001112233", "password": "wrongpass",
+    }).status_code == 401
+    assert client.post("/api/auth/login", json={
+        "contact": "79001112233", "password": view_password,
+    }).status_code == 200
     client.post("/api/auth/logout")
     assert client.post("/api/auth/login", json={
-        "id": 2, "contact": "ivan", "domain": "gmail.com",
+        "contact": "ivan", "domain": "gmail.com", "password": view_password,
     }).status_code == 200
     assert client.get("/api/bootstrap").status_code == 200
     assert client.post("/api/admin/truncate", json={"confirm": True}).status_code == 403
     assert client.post("/api/admin/access", json={"role": "view"}).status_code == 403
     assert client.get("/api/admin/access/next").status_code == 403
     assert client.post("/api/admin/cache/clear").status_code == 403
+    assert client.post("/api/admin/access/password", json={
+        "phone": "89001112233", "email": "ivan", "domain": "gmail.com",
+    }).status_code == 403
 
 
 def test_employee_items_return_json(client):
@@ -272,6 +312,10 @@ def test_index_injects_asset_version(client):
     assert "grant-toggle" in html
     assert "gate-domain" in html
     assert "grant-email" in html
+    assert "gate-password" in html
+    assert "gate-error" in html
+    assert "grant-secret" in html
+    assert "gate-id" not in html
     match = re.search(r"/static/app\.js\?v=(\d+)", html)
     assert match
     assert f'/static/styles.css?v={match.group(1)}' in html

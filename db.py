@@ -1,9 +1,12 @@
 """Postgres (боевая база) и SQLite (проверка). Схема таблицы не пересоздаётся."""
 
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 from datetime import timedelta
@@ -187,6 +190,8 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE access_users ADD COLUMN phone TEXT"))
         if "email" not in access_cols:
             conn.execute(text("ALTER TABLE access_users ADD COLUMN email TEXT"))
+        if "password_hash" not in access_cols:
+            conn.execute(text("ALTER TABLE access_users ADD COLUMN password_hash TEXT"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS access_users_phone_idx ON access_users (phone)"
         ))
@@ -308,25 +313,82 @@ def get_access_user(user_id):
     return _access_row(row)
 
 
-def match_login(user_id, contact, domain=""):
-    """Пара ID + телефон или ID + почта. Пустая строка пускает по одному ID."""
-    user = get_access_user(user_id)
-    if not user:
-        return None
-    if not user.get("phone") and not user.get("email"):
-        return user
-    raw = str(contact or "").strip()
-    if not raw:
-        return None
-    kind = contact_kind(raw)
+_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+_PBKDF_ROUNDS = 120_000
+_DUMMY_HASH = None
+
+
+def generate_password():
+    return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(8))
+
+
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", str(password).encode("utf-8"), bytes.fromhex(salt), _PBKDF_ROUNDS,
+    )
+    return f"pbkdf2${_PBKDF_ROUNDS}${salt}${digest.hex()}"
+
+
+def verify_password(password, stored):
     try:
-        if kind == "phone" and user.get("phone") and normalize_phone(raw) == user["phone"]:
-            return user
-        if kind == "email" and user.get("email") and normalize_email(raw, domain) == user["email"]:
-            return user
-    except ValueError:
+        kind, rounds, salt, digest = str(stored or "").split("$", 3)
+        if kind != "pbkdf2":
+            return False
+        check = hashlib.pbkdf2_hmac(
+            "sha256", str(password).encode("utf-8"), bytes.fromhex(salt), int(rounds),
+        )
+    except (ValueError, TypeError):
+        return False
+    return hmac.compare_digest(check.hex(), digest)
+
+
+def _dummy_hash():
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = hash_password("dummy-password")
+    return _DUMMY_HASH
+
+
+def _access_by_contact(conn, contact, domain):
+    raw = str(contact or "").strip()
+    kind = contact_kind(raw)
+    if kind == "phone":
+        column, value = "phone", normalize_phone(raw)
+    elif kind == "email":
+        column, value = "email", normalize_email(raw, domain)
+    else:
         return None
-    return None
+    return conn.execute(
+        text(
+            "SELECT id, role, phone, email, password_hash FROM access_users "
+            f"WHERE {column} = :value"
+        ),
+        {"value": value},
+    ).one_or_none()
+
+
+def match_login(contact, password, domain=""):
+    """Телефон или почта + пароль. ID снаружи не нужен."""
+    secret = str(password or "")
+    row = None
+    if secret:
+        engine = get_engine()
+        try:
+            with engine.connect() as conn:
+                if inspect(conn).has_table("access_users"):
+                    row = _access_by_contact(conn, contact, domain)
+        except ValueError:
+            row = None
+        except Exception as exc:
+            if not is_missing_table(exc):
+                raise DataError(f"Не удалось прочитать доступ: {public_error(exc)}") from exc
+    stored = row.password_hash if row is not None and row.password_hash else _dummy_hash()
+    if not secret or not verify_password(secret, stored):
+        return None
+    if row is None or not row.password_hash:
+        return None
+    return _access_row(row)
 
 
 def next_access_id():
@@ -357,6 +419,8 @@ def grant_access(role, phone, email, domain=""):
     if role not in ACCESS_ROLES:
         raise ValueError("Выберите права")
     normalized, mail = _require_contacts(phone, email, domain)
+    plain = generate_password()
+    hashed = hash_password(plain)
     with _write_lock:
         engine = get_engine()
         try:
@@ -370,16 +434,48 @@ def grant_access(role, phone, email, domain=""):
                 ).scalar() or 1)
                 conn.execute(
                     text(
-                        "INSERT INTO access_users (id, role, phone, email) "
-                        "VALUES (:id, :role, :phone, :email)"
+                        "INSERT INTO access_users (id, role, phone, email, password_hash) "
+                        "VALUES (:id, :role, :phone, :email, :password_hash)"
                     ),
-                    {"id": next_id, "role": role, "phone": normalized, "email": mail},
+                    {
+                        "id": next_id,
+                        "role": role,
+                        "phone": normalized,
+                        "email": mail,
+                        "password_hash": hashed,
+                    },
                 )
         except ValueError:
             raise
         except Exception as exc:
             raise DataError(f"Не удалось выдать доступ: {public_error(exc)}") from exc
-    return {"id": next_id, "role": role, "phone": normalized, "email": mail}
+    return {
+        "id": next_id,
+        "role": role,
+        "phone": normalized,
+        "email": mail,
+        "password": plain,
+    }
+
+
+def set_access_password(user_id):
+    plain = generate_password()
+    hashed = hash_password(plain)
+    with _write_lock:
+        engine = get_engine()
+        try:
+            with engine.begin() as conn:
+                result = conn.execute(
+                    text("UPDATE access_users SET password_hash = :password_hash WHERE id = :id"),
+                    {"password_hash": hashed, "id": int(user_id)},
+                )
+                if not result.rowcount:
+                    raise ValueError("Нет такого ID")
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise DataError(f"Не удалось записать пароль: {public_error(exc)}") from exc
+    return plain
 
 
 def set_access_contact(user_id, phone, email, domain=""):

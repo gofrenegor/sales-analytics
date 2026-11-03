@@ -2347,6 +2347,15 @@ async function readJson(response) {
   return data;
 }
 
+function showSecret(box, input, password) {
+  if (!box || !input) return;
+  input.value = password || "";
+  box.hidden = !password;
+  if (!password) return;
+  input.focus();
+  input.select();
+}
+
 function wireGrant() {
   const toggle = document.getElementById("grant-toggle");
   const panel = document.getElementById("grant-panel");
@@ -2356,12 +2365,30 @@ function wireGrant() {
   const domain = document.getElementById("grant-domain");
   const submit = document.getElementById("grant-submit");
   const status = document.getElementById("grant-status");
-  if (!toggle || !panel) return;
+  const secret = document.getElementById("grant-secret");
+  const secretValue = document.getElementById("grant-secret-value");
+  if (!toggle || !panel || !submit) return;
+  const chosen = () => panel.querySelector("input[name='grant-role']:checked");
+  const grantReady = () => Boolean(
+    chosen()
+    && phone
+    && digitsOnly(phone.value).length >= 10
+    && email
+    && email.value.trim(),
+  );
+  const syncSubmit = () => {
+    const ready = grantReady();
+    submit.disabled = !ready;
+    submit.textContent = ready ? "сгенерировать пароль для пользователя" : "Выдать";
+  };
   phone?.addEventListener("input", () => {
     phone.value = phoneDraft(phone.value);
+    syncSubmit();
   });
   if (email && domain) bindNick(email, domain);
-  const chosen = () => panel.querySelector("input[name='grant-role']:checked");
+  email?.addEventListener("input", syncSubmit);
+  secretValue?.addEventListener("focus", () => secretValue.select());
+  secretValue?.addEventListener("click", () => secretValue.select());
   const refreshId = async () => {
     const data = await readJson(await fetch("/api/admin/access/next"));
     value.textContent = String(data.id);
@@ -2376,16 +2403,15 @@ function wireGrant() {
       await refreshId();
       panel.hidden = false;
       toggle.setAttribute("aria-expanded", "true");
+      syncSubmit();
     } catch (error) {
       setAdminStatus(error.message);
     }
   });
-  panel.addEventListener("change", () => {
-    submit.disabled = !chosen();
-  });
+  panel.addEventListener("change", syncSubmit);
   submit.addEventListener("click", async () => {
     const role = chosen()?.value;
-    if (!role || !phone) return;
+    if (!role || !phone || !grantReady()) return;
     submit.disabled = true;
     try {
       const data = await readJson(await fetch("/api/admin/access", {
@@ -2398,6 +2424,7 @@ function wireGrant() {
           domain: domain ? domain.value : "",
         }),
       }));
+      showSecret(secret, secretValue, data.password);
       status.hidden = false;
       status.textContent = `Выдан ID ${data.id} · +${data.phone} · ${data.email} · ${data.role === "admin" ? "админка" : "просмотр"}`;
       phone.value = "";
@@ -2407,7 +2434,7 @@ function wireGrant() {
     } catch (error) {
       setAdminStatus(error.message);
     } finally {
-      submit.disabled = !chosen();
+      syncSubmit();
     }
   });
 }
@@ -2422,6 +2449,34 @@ function wireOwnPhone() {
     input.value = phoneDraft(input.value);
   });
   if (email && domain) bindNick(email, domain);
+  const ownPassword = document.getElementById("own-password");
+  const ownSecret = document.getElementById("own-secret");
+  const ownSecretValue = document.getElementById("own-secret-value");
+  ownSecretValue?.addEventListener("focus", () => ownSecretValue.select());
+  ownSecretValue?.addEventListener("click", () => ownSecretValue.select());
+  ownPassword?.addEventListener("click", async () => {
+    ownPassword.disabled = true;
+    try {
+      const data = await readJson(await fetch("/api/admin/access/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone: input.value,
+          email: email ? email.value : "",
+          domain: domain ? domain.value : "",
+        }),
+      }));
+      state.user = { ...state.user, ...data, ok: true };
+      delete state.user.password;
+      fillOwnContact(data);
+      showSecret(ownSecret, ownSecretValue, data.password);
+      setAdminStatus("Пароль готов");
+    } catch (error) {
+      setAdminStatus(error.message);
+    } finally {
+      ownPassword.disabled = false;
+    }
+  });
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
@@ -2923,30 +2978,39 @@ function wireAuth() {
   const domain = document.getElementById("gate-domain");
   const at = document.getElementById("gate-at");
   const line = document.getElementById("gate-line");
-  const input = document.getElementById("gate-id");
-  if (!form || !input || !contact || !domain) return;
-  contact.addEventListener("input", () => syncGateContact(contact, domain, at, line));
-  input.addEventListener("input", () => {
-    input.value = digitsOnly(input.value).slice(0, 9);
+  const password = document.getElementById("gate-password");
+  const errorEl = document.getElementById("gate-error");
+  if (!form || !password || !contact || !domain) return;
+  const showGateError = (text) => {
+    if (!errorEl) return;
+    errorEl.textContent = text || "";
+    errorEl.hidden = !text;
+  };
+  contact.addEventListener("input", () => {
+    syncGateContact(contact, domain, at, line);
+    showGateError("");
   });
+  password.addEventListener("input", () => showGateError(""));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const id = Number(digitsOnly(input.value));
-    if (!id) return;
+    showGateError("");
     try {
       const data = await readJson(await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id,
           contact: contact.value,
           domain: domain.hidden ? "" : domain.value,
+          password: password.value,
         }),
       }));
       state.user = data;
+      password.value = "";
       applySession();
       await openApp();
-    } catch (error) {}
+    } catch (error) {
+      showGateError(error.message || "некорректный логин или пароль");
+    }
   });
 }
 
