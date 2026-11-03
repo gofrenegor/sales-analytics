@@ -35,8 +35,8 @@ READ_COLUMNS = (
     "status_employee_id", "last_sticker", "posted", "mx",
 )
 WRITE_COLUMNS = READ_COLUMNS
-# Главный экран не читает ШК и бейджик. Список сотрудников — бейджик, без стикеров.
-# Стикер, флаг и МХ читает только срез одного бейджика по клику.
+# Главный экран не читает ШК и бейджик. Список сотрудников — бейджик и флаг
+# оприходования (процент найденного), без стикеров. Стикер и МХ — срез по клику.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
@@ -45,7 +45,7 @@ FRAME_COLUMNS = {
     "employees": (
         "loss_date", "block_name", "loss_sum",
         "reason", "status_before", "block_id", "office_id",
-        "status_employee_id",
+        "status_employee_id", "posted",
     ),
     # Проблемные ряды сборки: МХ и сумма. Бейджик и стикер не читаются.
     # status_before нужен, чтобы ORS попал в LR 5 так же, как в списке сотрудников.
