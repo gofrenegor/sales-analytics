@@ -477,8 +477,9 @@ main {
   padding-right: 3.5rem;
 }
 .top h1 { flex: 1; margin: 0; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; text-wrap: balance; }
-.sections { display: flex; flex-wrap: wrap; gap: 8px; margin: 0.15rem 0 0.7rem; }
-.sections button {
+.sections { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin: 0.15rem 0 0.7rem; }
+.sections button,
+.block-lr {
   background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
@@ -489,14 +490,53 @@ main {
   transition: background 160ms var(--ease-out), color 160ms var(--ease-out), border-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .sections button:hover { color: var(--text); border-color: var(--blue); }
-.sections button:active { transform: scale(0.97); }
-.sections button[aria-pressed="true"] {
+.sections button:active,
+.block-lr:active { transform: scale(0.97); }
+.sections button[aria-pressed="true"],
+.block-lr {
   background: var(--blue);
   border-color: var(--blue);
   color: #fff;
   box-shadow: 0 6px 16px color-mix(in srgb, var(--blue) 32%, transparent);
 }
-.sections button[aria-pressed="true"]:hover { color: #fff; }
+.sections button[aria-pressed="true"]:hover,
+.block-lr:hover { color: #fff; }
+.wh {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  width: max-content;
+  max-width: 100%;
+}
+.wh.is-open { margin-bottom: calc(16px + 2.2rem); }
+.wh > #section-losses { position: relative; z-index: 1; }
+.wh-lines {
+  position: absolute;
+  display: none;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 0;
+}
+.wh.is-open .wh-lines { display: block; }
+.wh-lines line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+}
+.wh-fork {
+  position: absolute;
+  z-index: 1;
+  top: calc(100% + 16px);
+  left: 50%;
+  display: none;
+  align-items: flex-start;
+  gap: 16px;
+  width: max-content;
+  transform: translateX(-50%);
+}
+.wh.is-open .wh-fork { display: flex; }
+.wh-fork button { white-space: nowrap; }
 .emp-lrs {
   --emp-gap: 6px;
   display: flex;
@@ -1538,6 +1578,16 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   gap: 24px;
   align-items: start;
 }
+.hero.hero-block {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "donut"
+    "daily";
+}
+.hero-block .loss-donut .loss-arc-seg {
+  animation: none;
+  stroke-dashoffset: 0;
+}
 .loss-col { grid-area: donut; min-width: 0; }
 .hero-side { grid-area: side; min-width: 0; }
 .hero-side .hint { max-width: 62ch; margin: 8px 0 0; }
@@ -1558,6 +1608,12 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; pointer-events: none; }
 .loss-donut text { font-family: Manrope, sans-serif; }
+.loss-donut text.loss-seg-label {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  pointer-events: none;
+}
 .loss-hole {
   position: absolute;
   z-index: 1;
@@ -1617,6 +1673,18 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   color: var(--blue);
   text-align: left;
   transform: translate(8px, -50%);
+}
+.loss-ring-lr .loss-pct {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.loss-ring-lr .loss-pct-in { align-items: flex-end; color: var(--blue); }
+.loss-ring-lr .loss-pct-out { align-items: flex-start; color: var(--green-ink); }
+.loss-ring-lr .loss-pct-name {
+  font-size: 0.8125rem;
+  font-weight: 650;
+  line-height: 1.15;
 }
 .loss-donut .loss-seg-hit {
   fill: none;
@@ -1935,6 +2003,16 @@ button.quiet:hover { color: var(--text); border-color: var(--blue); }
   grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
+.block-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 25px;
+}
+.block-chart-head h3 { margin: 0; min-width: 0; }
+.block-chart-head .block-lr { flex: 0 0 auto; }
+.hero-block .chart-wrap { margin-top: 0; }
 .daily-chart { min-width: 0; }
 .card button {
   margin-top: auto;
@@ -2054,6 +2132,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   .loss-pct { position: static; transform: none; }
   .loss-pct-in { grid-area: in; justify-self: end; text-align: right; }
   .loss-pct-out { grid-area: out; justify-self: start; text-align: left; }
+  .loss-ring-row.loss-ring-blocks {
+    display: block;
+    width: min(calc(100% - 3rem), 16rem);
+  }
 }
 
 #screen { position: relative; }

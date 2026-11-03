@@ -9,6 +9,8 @@ const state = {
   flow: "",
   group: "",
   block: "",
+  blockLr: "5",
+  slice: "flows",
   report: null,
   employees: null,
   employeesKey: "",
@@ -37,11 +39,13 @@ const state = {
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
 const DEFAULT_YEAR = "2026";
-const VIEWS = ["dashboard", "flow", "group", "block_detail", "employees"];
+const VIEWS = ["dashboard", "flow", "group", "block_detail", "employees", "block_loss"];
 
-const VIEW_DEPTH = { dashboard: 0, employees: 0, flow: 1, group: 2, block_detail: 3 };
+const VIEW_DEPTH = { dashboard: 0, employees: 0, flow: 1, group: 2, block_detail: 3, block_loss: 1 };
 let screenMotion = "";
 let animating = 0;
+let forkOpen = null;
+let forkMotion = 0;
 
 const ANCHOR_LABELS = {
   "День": "Выберите день",
@@ -423,6 +427,7 @@ function readUrl() {
   state.flow = params.get("flow") || "";
   state.group = params.get("group") || "";
   state.block = params.get("block") || "";
+  state.slice = params.get("slice") === "blocks" ? "blocks" : "flows";
   if (state.view === "employees") {
     state.flow = "";
     state.group = "";
@@ -439,6 +444,12 @@ function readUrl() {
   }
   if (state.view === "group" && !state.group) state.view = "flow";
   if (state.view === "block_detail" && (!state.group || !state.block)) state.view = state.group ? "group" : "flow";
+  if (state.view === "block_loss" && !state.block) {
+    state.view = "dashboard";
+    state.slice = "blocks";
+  } else if (state.view === "block_loss") {
+    state.slice = "blocks";
+  }
 }
 
 function writeUrl(push) {
@@ -458,6 +469,7 @@ function writeUrl(push) {
     if (state.group) params.set("group", state.group);
     if (state.block) params.set("block", state.block);
   }
+  if (state.slice === "blocks") params.set("slice", "blocks");
   const url = `/?${params.toString()}`;
   if (push) history.pushState(null, "", url);
   else history.replaceState(null, "", url);
@@ -474,12 +486,14 @@ function reducedMotion() {
 function go(patch, push = true) {
   const prevDepth = VIEW_DEPTH[state.view] ?? 0;
   const prevKey = viewKey();
+  const prevBlock = state.block;
   Object.assign(state, patch);
   if (state.view === "employees") {
     state.flow = "";
     state.group = "";
     state.block = "";
   }
+  if (state.block !== prevBlock && !("blockLr" in patch)) state.blockLr = "5";
   if (viewKey() !== prevKey) {
     const nextDepth = VIEW_DEPTH[state.view] ?? 0;
     if (nextDepth < prevDepth) screenMotion = "back";
@@ -1603,6 +1617,12 @@ function bindDonut(host) {
       go({ view: "flow", flow: link.dataset.flow, group: "", block: "" });
     });
   });
+  host.querySelectorAll("[data-block]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      go({ view: "block_loss", block: link.dataset.block, slice: "blocks", flow: "", group: "" });
+    });
+  });
 }
 
 function seriesColors() {
@@ -2344,56 +2364,60 @@ function renderEmpDetail(detail, lr) {
 
 function renderDashboard(screen) {
   const dash = state.report.dashboard;
+  const blocksMode = state.slice === "blocks";
   const hero = el("div", { class: "hero" });
   const chart = el("div");
-  chart.innerHTML = dash.donut_svg;
+  chart.innerHTML = blocksMode && dash.blocks && dash.blocks.donut_svg ? dash.blocks.donut_svg : dash.donut_svg;
   bindDonut(chart);
-  const side = el("div");
-  side.append(el(
-    "button",
-    {
-      type: "button",
-      class: "flow-btn pre",
-      title: "Открыть предсписок",
-      onclick: () => go({ view: "flow", flow: "pre", group: "", block: "" }),
-    },
-    el(
-      "span",
-      { class: "flow-copy" },
-      el("span", { class: "flow-name" }, "предсписок"),
-    ),
-  ));
-  for (const code of ["out", "in"]) {
-    const flow = state.report.flows[code];
-    const title = code === "in" ? "входящий поток" : "исходящий поток";
-    const help = code === "in" ? "Открыть блоки входящего потока" : "Открыть блоки исходящего потока";
-    const copy = el(
-      "span",
-      { class: "flow-copy" },
-      el("span", { class: "flow-name" }, title),
-      el("span", { class: "flow-meta" }, `${pctLabel(flow.share)} · ${fmtInt(flow.qty)} шт`),
-    );
-    if (flow.delta_text) {
-      const kind = flow.delta_text.startsWith("+") ? "r" : flow.delta_text.startsWith("-") ? "g" : "n";
-      copy.append(el("span", { class: `chip chip-${kind}` }, flow.delta_text));
-    }
+  const donutCol = el("div", { class: "loss-col" });
+  donutCol.append(chart);
+  hero.append(donutCol);
+  if (!blocksMode) {
+    const side = el("div");
     side.append(el(
       "button",
       {
         type: "button",
-        class: `flow-btn ${code}`,
-        title: help,
-        onclick: () => go({ view: "flow", flow: code, group: "", block: "" }),
+        class: "flow-btn pre",
+        title: "Открыть предсписок",
+        onclick: () => go({ view: "flow", flow: "pre", group: "", block: "" }),
       },
-      copy,
-      el("strong", null, fmtRub(flow.sum)),
+      el(
+        "span",
+        { class: "flow-copy" },
+        el("span", { class: "flow-name" }, "предсписок"),
+      ),
     ));
+    for (const code of ["out", "in"]) {
+      const flow = state.report.flows[code];
+      const title = code === "in" ? "входящий поток" : "исходящий поток";
+      const help = code === "in" ? "Открыть блоки входящего потока" : "Открыть блоки исходящего потока";
+      const copy = el(
+        "span",
+        { class: "flow-copy" },
+        el("span", { class: "flow-name" }, title),
+        el("span", { class: "flow-meta" }, `${pctLabel(flow.share)} · ${fmtInt(flow.qty)} шт`),
+      );
+      if (flow.delta_text) {
+        const kind = flow.delta_text.startsWith("+") ? "r" : flow.delta_text.startsWith("-") ? "g" : "n";
+        copy.append(el("span", { class: `chip chip-${kind}` }, flow.delta_text));
+      }
+      side.append(el(
+        "button",
+        {
+          type: "button",
+          class: `flow-btn ${code}`,
+          title: help,
+          onclick: () => go({ view: "flow", flow: code, group: "", block: "" }),
+        },
+        copy,
+        el("strong", null, fmtRub(flow.sum)),
+      ));
+    }
+    side.className = "hero-side";
+    side.append(renderMovers());
+    hero.append(side);
   }
-  side.className = "hero-side";
-  side.append(renderMovers());
-  const donutCol = el("div", { class: "loss-col" });
-  donutCol.append(chart);
-  hero.append(donutCol, side);
   if (state.report.show_daily) {
     const hourly = state.report.chart_grain === "hour";
     const chartCol = el(
@@ -2527,6 +2551,45 @@ function renderDetail(screen) {
   screen.append(el("h3", null, "Детализация по причинам (LR)"), lrTable(detail.rows));
 }
 
+function renderBlockLoss(screen) {
+  const pages = state.report.block_pages || {};
+  const page = pages[state.block];
+  if (!page) {
+    screen.append(missing("dashboard"));
+    return;
+  }
+  const lr = state.blockLr === "27" ? "27" : "5";
+  const series = (page.series && page.series[lr]) || [];
+  const ring = el("div", { class: "loss-col" });
+  ring.innerHTML = page.donut_svg || "";
+  const hero = el("div", { class: "hero hero-block" });
+  hero.append(ring);
+  const chartCol = el(
+    "div",
+    { class: "daily-chart" },
+    el(
+      "div",
+      { class: "block-chart-head" },
+      el("h3", null, "Динамика потерь"),
+      el("button", {
+        type: "button",
+        class: "block-lr",
+        onclick: () => {
+          state.blockLr = state.blockLr === "27" ? "5" : "27";
+          render();
+        },
+      }, lr === "27" ? "раскладка" : "сборка"),
+    ),
+    renderChart(series, state.report.chart_grain),
+  );
+  hero.append(el("div", { class: "daily-board" }, chartCol));
+  screen.append(
+    backButton("← Назад к блокам", "dashboard"),
+    el("h2", null, page.face || state.block),
+    hero,
+  );
+}
+
 function renderScreen() {
   const pane = el("div", { class: "screen-pane" });
   fillScreen(pane);
@@ -2554,6 +2617,7 @@ function fillScreen(screen) {
   if (state.view === "flow") renderFlow(screen);
   else if (state.view === "group") renderGroup(screen);
   else if (state.view === "block_detail") renderDetail(screen);
+  else if (state.view === "block_loss") renderBlockLoss(screen);
   else renderDashboard(screen);
 }
 
@@ -2611,6 +2675,130 @@ function presentScreen(pane) {
   }
 }
 
+function clearForkMotion() {
+  for (const id of ["slice-blocks", "slice-flows"]) {
+    const node = document.getElementById(id);
+    if (!node) continue;
+    node.style.transition = "";
+    node.style.transform = "";
+    node.style.opacity = "";
+  }
+  const svg = document.querySelector("nav.sections .wh-lines");
+  if (!svg) return;
+  svg.style.transition = "";
+  svg.style.opacity = "";
+}
+
+function placeForkLine(line, x1, y1, x2, y2, originX, originY) {
+  line.setAttribute("x1", String(x1 - originX));
+  line.setAttribute("y1", String(y1 - originY));
+  line.setAttribute("x2", String(x2 - originX));
+  line.setAttribute("y2", String(y2 - originY));
+}
+
+function layoutFork() {
+  const wh = document.querySelector("nav.sections .wh");
+  if (!wh || !wh.classList.contains("is-open")) return;
+  const losses = document.getElementById("section-losses");
+  const blocks = document.getElementById("slice-blocks");
+  const flows = document.getElementById("slice-flows");
+  const fork = wh.querySelector(".wh-fork");
+  const svg = wh.querySelector(".wh-lines");
+  const lineBlocks = document.getElementById("slice-line-blocks");
+  const lineFlows = document.getElementById("slice-line-flows");
+  if (!losses || !blocks || !flows || !fork || !svg || !lineBlocks || !lineFlows) return;
+  if (!fork.offsetWidth || !losses.offsetWidth) return;
+
+  const anchorX = losses.offsetLeft + losses.offsetWidth / 2;
+  let forkLeft = anchorX - fork.offsetWidth / 2;
+  const hostLeft = wh.getBoundingClientRect().left;
+  const pad = 8;
+  const minLeft = pad - hostLeft;
+  const maxLeft = window.innerWidth - pad - hostLeft - fork.offsetWidth;
+  if (maxLeft >= minLeft) forkLeft = Math.min(Math.max(forkLeft, minLeft), maxLeft);
+  else forkLeft = minLeft;
+  const staff = document.getElementById("section-employees");
+  if (staff) {
+    const staffRect = staff.getBoundingClientRect();
+    const forkTop = wh.getBoundingClientRect().top + losses.offsetTop + losses.offsetHeight + 16;
+    const forkBottom = forkTop + fork.offsetHeight;
+    const overlapsY = forkTop < staffRect.bottom - 1 && forkBottom > staffRect.top + 1;
+    if (overlapsY) {
+      const overflow = hostLeft + forkLeft + fork.offsetWidth - (staffRect.left - pad);
+      if (overflow > 0) forkLeft = Math.max(minLeft, forkLeft - overflow);
+    }
+  }
+  forkLeft = Math.round(forkLeft);
+  fork.style.left = `${forkLeft}px`;
+  fork.style.transform = "none";
+  wh.style.marginBottom = `${16 + fork.offsetHeight}px`;
+
+  const y0 = losses.offsetTop + losses.offsetHeight;
+  const y1 = fork.offsetTop + blocks.offsetTop;
+  const xBlocks = forkLeft + blocks.offsetLeft + blocks.offsetWidth / 2;
+  const xFlows = forkLeft + flows.offsetLeft + flows.offsetWidth / 2;
+  const bleed = 2;
+  const minX = Math.min(anchorX, xBlocks, xFlows) - bleed;
+  const minY = Math.min(y0, y1) - bleed;
+  const width = Math.max(anchorX, xBlocks, xFlows) + bleed - minX;
+  const height = Math.max(y0, y1) + bleed - minY;
+  svg.style.left = `${minX}px`;
+  svg.style.top = `${minY}px`;
+  svg.style.width = `${width}px`;
+  svg.style.height = `${height}px`;
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", String(width));
+  svg.setAttribute("height", String(height));
+  placeForkLine(lineBlocks, anchorX, y0, xBlocks, y1, minX, minY);
+  placeForkLine(lineFlows, anchorX, y0, xFlows, y1, minX, minY);
+}
+
+function playForkEnter() {
+  const losses = document.getElementById("section-losses");
+  const buttons = ["slice-blocks", "slice-flows"].map((id) => document.getElementById(id)).filter(Boolean);
+  const svg = document.querySelector("nav.sections .wh-lines");
+  if (!losses || buttons.length !== 2) return;
+  const origin = losses.getBoundingClientRect();
+  if (!origin.width || !origin.height) return;
+  const ox = origin.left + origin.width / 2;
+  const oy = origin.bottom;
+  const starts = [];
+  for (const btn of buttons) {
+    const rect = btn.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    starts.push({
+      btn,
+      dx: ox - (rect.left + rect.width / 2),
+      dy: oy - rect.top,
+    });
+  }
+  for (const item of starts) {
+    item.btn.style.transition = "none";
+    item.btn.style.opacity = "0";
+    item.btn.style.transform = `translate(${item.dx}px, ${item.dy}px)`;
+  }
+  if (svg) {
+    svg.style.transition = "none";
+    svg.style.opacity = "0";
+  }
+  losses.getBoundingClientRect();
+  const token = ++forkMotion;
+  const motion = "transform 190ms var(--ease-out), opacity 190ms var(--ease-out)";
+  for (const item of starts) {
+    item.btn.style.transition = motion;
+    item.btn.style.opacity = "1";
+    item.btn.style.transform = "translate(0px, 0px)";
+  }
+  if (svg) {
+    svg.style.transition = "opacity 190ms var(--ease-out)";
+    svg.style.opacity = "1";
+  }
+  window.setTimeout(() => {
+    if (token !== forkMotion) return;
+    clearForkMotion();
+  }, 230);
+}
+
 function syncSections() {
   const employees = state.view === "employees";
   const losses = document.getElementById("section-losses");
@@ -2621,6 +2809,29 @@ function syncSections() {
   if (search) search.hidden = employees;
   const title = document.querySelector("header.top h1");
   if (title) title.textContent = employees ? "📦 аналитика потерь сотрудников" : "📦 Аналитика списаний";
+  const open = !employees;
+  const blocksBtn = document.getElementById("slice-blocks");
+  const flowsBtn = document.getElementById("slice-flows");
+  if (blocksBtn) blocksBtn.setAttribute("aria-pressed", open && state.slice === "blocks" ? "true" : "false");
+  if (flowsBtn) flowsBtn.setAttribute("aria-pressed", open && state.slice === "flows" ? "true" : "false");
+  const wh = document.querySelector("nav.sections .wh");
+  if (!wh) return;
+  const appear = forkOpen === false && open && !reducedMotion();
+  wh.classList.toggle("is-open", open);
+  if (!open) {
+    forkMotion += 1;
+    clearForkMotion();
+    wh.style.marginBottom = "";
+    const fork = wh.querySelector(".wh-fork");
+    if (fork) {
+      fork.style.left = "";
+      fork.style.transform = "";
+    }
+  } else {
+    layoutFork();
+    if (appear) playForkEnter();
+  }
+  forkOpen = open;
 }
 
 function render() {
@@ -3152,6 +3363,16 @@ function wireChrome() {
     if (state.view === "employees") return;
     go({ view: "employees", flow: "", group: "", block: "" });
   });
+  document.getElementById("slice-blocks")?.addEventListener("click", () => {
+    if (state.view === "dashboard" && state.slice === "blocks" && !state.flow && !state.group && !state.block) return;
+    go({ view: "dashboard", slice: "blocks", flow: "", group: "", block: "" });
+  });
+  document.getElementById("slice-flows")?.addEventListener("click", () => {
+    if (state.view === "dashboard" && state.slice === "flows" && !state.flow && !state.group && !state.block) return;
+    go({ view: "dashboard", slice: "flows", flow: "", group: "", block: "" });
+  });
+  window.addEventListener("resize", () => layoutFork());
+  if (document.fonts) document.fonts.ready.then(() => layoutFork());
   document.getElementById("theme")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
     const next = current === "dark" ? "light" : current === "light" ? "system" : "dark";
@@ -3432,6 +3653,7 @@ async function boot() {
 
 async function openApp() {
   readUrl();
+  syncSections();
   syncForm(true);
   setStatus("Загрузка…");
   try {

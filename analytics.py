@@ -6,6 +6,7 @@ import os
 import re
 from datetime import date, datetime, timedelta
 from html import escape
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -115,6 +116,9 @@ GROUP_PROMPTS = {
 
 FLOW_IN_COLOR = "#3fb950"
 FLOW_OUT_COLOR = "#4C9AFF"
+# Круг сегментов по порядку блока: синий, зелёный, фиолетовый, янтарный.
+BLOCK_DONUT_COLORS = (FLOW_OUT_COLOR, FLOW_IN_COLOR, "#c4b5fd", "#d29922")
+_RYAZAN_BLOCK = "Рязань Тюшевское"
 
 
 def business_today():
@@ -258,6 +262,226 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
 </p>
 </div>
 <span class="loss-pct loss-pct-out">{out_share}</span>
+</div>
+</div>
+</div>'''
+
+
+def build_block_lr_donut_svg(asm_sum, lay_sum, center_text):
+    """Кольцо одного блока: слева сборка (LR 5), справа раскладка (LR 27).
+
+    Геометрия и классы те же, что у входа и исхода. Сегменты не ссылки.
+    Доли считаются от суммы этих двух LR внутри блока. Нулевая доля без дуги.
+    """
+    asm_sum = max(_f(asm_sum), 0.0)
+    lay_sum = max(_f(lay_sum), 0.0)
+    total = asm_sum + lay_sum
+    asm_pct = (asm_sum / total * 100) if total else 0.0
+    lay_pct = (100.0 - asm_pct) if total else 0.0
+
+    cx, cy, r, sw = 200, 200, 112, 50
+    if asm_pct <= 2 and asm_pct > 0 and lay_pct > 0:
+        gap = 1.0
+    elif asm_pct > 1 and lay_pct > 1:
+        gap = 4.0
+    else:
+        gap = 0.0
+
+    def span_of(pct):
+        raw = pct / 100 * 360
+        if raw <= 0:
+            return 0.0
+        if gap and raw > gap + 1:
+            return raw - gap
+        return raw
+
+    asm_span, lay_span = span_of(asm_pct), span_of(lay_pct)
+    asm_start = (180 - asm_span / 2) % 360
+    lay_start = (0 - lay_span / 2) % 360
+    label = escape(center_text)
+    asm_share, lay_share = _fmt_share(asm_pct), _fmt_share(lay_pct)
+    aria = escape(
+        f"Диаграмма потерь. Сумма списаний {center_text}. "
+        f"Сборка {asm_share}, раскладка {lay_share}."
+    )
+    arcs = (
+        _donut_arc(cx, cy, r, sw, asm_start, asm_span, FLOW_OUT_COLOR, "loss-arc-seg arc-out")
+        + _donut_arc(cx, cy, r, sw, lay_start, lay_span, FLOW_IN_COLOR, "loss-arc-seg arc-in")
+    )
+
+    def side_label(css, name, share):
+        return (
+            f'<span class="loss-pct {css}">'
+            f'<span class="loss-pct-name">{escape(name)}</span>{escape(share)}'
+            f"</span>"
+        )
+
+    return f'''<div class="loss-stack">
+<div class="loss-figure">
+<div class="loss-ring-row loss-ring-lr">
+{side_label("loss-pct-in", "сборка", asm_share)}
+<div class="loss-donut-wrap">
+<svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
+  <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
+  {arcs}
+</svg>
+<p class="loss-hole" aria-hidden="true">
+<span class="loss-hole-label">сумма списаний</span>
+<span class="loss-hole-sum">{label}</span>
+</p>
+</div>
+{side_label("loss-pct-out", "раскладка", lay_share)}
+</div>
+</div>
+</div>'''
+
+
+def _block_face(name):
+    """«Рязань Тюшевское 1» → «исход 1». Без номера — «исход». Остальные имена как есть."""
+    if name == _RYAZAN_BLOCK:
+        return "исход"
+    prefix = _RYAZAN_BLOCK + " "
+    if name.startswith(prefix):
+        rest = name[len(prefix):].strip()
+        return f"исход {rest}" if rest else "исход"
+    return name
+
+
+def _block_donut_color(index):
+    """Цвет сегмента по порядку в кольце. Соседние блоки не делят один синий."""
+    return BLOCK_DONUT_COLORS[index % len(BLOCK_DONUT_COLORS)]
+
+
+def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
+    """Имя и доля снаружи дуги, около 8px от внешнего края. Процент под именем."""
+    font = 11 if len(face) > 12 else 13
+    line = font + 2
+    cos_m = math.cos(math.radians(mid))
+    sin_m = math.sin(math.radians(mid))
+    if cos_m >= 0.35:
+        anchor = "start"
+    elif cos_m <= -0.35:
+        anchor = "end"
+    else:
+        anchor = "middle"
+    outer = r + sw / 2
+    if anchor == "middle" and sin_m > 0:
+        radius = outer + 8 + font * 0.8
+        y = cy + radius * sin_m
+        y_name, y_pct = y, y + line
+    elif anchor == "middle":
+        radius = outer + 8
+        y = cy + radius * sin_m
+        y_name, y_pct = y - line, y
+    else:
+        radius = outer + 8 + 4
+        y = cy + radius * sin_m
+        y_name, y_pct = y - line / 2, y + line / 2
+    x = cx + radius * cos_m
+    return (
+        f'<text class="loss-seg-label" text-anchor="{anchor}" fill="{color}" '
+        f'font-size="{font}" pointer-events="none">'
+        f'<tspan x="{x:.2f}" y="{y_name:.2f}">{escape(face)}</tspan>'
+        f'<tspan class="loss-seg-pct" x="{x:.2f}" y="{y_pct:.2f}">{escape(pct_text)}</tspan>'
+        f"</text>"
+    )
+
+
+def warehouse_block_items(curr, total):
+    """Группы block_group кадра склада: сначала блоки маппинга, затем остальные по сумме."""
+    total = _f(total)
+    if total <= 0 or curr is None or len(curr) == 0 or "block_group" not in getattr(curr, "columns", []):
+        return []
+    grouped = curr.groupby("block_group", sort=False)["loss_sum"].sum()
+    sums = {}
+    for key, value in grouped.items():
+        name = _as_name(key).strip()
+        amount = _f(value)
+        if not name or amount <= 0:
+            continue
+        sums[name] = sums.get(name, 0.0) + amount
+    known = set(ALL_BLOCKS)
+    ordered = [name for name in ALL_BLOCKS if sums.get(name, 0.0) > 0]
+    rest = [name for name in sums if name not in known]
+    rest.sort(key=lambda name: (-sums[name], name))
+    ordered.extend(rest)
+    return [
+        {
+            "name": name,
+            "face": _block_face(name),
+            "sum": sums[name],
+            "pct": sums[name] / total * 100,
+        }
+        for name in ordered
+    ]
+
+
+def build_blocks_donut_svg(items, center_text):
+    """Кольцо всех блоков. Геометрия та же, что у входа и исхода."""
+    cx, cy, r, sw = 200, 200, 112, 50
+    outer, inner, outset = r + sw / 2, r - sw / 2, 8
+    hit_r = (outer + outset + inner) / 2
+    hit_sw = outer + outset - inner
+    rows = list(items or [])
+    raws = [max(_f(item.get("pct")), 0.0) / 100 * 360 for item in rows]
+    if len(raws) == 1:
+        raws = [360.0]
+    elif raws and abs(sum(raws) - 360.0) < 0.05:
+        raws[-1] += 360.0 - sum(raws)
+
+    arcs, hits, labels = [], [], []
+    cursor = -90.0
+    for index, (item, raw) in enumerate(zip(rows, raws)):
+        raw = max(_f(raw), 0.0)
+        if len(raws) == 1:
+            span = 360.0
+        elif raw > 5:
+            span = raw - 4.0
+        else:
+            span = raw
+        start = cursor + (raw - span) / 2
+        mid = cursor + raw / 2
+        cursor += raw
+        face = str(item.get("face") or "")
+        name = str(item.get("name") or "")
+        color = _block_donut_color(index)
+        if span <= 0.4:
+            continue
+        pct_text = _fmt_share(_f(item.get("pct")))
+        arcs.append(_donut_arc(cx, cy, r, sw, start, span, color, "loss-arc-seg"))
+        hit = _donut_arc(cx, cy, hit_r, hit_sw, start, span, "transparent", "loss-seg-hit")
+        if hit:
+            caption = escape(f"{face}, {pct_text}")
+            href = escape("#block=" + quote(name, safe=""))
+            hits.append(
+                f'<a class="loss-seg" data-block="{escape(name)}" href="{href}" aria-label="{caption}">'
+                f"<title>{caption}</title>{hit}</a>"
+            )
+        labels.append(_block_label(cx, cy, r, sw, mid, face, pct_text, color))
+
+    label = escape(center_text)
+    described = ", ".join(
+        f"{item.get('face')} {_fmt_share(_f(item.get('pct')))}" for item in rows if _f(item.get("pct")) > 0
+    )
+    aria = escape(
+        f"Диаграмма потерь по блокам. Сумма списаний {center_text}."
+        + (f" {described}." if described else "")
+    )
+    return f'''<div class="loss-stack">
+<div class="loss-figure">
+<div class="loss-ring-row loss-ring-blocks">
+<div class="loss-donut-wrap">
+<svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
+  <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
+  {''.join(arcs)}
+  {''.join(hits)}
+  {''.join(labels)}
+</svg>
+<p class="loss-hole" aria-hidden="true">
+<span class="loss-hole-label">сумма списаний</span>
+<span class="loss-hole-sum">{label}</span>
+</p>
+</div>
 </div>
 </div>
 </div>'''
@@ -1326,6 +1550,64 @@ def reason_moves(curr, prev):
     return {"up": pick("up"), "down": pick("down")}
 
 
+def _text_key(series):
+    return series.map(lambda value: _as_name(value).strip())
+
+
+def _block_reason_part(frame, blocks, reasons, name, code):
+    if frame is None or len(frame) == 0 or blocks is None or reasons is None:
+        if frame is None or not hasattr(frame, "iloc"):
+            return frame
+        return frame.iloc[0:0]
+    return frame.loc[(blocks == name) & (reasons == code)]
+
+
+def _block_points(frame, period, label, grain):
+    if grain == "hour":
+        day = period["_start"] if label == "Текущий период" else period["_prev_start"]
+        return hourly_series(frame, day, label)
+    if label == "Текущий период":
+        return daily_series(frame, period["_start"], period["_end"], label)
+    return daily_series(frame, period["_prev_start"], period["_prev_end"], label)
+
+
+def _frame_keys(frame):
+    if frame is None or len(frame) == 0:
+        return None, None
+    columns = getattr(frame, "columns", [])
+    if "block_group" not in columns or "reason" not in columns:
+        return None, None
+    return _text_key(frame["block_group"]), _text_key(frame["reason"])
+
+
+def build_block_pages(curr, prev, period, items, has_prev, grain):
+    """Страницы блоков: лицо, кольцо LR 5 и 27, точки графика по имени block_group."""
+    curr_blocks, curr_reasons = _frame_keys(curr)
+    prev_blocks, prev_reasons = _frame_keys(prev)
+    pages = {}
+    for item in items or []:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        series = {}
+        sums = {}
+        for code in ("5", "27"):
+            part = _block_reason_part(curr, curr_blocks, curr_reasons, name, code)
+            points = _block_points(part, period, "Текущий период", grain)
+            if has_prev:
+                old = _block_reason_part(prev, prev_blocks, prev_reasons, name, code)
+                points = points + _block_points(old, period, "Прошлый период", grain)
+            series[code] = points
+            sums[code] = _sum(part, "loss_sum")
+        total = sums["5"] + sums["27"]
+        pages[name] = {
+            "face": item.get("face") or _block_face(name),
+            "donut_svg": build_block_lr_donut_svg(sums["5"], sums["27"], fmt_rub(total)),
+            "series": series,
+        }
+    return pages
+
+
 def empty_report(period):
     return {
         "empty": True,
@@ -1339,6 +1621,7 @@ def empty_report(period):
         "chart_time_missing": False,
         "flows": None,
         "moves": {"up": None, "down": None},
+        "block_pages": {},
     }
 
 
@@ -1388,6 +1671,7 @@ def build_report(df_curr, df_prev, period):
         )
     total_sum = _sum(curr, "loss_sum")
     total_qty = _sum(curr, "loss_qty")
+    block_items = warehouse_block_items(curr, total_sum)
     prev_sum = _sum(prev, "loss_sum")
     prev_qty = _sum(prev, "loss_qty")
     other_sum = _sum(other_curr, "loss_sum")
@@ -1426,6 +1710,11 @@ def build_report(df_curr, df_prev, period):
             "prev_qty": prev_qty,
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
             "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
+            "blocks": {
+                "total": total_sum,
+                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(total_sum)),
+                "items": block_items,
+            },
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,
                 "has_rows": not other_curr.empty,
@@ -1441,4 +1730,5 @@ def build_report(df_curr, df_prev, period):
         "chart_time_missing": chart_time_missing,
         "flows": flows,
         "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
+        "block_pages": build_block_pages(curr, prev, period, block_items, has_prev, chart_grain),
     }
