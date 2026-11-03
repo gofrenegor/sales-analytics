@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "card-design": {
+      "source": "arnavpuri/designskills",
+      "sourceType": "github",
+      "skillPath": "skills/card-design/SKILL.md",
+      "computedHash": "46202d8c8cc7177905d5bd23bbabc5ceb16833b4cb31367f9d0c1163f5ccd03c"
+    },
     "emil-design-eng": {
       "source": "emilkowalski/skills",
       "sourceType": "github",

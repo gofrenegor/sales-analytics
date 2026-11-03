@@ -60,6 +60,14 @@
   --wash-2: 0.13;
   --wash-3: 0.04;
   --wash-4: 0.01;
+  --card-red-fill: rgb(72 18 28 / 0.58);
+  --card-red-fill-hover: rgb(88 24 34 / 0.68);
+  --card-red-line: rgb(232 164 170 / 0.62);
+  --card-red-line-hover: rgb(244 186 190 / 0.8);
+  --card-green-fill: rgb(12 58 40 / 0.58);
+  --card-green-fill-hover: rgb(16 74 52 / 0.68);
+  --card-green-line: rgb(156 214 178 / 0.58);
+  --card-green-line-hover: rgb(176 226 196 / 0.74);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
@@ -99,6 +107,14 @@
   --wash-2: 0.07;
   --wash-3: 0.02;
   --wash-4: 0;
+  --card-red-fill: rgb(148 36 48 / 0.16);
+  --card-red-fill-hover: rgb(148 36 48 / 0.16);
+  --card-red-line: rgb(255 214 218 / 0.95);
+  --card-red-line-hover: rgb(255 236 238);
+  --card-green-fill: rgb(16 110 62 / 0.18);
+  --card-green-fill-hover: rgb(16 110 62 / 0.18);
+  --card-green-line: rgb(214 244 224 / 0.95);
+  --card-green-line-hover: rgb(232 250 238);
 }
 
 @media (prefers-color-scheme: light) {
@@ -136,6 +152,14 @@
     --wash-2: 0.07;
     --wash-3: 0.02;
     --wash-4: 0;
+    --card-red-fill: rgb(148 36 48 / 0.16);
+    --card-red-fill-hover: rgb(148 36 48 / 0.16);
+    --card-red-line: rgb(255 214 218 / 0.95);
+    --card-red-line-hover: rgb(255 236 238);
+    --card-green-fill: rgb(16 110 62 / 0.18);
+    --card-green-fill-hover: rgb(16 110 62 / 0.18);
+    --card-green-line: rgb(214 244 224 / 0.95);
+    --card-green-line-hover: rgb(232 250 238);
   }
 }
 
@@ -1832,35 +1856,22 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .card:hover { background: var(--card-hover); }
 .card:active { transform: scale(0.97); }
-.card.red,
-.card.green {
-  color: #f4f7fb;
-}
 .card.red {
-  background: #4a1822;
-  border-color: #8a3948;
+  background: var(--card-red-fill);
+  border-color: var(--card-red-line);
 }
 .card.green {
-  background: #0e3a28;
-  border-color: #1d7a52;
+  background: var(--card-green-fill);
+  border-color: var(--card-green-line);
 }
-.card.red:hover { background: #5c2030; }
-.card.green:hover { background: #145038; }
-.card.red .c-name,
-.card.green .c-name,
-.card.red .c-share,
-.card.green .c-share { color: rgb(255 255 255 / 0.72); }
-.card.red .chip-r { background: rgb(255 180 180 / 0.16); color: #ffd0d0; }
-.card.green .chip-g { background: rgb(180 240 200 / 0.16); color: #c8f5d4; }
-.card.red .chip-n,
-.card.green .chip-n { background: rgb(255 255 255 / 0.12); color: rgb(255 255 255 / 0.8); }
-.card.red button,
-.card.green button {
-  color: #d5e4ff;
-  border-top-color: rgb(255 255 255 / 0.16);
+.card.red:hover {
+  background: var(--card-red-fill-hover);
+  border-color: var(--card-red-line-hover);
 }
-.card.red button:hover,
-.card.green button:hover { color: #fff; }
+.card.green:hover {
+  background: var(--card-green-fill-hover);
+  border-color: var(--card-green-line-hover);
+}
 .c-name {
   min-height: 2.6em;
   color: var(--muted);
