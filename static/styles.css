@@ -255,8 +255,51 @@ p { margin: 0.5rem 0; }
   padding: 0;
   color: var(--muted);
   font-weight: 650;
+  transition: color 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .who button:hover { color: var(--text); }
+.who button:active { transform: scale(0.97); }
+.account { position: relative; }
+.password-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: min(18rem, 80vw);
+  padding: 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--sidebar);
+  box-shadow: var(--shadow);
+  transform-origin: top left;
+}
+.password-panel[hidden] { display: none; }
+.password-panel:not([hidden]) { animation: pane-reveal 180ms var(--ease-out) both; }
+.password-panel input {
+  flex: 1 0 100%;
+  height: 2.5rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 1.05rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+}
+.password-panel .ghost,
+.password-panel .primary { flex: 1; }
+.password-note {
+  flex: 1 0 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+.password-note.is-error { color: var(--red); }
+.password-note[hidden] { display: none; }
 .grant-panel {
   display: flex;
   flex-direction: column;

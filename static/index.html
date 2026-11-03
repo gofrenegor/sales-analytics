@@ -133,7 +133,15 @@
     <main>
       <header class="top">
         <h1>📦 Аналитика списаний</h1>
-        <div id="who" class="who" hidden></div>
+        <div class="account" id="account">
+          <div id="who" class="who" hidden></div>
+          <form id="password-panel" class="password-panel" hidden>
+            <input id="password-next" autocomplete="new-password" maxlength="64" placeholder="новый пароль" spellcheck="false" aria-label="Новый пароль">
+            <button type="button" id="password-random" class="ghost">случайный</button>
+            <button type="submit" class="primary">сохранить</button>
+            <p id="password-note" class="password-note" hidden role="status"></p>
+          </form>
+        </div>
         <label class="search">
           <span class="sr">Поиск LR или площадки</span>
           <input id="search" type="search" placeholder="LR или площадка" autocomplete="off" enterkeyhint="search">

@@ -2875,6 +2875,8 @@ function showGate() {
   if (layout) layout.hidden = true;
   if (toggle) toggle.hidden = true;
   if (who) who.hidden = true;
+  const passwordPanel = document.getElementById("password-panel");
+  if (passwordPanel) passwordPanel.hidden = true;
   setAdminOpen(false);
   document.getElementById("gate-contact")?.focus();
 }
@@ -2960,8 +2962,79 @@ function applySession() {
   who.hidden = false;
   who.replaceChildren(
     document.createTextNode(`ID ${user.id}`),
+    el("button", { type: "button", onclick: () => togglePassword() }, "пароль"),
     el("button", { type: "button", onclick: () => logout() }, "выйти"),
   );
+}
+
+const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+function randomPassword() {
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length]).join("");
+}
+
+function setPasswordNote(text, bad) {
+  const note = document.getElementById("password-note");
+  if (!note) return;
+  note.textContent = text || "";
+  note.hidden = !text;
+  note.classList.toggle("is-error", Boolean(bad));
+}
+
+function togglePassword() {
+  const panel = document.getElementById("password-panel");
+  const input = document.getElementById("password-next");
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  if (panel.hidden) return;
+  setPasswordNote("");
+  input?.focus();
+}
+
+function wirePassword() {
+  const panel = document.getElementById("password-panel");
+  const input = document.getElementById("password-next");
+  const random = document.getElementById("password-random");
+  if (!panel || !input) return;
+  random?.addEventListener("click", () => {
+    input.value = randomPassword();
+    input.focus();
+    input.select();
+    setPasswordNote("");
+  });
+  input.addEventListener("input", () => setPasswordNote(""));
+  panel.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const password = input.value.trim();
+    if (password.length < 8 || password.length > 64) {
+      setPasswordNote("Пароль от 8 до 64 символов", true);
+      return;
+    }
+    const save = panel.querySelector("button[type='submit']");
+    if (save) save.disabled = true;
+    try {
+      await readJson(await fetch("/api/auth/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      }));
+      setPasswordNote("пароль обновлён");
+    } catch (error) {
+      setPasswordNote(error.message || "Пароль от 8 до 64 символов", true);
+    } finally {
+      if (save) save.disabled = false;
+    }
+  });
+  document.addEventListener("click", (event) => {
+    if (panel.hidden) return;
+    if (document.getElementById("account")?.contains(event.target)) return;
+    panel.hidden = true;
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !panel.hidden) panel.hidden = true;
+  });
 }
 
 async function logout() {
@@ -3067,4 +3140,5 @@ async function openApp() {
 wireChrome();
 wireAdmin();
 wireAuth();
+wirePassword();
 boot();
