@@ -116,9 +116,21 @@ GROUP_PROMPTS = {
 
 FLOW_IN_COLOR = "#3fb950"
 FLOW_OUT_COLOR = "#4C9AFF"
-# Круг сегментов по порядку блока: синий, зелёный, фиолетовый, янтарный.
-BLOCK_DONUT_COLORS = (FLOW_OUT_COLOR, FLOW_IN_COLOR, "#c4b5fd", "#d29922")
+# Круг сегментов по порядку блока. Семи цветов хватает на все группы склада, сосед не повторяет крупный.
+BLOCK_DONUT_COLORS = (
+    FLOW_OUT_COLOR,
+    FLOW_IN_COLOR,
+    "#c4b5fd",
+    "#d29922",
+    "#ff7b72",
+    "#39c5cf",
+    "#f778ba",
+)
 _RYAZAN_BLOCK = "Рязань Тюшевское"
+# Доля меньше этого порога не пишет имя на дуге: подписи слипаются. Чип над кольцом.
+BLOCK_CALLOUT_PCT = 8.0
+# Угол дуги на экране. Истинный процент остаётся в подписи, тонкая доля всё ещё нажимается.
+BLOCK_MIN_DEG = 12.0
 
 
 def business_today():
@@ -416,8 +428,51 @@ def warehouse_block_items(curr, total):
     ]
 
 
+def _block_display_spans(raws):
+    """Угол дуги на кольце. Мелкая доля получает не меньше BLOCK_MIN_DEG, крупная забирает остаток."""
+    n = len(raws)
+    if n == 0:
+        return []
+    if n == 1:
+        return [360.0]
+    min_deg = min(BLOCK_MIN_DEG, 360.0 / n * 0.7)
+    reserved = n * min_deg
+    if reserved >= 359.0:
+        return [360.0 / n] * n
+    leftover = 360.0 - reserved
+    total = sum(raws) or 1.0
+    return [min_deg + leftover * (max(raw, 0.0) / total) for raw in raws]
+
+
+def _block_gap(allocated):
+    if allocated >= 28:
+        return 3.0
+    if allocated >= 8:
+        return 1.4
+    return 0.6
+
+
+def _block_callouts(specs):
+    """Чипы блоков, чья доля не помещается подписью на дуге. Имя — face, клик — настоящее имя."""
+    if not specs:
+        return ""
+    ordered = sorted(specs, key=lambda spec: (-spec["pct"], spec["face"]))
+    rows = []
+    for spec in ordered:
+        rows.append(
+            "<li>"
+            f'<a class="loss-callout" data-block="{escape(spec["name"])}" href="{spec["href"]}" '
+            f'style="--slice:{spec["color"]}">'
+            '<i aria-hidden="true"></i>'
+            f'<span>{escape(spec["face"])}</span>'
+            f'<b>{escape(spec["pct_text"])}</b>'
+            "</a></li>"
+        )
+    return '<ul class="loss-callouts">' + "".join(rows) + "</ul>"
+
+
 def build_blocks_donut_svg(items, center_text):
-    """Кольцо всех блоков. Геометрия та же, что у входа и исхода."""
+    """Кольцо всех блоков. Крупные доли подписаны на дуге, мелкие — чипами над кольцом."""
     cx, cy, r, sw = 200, 200, 112, 50
     outer, inner, outset = r + sw / 2, r - sw / 2, 8
     hit_r = (outer + outset + inner) / 2
@@ -428,36 +483,47 @@ def build_blocks_donut_svg(items, center_text):
         raws = [360.0]
     elif raws and abs(sum(raws) - 360.0) < 0.05:
         raws[-1] += 360.0 - sum(raws)
+    allocated = _block_display_spans(raws)
 
-    arcs, hits, labels = [], [], []
+    arcs, hits, labels, callouts = [], [], [], []
     cursor = -90.0
-    for index, (item, raw) in enumerate(zip(rows, raws)):
+    for index, (item, raw) in enumerate(zip(rows, allocated)):
         raw = max(_f(raw), 0.0)
-        if len(raws) == 1:
-            span = 360.0
-        elif raw > 5:
-            span = raw - 4.0
-        else:
-            span = raw
+        gap = 0.0 if len(allocated) == 1 else _block_gap(raw)
+        span = raw if len(allocated) == 1 else max(raw - gap, 0.0)
         start = cursor + (raw - span) / 2
         mid = cursor + raw / 2
         cursor += raw
         face = str(item.get("face") or "")
         name = str(item.get("name") or "")
+        pct = _f(item.get("pct"))
         color = _block_donut_color(index)
         if span <= 0.4:
             continue
-        pct_text = _fmt_share(_f(item.get("pct")))
+        pct_text = _fmt_share(pct)
+        caption = escape(f"{face}, {pct_text}")
+        href = escape("#block=" + quote(name, safe=""))
         arcs.append(_donut_arc(cx, cy, r, sw, start, span, color, "loss-arc-seg"))
         hit = _donut_arc(cx, cy, hit_r, hit_sw, start, span, "transparent", "loss-seg-hit")
         if hit:
-            caption = escape(f"{face}, {pct_text}")
-            href = escape("#block=" + quote(name, safe=""))
             hits.append(
                 f'<a class="loss-seg" data-block="{escape(name)}" href="{href}" aria-label="{caption}">'
                 f"<title>{caption}</title>{hit}</a>"
             )
-        labels.append(_block_label(cx, cy, r, sw, mid, face, pct_text, color))
+        if pct >= BLOCK_CALLOUT_PCT:
+            text = _block_label(cx, cy, r, sw, mid, face, pct_text, color)
+            labels.append(
+                f'<a class="loss-seg-label-link" data-block="{escape(name)}" href="{href}">{text}</a>'
+            )
+        else:
+            callouts.append({
+                "name": name,
+                "face": face,
+                "pct": pct,
+                "pct_text": pct_text,
+                "color": color,
+                "href": href,
+            })
 
     label = escape(center_text)
     described = ", ".join(
@@ -470,6 +536,7 @@ def build_blocks_donut_svg(items, center_text):
     return f'''<div class="loss-stack">
 <div class="loss-figure">
 <div class="loss-ring-row loss-ring-blocks">
+{_block_callouts(callouts)}
 <div class="loss-donut-wrap">
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>

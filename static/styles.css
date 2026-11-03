@@ -1578,7 +1578,8 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   gap: 24px;
   align-items: start;
 }
-.hero.hero-block {
+.hero.hero-block,
+.hero.hero-blocks {
   grid-template-columns: minmax(0, 1fr);
   grid-template-areas:
     "donut"
@@ -1599,6 +1600,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   width: min(calc(100% - 5.9rem), 28rem);
   margin-inline: auto;
 }
+.loss-ring-row.loss-ring-blocks {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: min(100%, 56rem);
+}
 .loss-donut-wrap {
   position: relative;
   width: 100%;
@@ -1613,6 +1621,75 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
   pointer-events: none;
+}
+.loss-donut a.loss-seg-label-link {
+  cursor: pointer;
+  pointer-events: auto;
+}
+.loss-donut a.loss-seg-label-link text.loss-seg-label {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.loss-ring-blocks .loss-hole-label {
+  font-size: clamp(13px, 3.2cqi, 22px);
+}
+.loss-ring-blocks .loss-hole-sum {
+  font-size: clamp(16px, 4.6cqi, 40px);
+}
+.loss-callouts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.loss-callouts li { margin: 0; padding: 0; }
+.loss-callout {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px 8px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.loss-callout i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--slice, var(--blue));
+  flex: 0 0 auto;
+}
+.loss-callout b {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.loss-callout:hover,
+.loss-callout.is-hot,
+.loss-callout:focus-visible {
+  background: color-mix(in srgb, var(--slice, var(--blue)) 18%, var(--card));
+  border-color: var(--slice, var(--blue));
+}
+.loss-callout:active { transform: scale(0.97); }
+.loss-callout:focus { outline: none; }
+.loss-callout:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
 }
 .loss-hole {
   position: absolute;
@@ -1696,7 +1773,13 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 .loss-donut a.loss-seg-in:focus-visible .loss-seg-hit { stroke: rgba(63, 185, 80, 0.5); }
 .loss-donut a.loss-seg-out:hover .loss-seg-hit,
 .loss-donut a.loss-seg-out:focus-visible .loss-seg-hit { stroke: rgba(76, 154, 255, 0.5); }
-.loss-donut a.loss-seg:focus { outline: none; }
+.loss-donut a.loss-seg:hover .loss-seg-hit,
+.loss-donut a.loss-seg.is-hot .loss-seg-hit,
+.loss-donut a.loss-seg:focus-visible .loss-seg-hit {
+  stroke: color-mix(in srgb, var(--text) 32%, transparent);
+}
+.loss-donut a.loss-seg:focus,
+.loss-donut a.loss-seg-label-link:focus { outline: none; }
 
 .flow-btn {
   position: relative;
@@ -2133,8 +2216,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   .loss-pct-in { grid-area: in; justify-self: end; text-align: right; }
   .loss-pct-out { grid-area: out; justify-self: start; text-align: left; }
   .loss-ring-row.loss-ring-blocks {
-    display: block;
-    width: min(calc(100% - 3rem), 16rem);
+    display: flex;
+    width: min(100%, 32rem);
   }
 }
 

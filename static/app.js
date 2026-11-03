@@ -1617,11 +1617,21 @@ function bindDonut(host) {
       go({ view: "flow", flow: link.dataset.flow, group: "", block: "" });
     });
   });
-  host.querySelectorAll("[data-block]").forEach((link) => {
+  const blocks = [...host.querySelectorAll("[data-block]")];
+  const paint = (name, on) => {
+    blocks.forEach((node) => {
+      if (node.dataset.block === name) node.classList.toggle("is-hot", on);
+    });
+  };
+  blocks.forEach((link) => {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       go({ view: "block_loss", block: link.dataset.block, slice: "blocks", flow: "", group: "" });
     });
+    link.addEventListener("mouseenter", () => paint(link.dataset.block, true));
+    link.addEventListener("mouseleave", () => paint(link.dataset.block, false));
+    link.addEventListener("focus", () => paint(link.dataset.block, true));
+    link.addEventListener("blur", () => paint(link.dataset.block, false));
   });
 }
 
@@ -2365,7 +2375,7 @@ function renderEmpDetail(detail, lr) {
 function renderDashboard(screen) {
   const dash = state.report.dashboard;
   const blocksMode = state.slice === "blocks";
-  const hero = el("div", { class: "hero" });
+  const hero = el("div", { class: blocksMode ? "hero hero-blocks" : "hero" });
   const chart = el("div");
   chart.innerHTML = blocksMode && dash.blocks && dash.blocks.donut_svg ? dash.blocks.donut_svg : dash.donut_svg;
   bindDonut(chart);
