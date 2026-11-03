@@ -2292,7 +2292,7 @@ function syncSections() {
   const search = document.querySelector("header .search");
   if (search) search.hidden = employees;
   const title = document.querySelector("header.top h1");
-  if (title) title.textContent = employees ? "📦 аналитика лошков и бедолаг" : "📦 Аналитика списаний";
+  if (title) title.textContent = employees ? "📦 аналитика потерь сотрудников" : "📦 Аналитика списаний";
 }
 
 function render() {
