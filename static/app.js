@@ -2235,7 +2235,7 @@ function renderBlockChart(lines, grain) {
     const mapped = localOf(event);
     if (!mapped) return;
     const found = nearest(mapped.local);
-    const enter = stroke / 2 + 2 / mapped.scale;
+    const enter = stroke / 2 + 5 / mapped.scale;
     const leave = stroke / 2 + 8 / mapped.scale;
     if (found.line && found.dist <= enter) {
       if (found.line.name === hotName) placeTip(found.at);
