@@ -42,6 +42,8 @@ STAGE_MAPPING = {
 }
 OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
+# Лостризон важнее статуса: LR 29 всегда исход, даже на входном статусе и в браке.
+OUTBOUND_LRS = ("29",)
 # Кольцо блоков: в дырке и в процентах только сборка и раскладка.
 BLOCK_RING_LRS = ("5", "27")
 # Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
@@ -1426,7 +1428,8 @@ def classify_losses(df):
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
     ORS всегда LR 5: исходящий поток, этап «Сборка». RNR всегда LR 27: вход.
-    SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
+    LR 29 всегда исходящий поток: входной статус и брак поток не перебивают.
+    Группа блока при этом прежняя. SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
     группа — название места списания, как у OSS. Оперка и брак их не забирают.
     Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
     статус из OPERKA_STATUSES и это не LR сборки. ID блока перед списанием не решает.
@@ -1449,6 +1452,7 @@ def classify_losses(df):
     is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
+    df.loc[df["reason"].isin(OUTBOUND_LRS), "flow"] = "Исходящий поток"
 
     df["process_stage"] = df["status_before"].map(STAGE_MAPPING).fillna("Другое")
     df.loc[is_defect, "process_stage"] = DEFECT_GROUP

@@ -118,6 +118,14 @@ def row(**overrides):
         ),
         ({"status_before": "SLT", "block_name": "Рязань КГТ 2"}, "Входящий поток", "Рязань Тюшевское 2"),
         ({"status_before": "SLT", "block_name": "Склад Х"}, "Входящий поток", "Блоки вне маппинга"),
+        ({"reason": "29"}, "Исходящий поток", "Рязань Тюшевское 1"),
+        ({"reason": "29.0", "status_before": "SDL"}, "Исходящий поток", DEFECT_GROUP),
+        ({"reason": "29", "status_before": "ZZZ"}, "Исходящий поток", "Рязань Тюшевское 1"),
+        (
+            {"reason": "29", "status_before": "SMC", "block_id": "6800"},
+            "Исходящий поток",
+            "Опер площадь",
+        ),
     ],
 )
 def test_classify(overrides, flow, group):
