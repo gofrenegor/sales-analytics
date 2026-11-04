@@ -628,8 +628,8 @@ def _mix_oklab(a, b):
 def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     """Имя лежит на короткой полке. До полки линия изгибается в сторону.
 
-    Полка горизонтальная и лишь на 8px длиннее имени. Подвод от дуги короче
-    и уходит по часовой, чтобы штрих не был прямым радиусом.
+    Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
+    линия начинается в 2px от дуги и чуть уходит по часовой.
     pad отодвигает полку, если рамка пересекла уже стоящую подпись.
     Буквы с внешней стороны штриха, линия их не режет.
     """
@@ -645,11 +645,11 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     else:
         run_x = 1.0 if sin_m <= 0 else -1.0
     tangent_x, tangent_y = -sin_m, cos_m
-    lead = 14.0 + pad
-    side = 14.0
+    lead = 6.0 + pad
+    side = 6.0
     overhang = 8.0
-    x0 = cx + (outer + 6.0) * cos_m
-    y0 = cy + (outer + 6.0) * sin_m
+    x0 = cx + (outer + 2.0) * cos_m
+    y0 = cy + (outer + 2.0) * sin_m
     shelf_x = x0 + lead * cos_m + side * tangent_x
     shelf_y = y0 + lead * sin_m + side * tangent_y
     end_x = shelf_x + (text_w + overhang) * run_x
