@@ -2121,6 +2121,68 @@ def _frame_keys(frame):
     return _text_key(frame["block_group"]), _text_key(frame["reason"])
 
 
+def _flat_points(frame, period, label, grain):
+    """Сумма по часам или дням, без топов. Ось та же, что у линии блока."""
+    if grain == "hour":
+        day = period["_start"] if label == "Текущий период" else period["_prev_start"]
+        idx = pd.date_range(pd.Timestamp(day), periods=24, freq="h")
+        last = None
+
+        def bucket(frame_):
+            return frame_["loss_date"].dt.floor("h")
+
+        def date_of(ts):
+            return ts.strftime("%d.%m %H:%M")
+    else:
+        if label == "Текущий период":
+            start, end = period["_start"], period["_end"]
+        else:
+            start, end = period["_prev_start"], period["_prev_end"]
+        n_days = (end - start).days + 1
+        if n_days < 1:
+            return []
+        idx = pd.date_range(pd.Timestamp(start), periods=n_days, freq="D")
+        last = pd.Timestamp(end)
+
+        def bucket(frame_):
+            return frame_["loss_date"].dt.normalize()
+
+        def date_of(ts):
+            return ts.strftime("%d.%m.%Y")
+    columns = getattr(frame, "columns", [])
+    if frame is None or len(frame) == 0 or "loss_sum" not in columns or "loss_date" not in columns:
+        sums = pd.Series(0.0, index=idx)
+    else:
+        sums = frame.groupby(bucket(frame), sort=False)["loss_sum"].sum().reindex(idx, fill_value=0)
+    rows = []
+    for i, ts in enumerate(idx):
+        if last is not None and ts > last:
+            continue
+        rows.append({
+            "period": label,
+            "day": i + 1,
+            "date": date_of(ts),
+            "sum": _f(sums.iloc[i]),
+        })
+    return rows
+
+
+def _platform_lr(frame, blocks, reasons, block, platform):
+    """Строки площадки внутри блока: только LR 5 и LR 27, как линия блока."""
+    if frame is None or not hasattr(frame, "iloc"):
+        return frame
+    if (
+        blocks is None
+        or reasons is None
+        or len(frame) == 0
+        or "block_name" not in getattr(frame, "columns", [])
+    ):
+        return frame.iloc[0:0]
+    names = _text_key(frame["block_name"])
+    mask = (blocks == block) & reasons.isin(("5", "27")) & (names == platform)
+    return frame.loc[mask]
+
+
 def _zip_lr_points(asm_rows, lay_rows):
     """Один день: сумма линии — только LR 5 и LR 27, доли лежат рядом."""
     count = max(len(asm_rows), len(lay_rows))
@@ -2145,7 +2207,11 @@ def _zip_lr_points(asm_rows, lay_rows):
 
 
 def build_block_chart(curr, prev, period, has_prev, grain):
-    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно."""
+    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
+
+    У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, чтобы под графиком
+    можно было раскрыть состав линии.
+    """
     curr_blocks, curr_reasons = _frame_keys(curr)
     prev_blocks, prev_reasons = _frame_keys(prev)
     lines = []
@@ -2164,6 +2230,18 @@ def build_block_chart(curr, prev, period, has_prev, grain):
                 _block_points(old_asm, period, "Прошлый период", grain),
                 _block_points(old_lay, period, "Прошлый период", grain),
             )
+        platforms = []
+        for platform in PLATFORMS.get(name, []):
+            part = _platform_lr(curr, curr_blocks, curr_reasons, name, platform)
+            plat_points = _flat_points(part, period, "Текущий период", grain)
+            if has_prev:
+                old = _platform_lr(prev, prev_blocks, prev_reasons, name, platform)
+                plat_points = plat_points + _flat_points(old, period, "Прошлый период", grain)
+            platforms.append({
+                "name": platform,
+                "sum": _sum(part, "loss_sum"),
+                "points": plat_points,
+            })
         lines.append({
             "name": name,
             "face": _block_face(name),
@@ -2172,6 +2250,7 @@ def build_block_chart(curr, prev, period, has_prev, grain):
             "asm": _sum(asm, "loss_sum"),
             "lay": _sum(lay, "loss_sum"),
             "points": points,
+            "platforms": platforms,
         })
     return lines
 

@@ -2193,6 +2193,55 @@ button.lg.block {
 }
 /* BLOCK-LINE-GLOW-END */
 
+.block-plats {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-8px);
+  pointer-events: none;
+  transition: grid-template-rows 0.4s var(--ease-out), opacity 0.4s var(--ease-out), transform 0.4s var(--ease-out);
+}
+.block-plats.is-in {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: none;
+}
+.block-plats-clip { overflow: hidden; min-height: 0; }
+.block-plats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 22rem));
+  gap: 12px;
+  padding: 10px 0 2px;
+}
+.block-plat { margin: 0; min-width: 0; }
+.block-plat-name {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 2px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 750;
+}
+.block-plat-name span { min-width: 0; }
+.block-plat-name span::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  background: var(--swatch, var(--blue));
+}
+.block-plat-name b {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+}
+.plat-chart { margin-top: 0; }
+.plat-prev { opacity: 0.4; }
+
 .chart-tip {
   position: absolute;
   z-index: 5;

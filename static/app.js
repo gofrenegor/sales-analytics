@@ -2021,7 +2021,115 @@ function blockTipNode() {
   return tip;
 }
 
+let platPointerWatch = null;
+
+function setPlatWatch(fn) {
+  if (platPointerWatch) window.removeEventListener("pointermove", platPointerWatch);
+  platPointerWatch = fn || null;
+  if (platPointerWatch) window.addEventListener("pointermove", platPointerWatch);
+}
+
+function splitChartPeriods(points) {
+  const rows = Array.isArray(points) ? points : [];
+  const byDay = (a, b) => a.day - b.day;
+  return {
+    current: rows.filter((row) => row.period === "Текущий период").sort(byDay),
+    previous: rows.filter((row) => row.period === "Прошлый период").sort(byDay),
+  };
+}
+
+function platTicks(maxDay) {
+  const count = maxDay <= 8 ? maxDay : 5;
+  if (count === maxDay) {
+    const days = [];
+    for (let day = 1; day <= maxDay; day += 1) days.push(day);
+    return days;
+  }
+  const days = [];
+  const last = count - 1;
+  for (let i = 0; i < count; i += 1) days.push(1 + Math.round(((maxDay - 1) * i) / last));
+  return days;
+}
+
+function renderPlatformChart(platform, grain, color, maxY, maxDay) {
+  const hourly = grain === "hour";
+  const axis = seriesColors();
+  const height = 168;
+  const width = 560;
+  const pad = { l: 64, r: 10, t: 10, b: 22 };
+  const innerW = width - pad.l - pad.r;
+  const innerH = height - pad.t - pad.b;
+  const span = Math.max(maxDay - 1, 1);
+  const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / span) * innerW);
+  const y = (value) => pad.t + innerH - (value / maxY) * innerH;
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart plat-chart", role: "img" });
+  svg.setAttribute("aria-label", platform.name);
+  for (let i = 0; i <= 2; i += 1) {
+    const value = (maxY * i) / 2;
+    const yy = y(value);
+    svg.append(svgEl("line", {
+      x1: pad.l,
+      x2: width - pad.r,
+      y1: yy,
+      y2: yy,
+      stroke: axis.grid,
+      "stroke-dasharray": i === 0 ? "0" : "3 4",
+    }));
+    const label = svgEl("text", {
+      x: pad.l - 8,
+      y: yy,
+      "text-anchor": "end",
+      "dominant-baseline": "middle",
+      "font-size": "11",
+    });
+    label.textContent = fmtInt(value);
+    svg.append(label);
+  }
+  for (const day of platTicks(maxDay)) {
+    const label = svgEl("text", {
+      x: x(day),
+      y: height - 6,
+      "text-anchor": "middle",
+      "font-size": "11",
+    });
+    label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
+    svg.append(label);
+  }
+  const pathOf = (rows) => rows.map((row, index) => {
+    const command = index ? "L" : "M";
+    return `${command}${x(row.day).toFixed(1)} ${y(Number(row.sum) || 0).toFixed(1)}`;
+  }).join(" ");
+  if (platform.previous.length) {
+    svg.append(svgEl("path", {
+      d: pathOf(platform.previous),
+      class: "plat-prev",
+      fill: "none",
+      stroke: "#9c9892",
+      "stroke-width": "2.25",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+      "stroke-dasharray": "6 5",
+    }));
+  }
+  const current = platform.current.length ? platform.current : [{ day: 1, sum: 0 }];
+  if (!platform.current.length && maxDay > 1) {
+    current.length = 0;
+    for (let day = 1; day <= maxDay; day += 1) current.push({ day, sum: 0 });
+  }
+  svg.append(svgEl("path", {
+    d: pathOf(current),
+    class: "plat-now",
+    fill: "none",
+    stroke: color,
+    "stroke-width": "2.25",
+    "stroke-linejoin": "round",
+    "stroke-linecap": "round",
+  }));
+  return svg;
+}
+
 function renderBlockChart(lines, grain) {
+  setPlatWatch(null);
   const hourly = grain === "hour";
   const axis = seriesColors();
   const height = 400;
@@ -2031,6 +2139,16 @@ function renderBlockChart(lines, grain) {
   const innerH = height - pad.t - pad.b;
   const prepared = (lines || []).map((line) => {
     const points = Array.isArray(line.points) ? line.points : [];
+    const parts = splitChartPeriods(points);
+    const platforms = (Array.isArray(line.platforms) ? line.platforms : []).map((platform) => {
+      const site = splitChartPeriods(platform.points);
+      return {
+        name: String(platform.name || ""),
+        sum: Number(platform.sum) || 0,
+        current: site.current,
+        previous: site.previous,
+      };
+    }).filter((platform) => platform.name);
     return {
       name: String(line.name || ""),
       face: String(line.face || line.name || ""),
@@ -2038,8 +2156,9 @@ function renderBlockChart(lines, grain) {
       hot: line.hot || line.color || axis.current,
       asm: Number(line.asm) || 0,
       lay: Number(line.lay) || 0,
-      current: points.filter((row) => row.period === "Текущий период").sort((a, b) => a.day - b.day),
-      previous: points.filter((row) => row.period === "Прошлый период").sort((a, b) => a.day - b.day),
+      current: parts.current,
+      previous: parts.previous,
+      platforms,
     };
   }).filter((line) => line.name && line.current.length);
   const days = prepared.flatMap((line) => [
@@ -2153,7 +2272,13 @@ function renderBlockChart(lines, grain) {
   const wrap = el("div", { class: "chart-wrap block-chart" });
   wrap.append(svg, tip);
   const legend = el("div", { class: "legend" });
-  const box = el("div", { class: "block-chart-box" }, wrap, legend);
+  const platRow = el("div", { class: "block-plats-row" });
+  const platPanel = el(
+    "div",
+    { class: "block-plats", "aria-hidden": "true" },
+    el("div", { class: "block-plats-clip" }, platRow),
+  );
+  const box = el("div", { class: "block-chart-box" }, wrap, platPanel, legend);
   for (const line of drawn) {
     const gone = Boolean(off[line.name]);
     const item = el("button", {
@@ -2174,7 +2299,11 @@ function renderBlockChart(lines, grain) {
   }
 
   let hotName = "";
+  let platArm = true;
+  let platOpen = null;
   const stroke = 2.25;
+  const lineEnterPx = 4;
+  const platAwayPx = 20;
 
   function nearestLine(line, local) {
     const pts = line.currentPts;
@@ -2288,14 +2417,87 @@ function renderBlockChart(lines, grain) {
     return { local: point.matrixTransform(ctm.inverse()), scale: Math.hypot(ctm.a, ctm.b) || 1 };
   }
 
+  function lineAt(event) {
+    const mapped = localOf(event);
+    if (!mapped) return null;
+    const found = nearest(mapped.local);
+    const enter = stroke / 2 + lineEnterPx / mapped.scale;
+    if (!found.line || found.dist > enter) return null;
+    return found.line;
+  }
+
+  function fillPlats(line) {
+    const list = line.platforms || [];
+    const sums = [0];
+    for (const platform of list) {
+      for (const row of platform.current) sums.push(row.sum);
+      for (const row of platform.previous) sums.push(row.sum);
+    }
+    const scaleY = niceMax(Math.max(...sums));
+    platRow.replaceChildren();
+    for (const platform of list) {
+      const card = el(
+        "figure",
+        { class: "block-plat" },
+        el(
+          "figcaption",
+          { class: "block-plat-name" },
+          el("span", null, platform.name),
+          el("b", null, fmtRub(platform.sum)),
+        ),
+        renderPlatformChart(platform, grain, line.color, scaleY, maxDay),
+      );
+      card.style.setProperty("--swatch", line.color);
+      platRow.append(card);
+    }
+  }
+
+  function shutPlats(event) {
+    const closed = platOpen ? platOpen.name : "";
+    platOpen = null;
+    setPlatWatch(null);
+    platPanel.classList.remove("is-in");
+    platPanel.setAttribute("aria-hidden", "true");
+    const next = event ? lineAt(event) : null;
+    platArm = !next || next.name !== closed;
+  }
+
+  function openPlats(line, event) {
+    if (!line.platforms || !line.platforms.length) return;
+    if (platOpen && platOpen.name === line.name && platPanel.classList.contains("is-in")) return;
+    platOpen = { name: line.name, x: event.clientX, y: event.clientY };
+    platArm = false;
+    fillPlats(line);
+    platPanel.setAttribute("aria-hidden", "false");
+    setPlatWatch(onPlatMove);
+    if (reducedMotion()) {
+      platPanel.classList.add("is-in");
+      return;
+    }
+    platPanel.classList.remove("is-in");
+    void platPanel.offsetWidth;
+    platPanel.classList.add("is-in");
+  }
+
+  function onPlatMove(event) {
+    if (!platOpen) return;
+    const away = Math.hypot(event.clientX - platOpen.x, event.clientY - platOpen.y);
+    if (away >= platAwayPx) shutPlats(event);
+  }
+
   function onMove(event) {
     const mapped = localOf(event);
     if (!mapped) return;
+    onPlatMove(event);
     const found = nearest(mapped.local);
-    const enter = stroke / 2 + 5 / mapped.scale;
+    const enter = stroke / 2 + lineEnterPx / mapped.scale;
     const leave = stroke / 2 + 8 / mapped.scale;
-    if (found.line && found.dist <= enter) {
+    const inZone = Boolean(found.line && found.dist <= enter);
+    if (!inZone && !platOpen) platArm = true;
+    if (inZone) {
       showLine(found.line, mapped.local);
+      if (!platOpen && platArm) openPlats(found.line, event);
+      else if (platOpen && platOpen.name !== found.line.name) openPlats(found.line, event);
       return;
     }
     if (hotName) {
@@ -2321,9 +2523,12 @@ function renderBlockChart(lines, grain) {
       const reach = stroke / 2 + 24 / mapped.scale;
       if (!found.line || found.dist > reach || found.line.name === hotName) {
         hideLine();
+        shutPlats(event);
+        platArm = true;
         return;
       }
       showLine(found.line, mapped.local);
+      openPlats(found.line, event);
     });
   }
 
