@@ -2303,6 +2303,7 @@ function renderBlockChart(lines, grain) {
   let platOpen = null;
   const stroke = 2.25;
   const lineEnterPx = 4;
+  const focusAwayPx = 22;
   const platAwayPx = 20;
 
   function nearestLine(line, local) {
@@ -2346,8 +2347,15 @@ function renderBlockChart(lines, grain) {
     return { line: best, dist: bestDist, at: bestAt };
   }
 
+  function syncWatch() {
+    if (platOpen || hotName) setPlatWatch(onChartPointer);
+    else setPlatWatch(null);
+  }
+
   function paint(name) {
+    const prev = hotName;
     hotName = name || "";
+    if (prev !== hotName) syncWatch();
     box.classList.toggle("is-focus", Boolean(hotName));
     const nodes = [
       ...svg.querySelectorAll("[data-block]"),
@@ -2455,7 +2463,7 @@ function renderBlockChart(lines, grain) {
   function shutPlats(event) {
     const closed = platOpen ? platOpen.name : "";
     platOpen = null;
-    setPlatWatch(null);
+    syncWatch();
     platPanel.classList.remove("is-in");
     platPanel.setAttribute("aria-hidden", "true");
     const next = event ? lineAt(event) : null;
@@ -2469,7 +2477,7 @@ function renderBlockChart(lines, grain) {
     platArm = false;
     fillPlats(line);
     platPanel.setAttribute("aria-hidden", "false");
-    setPlatWatch(onPlatMove);
+    syncWatch();
     if (reducedMotion()) {
       platPanel.classList.add("is-in");
       return;
@@ -2485,13 +2493,30 @@ function renderBlockChart(lines, grain) {
     if (away >= platAwayPx) shutPlats(event);
   }
 
+  function releaseFocus(event) {
+    if (!hotName) return;
+    const mapped = localOf(event);
+    if (!mapped) return;
+    const hot = shown.find((line) => line.name === hotName);
+    const still = hot ? nearestLine(hot, mapped.local) : null;
+    const leave = stroke / 2 + focusAwayPx / mapped.scale;
+    if (still && still.dist <= leave) return;
+    if (lineAt(event)) return;
+    hideLine();
+  }
+
+  function onChartPointer(event) {
+    onPlatMove(event);
+    releaseFocus(event);
+  }
+
   function onMove(event) {
     const mapped = localOf(event);
     if (!mapped) return;
-    onPlatMove(event);
+    onChartPointer(event);
     const found = nearest(mapped.local);
     const enter = stroke / 2 + lineEnterPx / mapped.scale;
-    const leave = stroke / 2 + 8 / mapped.scale;
+    const leave = stroke / 2 + focusAwayPx / mapped.scale;
     const inZone = Boolean(found.line && found.dist <= enter);
     if (!inZone && !platOpen) platArm = true;
     if (inZone) {
@@ -2514,7 +2539,6 @@ function renderBlockChart(lines, grain) {
   const fine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
   if (fine) {
     wrap.addEventListener("pointermove", onMove);
-    wrap.addEventListener("pointerleave", hideLine);
   } else {
     wrap.addEventListener("pointerup", (event) => {
       const mapped = localOf(event);
