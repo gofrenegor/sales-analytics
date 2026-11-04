@@ -42,6 +42,8 @@ STAGE_MAPPING = {
 }
 OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
+# Кольцо блоков: в дырке и в процентах только сборка и раскладка.
+BLOCK_RING_LRS = ("5", "27")
 # Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
 STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
 # Эти статусы не уходят в оперку и брак. Группа — название места списания.
@@ -62,8 +64,12 @@ BLOCK_MAPPING = {
     "Рязань Тюшевское 3": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 тест": "Рязань Тюшевское 3",
-    "Рязань 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 4": "Рязань Тюшевское 4",
+}
+
+# Одно КГТ блока 3 приходит двумя именами. Второе стирается до маппинга.
+PLATFORM_FOLD = {
+    "Рязань 3 КГТ": "Рязань Тюшевское 3 КГТ",
 }
 
 ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
@@ -404,10 +410,9 @@ def _rounded_segment_path(cx, cy, outer, inner, start_deg, span_deg, rho):
     ])
 
 
-def _donut_segment(cx, cy, r, sw, start_deg, span_deg, color, key):
-    """Дуга кольца блоков. Углы чуть срезает скруглённый контур, прорисовка та же."""
-    css = "loss-arc-seg"
-    arc = _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css)
+def _donut_segment(cx, cy, r, sw, start_deg, span_deg, color, key, css_class="loss-arc-seg"):
+    """Дуга кольца. Углы чуть срезает скруглённый контур, прорисовка та же."""
+    arc = _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class)
     if span_deg >= 359.2 or not arc:
         return arc
     outer, inner = r + sw / 2, r - sw / 2
@@ -469,8 +474,8 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
     in_share, out_share = escape(in_lbl), escape(out_lbl)
     arcs = (
-        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR, "loss-arc-seg arc-in")
-        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR, "loss-arc-seg arc-out")
+        _donut_segment(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR, "in", "loss-arc-seg arc-in")
+        + _donut_segment(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR, "out", "loss-arc-seg arc-out")
     )
 
     def _seg_link(flow, start, span):
@@ -588,6 +593,14 @@ def _ring_number(name):
         return None
     number = int(match.group(1))
     return number if number in _RING_NUMBERS else None
+
+
+def _block_face(name):
+    """Подпись на кольце и в легенде графика: «блок 1», не «Рязань Тюшевское 1»."""
+    number = _ring_number(name)
+    if number is not None and str(name or "") in ALL_BLOCKS:
+        return f"блок {number}"
+    return str(name or "")
 
 
 def _arrange_ring_items(items):
@@ -841,12 +854,16 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
 
 
-def warehouse_block_items(curr, total):
-    """Группы block_group кадра склада без брака: сначала блоки маппинга, затем остальные по сумме."""
-    total = _f(total)
-    if total <= 0 or curr is None or len(curr) == 0 or "block_group" not in getattr(curr, "columns", []):
+def warehouse_block_items(curr):
+    """Группы block_group без брака, только LR 5 и LR 27. Процент — доля этой суммы."""
+    columns = getattr(curr, "columns", [])
+    if curr is None or len(curr) == 0 or "block_group" not in columns or "reason" not in columns:
         return []
-    grouped = curr.groupby("block_group", sort=False)["loss_sum"].sum()
+    reason = curr["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    part = curr.loc[reason.isin(BLOCK_RING_LRS)]
+    if len(part) == 0:
+        return []
+    grouped = part.groupby("block_group", sort=False)["loss_sum"].sum()
     sums = {}
     for key, value in grouped.items():
         name = _as_name(key).strip()
@@ -859,10 +876,13 @@ def warehouse_block_items(curr, total):
     rest = [name for name in sums if name not in known]
     rest.sort(key=lambda name: (-sums[name], name))
     ordered.extend(rest)
+    total = sum(sums[name] for name in ordered)
+    if total <= 0:
+        return []
     return [
         {
             "name": name,
-            "face": name,
+            "face": _block_face(name),
             "sum": sums[name],
             "pct": sums[name] / total * 100,
         }
@@ -1200,6 +1220,7 @@ def prepare_losses(df):
         df["loss_date"] = _strip_tz(pd.to_datetime(df["loss_date"], errors="coerce"))
     df["reason"] = df["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     df["block_name"] = df["block_name"].astype(str).str.replace(r"\*", "", regex=True).str.strip()
+    df["block_name"] = df["block_name"].replace(PLATFORM_FOLD)
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
     return classify_losses(df)
@@ -2105,6 +2126,68 @@ def _frame_keys(frame):
     return _text_key(frame["block_group"]), _text_key(frame["reason"])
 
 
+def _flat_points(frame, period, label, grain):
+    """Сумма по часам или дням, без топов. Ось та же, что у линии блока."""
+    if grain == "hour":
+        day = period["_start"] if label == "Текущий период" else period["_prev_start"]
+        idx = pd.date_range(pd.Timestamp(day), periods=24, freq="h")
+        last = None
+
+        def bucket(frame_):
+            return frame_["loss_date"].dt.floor("h")
+
+        def date_of(ts):
+            return ts.strftime("%d.%m %H:%M")
+    else:
+        if label == "Текущий период":
+            start, end = period["_start"], period["_end"]
+        else:
+            start, end = period["_prev_start"], period["_prev_end"]
+        n_days = (end - start).days + 1
+        if n_days < 1:
+            return []
+        idx = pd.date_range(pd.Timestamp(start), periods=n_days, freq="D")
+        last = pd.Timestamp(end)
+
+        def bucket(frame_):
+            return frame_["loss_date"].dt.normalize()
+
+        def date_of(ts):
+            return ts.strftime("%d.%m.%Y")
+    columns = getattr(frame, "columns", [])
+    if frame is None or len(frame) == 0 or "loss_sum" not in columns or "loss_date" not in columns:
+        sums = pd.Series(0.0, index=idx)
+    else:
+        sums = frame.groupby(bucket(frame), sort=False)["loss_sum"].sum().reindex(idx, fill_value=0)
+    rows = []
+    for i, ts in enumerate(idx):
+        if last is not None and ts > last:
+            continue
+        rows.append({
+            "period": label,
+            "day": i + 1,
+            "date": date_of(ts),
+            "sum": _f(sums.iloc[i]),
+        })
+    return rows
+
+
+def _platform_lr(frame, blocks, reasons, block, platform):
+    """Строки площадки внутри блока: только LR 5 и LR 27, как линия блока."""
+    if frame is None or not hasattr(frame, "iloc"):
+        return frame
+    if (
+        blocks is None
+        or reasons is None
+        or len(frame) == 0
+        or "block_name" not in getattr(frame, "columns", [])
+    ):
+        return frame.iloc[0:0]
+    names = _text_key(frame["block_name"])
+    mask = (blocks == block) & reasons.isin(("5", "27")) & (names == platform)
+    return frame.loc[mask]
+
+
 def _zip_lr_points(asm_rows, lay_rows):
     """Один день: сумма линии — только LR 5 и LR 27, доли лежат рядом."""
     count = max(len(asm_rows), len(lay_rows))
@@ -2129,7 +2212,11 @@ def _zip_lr_points(asm_rows, lay_rows):
 
 
 def build_block_chart(curr, prev, period, has_prev, grain):
-    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно."""
+    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
+
+    У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, графики площадок
+    ложатся на поле этого графика.
+    """
     curr_blocks, curr_reasons = _frame_keys(curr)
     prev_blocks, prev_reasons = _frame_keys(prev)
     lines = []
@@ -2148,13 +2235,27 @@ def build_block_chart(curr, prev, period, has_prev, grain):
                 _block_points(old_asm, period, "Прошлый период", grain),
                 _block_points(old_lay, period, "Прошлый период", grain),
             )
+        platforms = []
+        for platform in PLATFORMS.get(name, []):
+            part = _platform_lr(curr, curr_blocks, curr_reasons, name, platform)
+            plat_points = _flat_points(part, period, "Текущий период", grain)
+            if has_prev:
+                old = _platform_lr(prev, prev_blocks, prev_reasons, name, platform)
+                plat_points = plat_points + _flat_points(old, period, "Прошлый период", grain)
+            platforms.append({
+                "name": platform,
+                "sum": _sum(part, "loss_sum"),
+                "points": plat_points,
+            })
         lines.append({
             "name": name,
+            "face": _block_face(name),
             "color": color,
             "hot": _brighten(color),
             "asm": _sum(asm, "loss_sum"),
             "lay": _sum(lay, "loss_sum"),
             "points": points,
+            "platforms": platforms,
         })
     return lines
 
@@ -2180,7 +2281,7 @@ def build_block_pages(curr, prev, period, items, has_prev, grain):
             sums[code] = _sum(part, "loss_sum")
         total = sums["5"] + sums["27"]
         pages[name] = {
-            "face": item.get("face") or name,
+            "face": name,
             "donut_svg": build_block_lr_donut_svg(sums["5"], sums["27"], fmt_rub(total)),
             "series": series,
         }
@@ -2250,7 +2351,8 @@ def build_report(df_curr, df_prev, period):
         )
     total_sum = _sum(curr, "loss_sum")
     total_qty = _sum(curr, "loss_qty")
-    block_items = warehouse_block_items(curr, total_sum)
+    block_items = warehouse_block_items(curr)
+    block_sum = sum(item["sum"] for item in block_items)
     prev_sum = _sum(prev, "loss_sum")
     prev_qty = _sum(prev, "loss_qty")
     other_sum = _sum(other_curr, "loss_sum")
@@ -2290,8 +2392,8 @@ def build_report(df_curr, df_prev, period):
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
             "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
             "blocks": {
-                "total": total_sum,
-                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(total_sum)),
+                "total": block_sum,
+                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(block_sum)),
                 "items": block_items,
                 "lines": build_block_chart(curr, prev, period, has_prev, chart_grain),
             },
