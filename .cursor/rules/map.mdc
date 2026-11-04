@@ -51,6 +51,7 @@ systemctl restart sales-analytics
 - `.agents/skills/emil-design-eng/SKILL.md` — вкус интерфейса (emilkowalski).
 - `.agents/skills/card-design/SKILL.md` — анатомия и заливка карточек.
 - `.agents/skills/find-animation-opportunities/SKILL.md` — где анимация нужна, а где нет.
+- `.agents/skills/find-skills/SKILL.md` — поиск и установка скиллов (skills.sh). Источник: vercel-labs/skills, MIT.
 - `tests/` — pytest (`test_api.py`, `test_analytics.py`, `test_entrypoint.py`). По умолчанию не запускать.
 
 ## Экран
