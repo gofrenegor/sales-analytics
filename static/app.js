@@ -1610,6 +1610,137 @@ function missing(view) {
   return el("section", null, backButton("← Назад", view), el("p", { class: "box warn" }, "Этого разреза нет в выбранном периоде."));
 }
 
+const PAIR_GAP_PX = 2;
+const PAIR_STROKE_PX = 1.25;
+
+function pairPolar(cx, cy, radius, deg) {
+  const rad = (deg * Math.PI) / 180;
+  return [cx + radius * Math.cos(rad), cy + radius * Math.sin(rad)];
+}
+
+function pairPush(center, point, extra) {
+  const vx = point[0] - center[0];
+  const vy = point[1] - center[1];
+  const length = Math.hypot(vx, vy) || 1;
+  const gain = (length + extra) / length;
+  return [center[0] + vx * gain, center[1] + vy * gain];
+}
+
+function pairFilletsFit(span, outer, inner, rho) {
+  if (rho <= 0 || outer <= inner || rho >= outer - inner) return false;
+  const outerC = outer - rho;
+  const innerC = inner + rho;
+  if (outerC <= rho || innerC <= 0) return false;
+  const dO = (Math.asin(rho / outerC) * 180) / Math.PI;
+  const dI = (Math.asin(rho / innerC) * 180) / Math.PI;
+  if (span <= 2 * Math.max(dO, dI) + 0.4) return false;
+  const reachO = outerC * Math.cos((dO * Math.PI) / 180);
+  const reachI = innerC * Math.cos((dI * Math.PI) / 180);
+  return reachO > reachI + 0.8;
+}
+
+function pairRaySide(cx, cy, outer, inner, angle, rho, end) {
+  const outerC = outer - rho;
+  const innerC = inner + rho;
+  const dO = (Math.asin(rho / outerC) * 180) / Math.PI;
+  const dI = (Math.asin(rho / innerC) * 180) / Math.PI;
+  const sign = end ? -1 : 1;
+  const angO = angle + sign * dO;
+  const angI = angle + sign * dI;
+  const reachO = outerC * Math.cos((dO * Math.PI) / 180);
+  const reachI = innerC * Math.cos((dI * Math.PI) / 180);
+  return {
+    angO,
+    angI,
+    cO: pairPolar(cx, cy, outerC, angO),
+    cI: pairPolar(cx, cy, innerC, angI),
+    o: pairPolar(cx, cy, outer, angO),
+    i: pairPolar(cx, cy, inner, angI),
+    radO: pairPolar(cx, cy, reachO, angle),
+    radI: pairPolar(cx, cy, reachI, angle),
+  };
+}
+
+function pairCenterline(cx, cy, outer, inner, a0, a1, rho0, rho1, dist) {
+  const span = a1 - a0;
+  if (span <= 0.4 || dist < 0 || inner - dist <= 1) return "";
+  const limit = Math.min(8, Math.max(0, (outer - inner) / 2 - 1));
+  const fit = (rho) => {
+    const value = Math.min(Math.max(rho, 0), limit);
+    if (value < 1.5) return 0;
+    if (pairFilletsFit(span, outer, inner, value) && pairFilletsFit(span, outer + dist, inner - dist, value + dist)) return value;
+    return 0;
+  };
+  rho0 = fit(rho0);
+  rho1 = fit(rho1);
+  if (Math.min(rho0, rho1) < 1.5) return "";
+  const start = pairRaySide(cx, cy, outer, inner, a0, rho0, false);
+  const end = pairRaySide(cx, cy, outer, inner, a1, rho1, true);
+  const origin = [cx, cy];
+  const o0 = pairPush(origin, start.o, dist);
+  const o1 = pairPush(origin, end.o, dist);
+  const i0 = pairPush(start.cI, start.i, dist);
+  const i1 = pairPush(end.cI, end.i, dist);
+  const tO0 = pairPush(start.cO, start.radO, dist);
+  const tI0 = pairPush(start.cI, start.radI, dist);
+  const tO1 = pairPush(end.cO, end.radO, dist);
+  const tI1 = pairPush(end.cI, end.radI, dist);
+  const sweepOf = (center, p0, p1) => {
+    const cross = (p0[0] - center[0]) * (p1[1] - center[1]) - (p0[1] - center[1]) * (p1[0] - center[0]);
+    return cross > 0 ? 1 : 0;
+  };
+  const num = (value) => value.toFixed(2);
+  const arc = (radius, large, sweep, point) => `A ${num(radius)} ${num(radius)} 0 ${large} ${sweep} ${num(point[0])} ${num(point[1])}`;
+  const pt = (point) => `${num(point[0])} ${num(point[1])}`;
+  const largeO = end.angO - start.angO > 180 ? 1 : 0;
+  const largeI = end.angI - start.angI > 180 ? 1 : 0;
+  return [
+    `M ${pt(o0)}`,
+    arc(outer + dist, largeO, 1, o1),
+    arc(rho1 + dist, 0, sweepOf(end.cO, o1, tO1), tO1),
+    `L ${pt(tI1)}`,
+    arc(rho1 + dist, 0, sweepOf(end.cI, tI1, i1), i1),
+    arc(inner - dist, largeI, 0, i0),
+    arc(rho0 + dist, 0, sweepOf(start.cI, i0, tI0), tI0),
+    `L ${pt(tO0)}`,
+    arc(rho0 + dist, 0, sweepOf(start.cO, tO0, o0), o0),
+    "Z",
+  ].join(" ");
+}
+
+function layoutPairOutlines(root) {
+  const nodes = [];
+  if (root && root.matches && root.matches(".loss-donut")) nodes.push(root);
+  else {
+    const host = root && root.querySelectorAll ? root : document;
+    host.querySelectorAll(".loss-ring-blocks .loss-donut").forEach((svg) => nodes.push(svg));
+  }
+  nodes.forEach((svg) => {
+    const width = svg.getBoundingClientRect().width;
+    if (width < 8) return;
+    const dist = (PAIR_GAP_PX + PAIR_STROKE_PX / 2) / (width / 400);
+    svg.querySelectorAll(".loss-pair").forEach((path) => {
+      const d = pairCenterline(
+        200, 200, 137, 87,
+        Number(path.dataset.a0), Number(path.dataset.a1),
+        Number(path.dataset.rho0), Number(path.dataset.rho1),
+        dist,
+      );
+      if (d) path.setAttribute("d", d);
+    });
+  });
+}
+
+function watchPairOutline(svg) {
+  if (!svg) return;
+  if (!svg.dataset.pairWatch && typeof ResizeObserver === "function") {
+    svg.dataset.pairWatch = "1";
+    const observer = new ResizeObserver(() => layoutPairOutlines(svg));
+    observer.observe(svg);
+  }
+  layoutPairOutlines(svg);
+}
+
 function bindDonut(host) {
   host.querySelectorAll("[data-flow]").forEach((link) => {
     link.addEventListener("click", (event) => {
@@ -1633,6 +1764,7 @@ function bindDonut(host) {
     link.addEventListener("focus", () => paint(link.dataset.block, true));
     link.addEventListener("blur", () => paint(link.dataset.block, false));
   });
+  watchPairOutline(host.querySelector(".loss-ring-blocks .loss-donut"));
 }
 
 function seriesColors() {
@@ -3383,7 +3515,10 @@ function wireChrome() {
     if (state.view === "dashboard" && state.slice === "flows" && !state.flow && !state.group && !state.block) return;
     go({ view: "dashboard", slice: "flows", flow: "", group: "", block: "" });
   });
-  window.addEventListener("resize", () => layoutFork());
+  window.addEventListener("resize", () => {
+    layoutFork();
+    layoutPairOutlines();
+  });
   if (document.fonts) document.fonts.ready.then(() => layoutFork());
   document.getElementById("theme")?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || "system";
