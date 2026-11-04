@@ -2093,6 +2093,15 @@ function renderPlatformChart(platform, grain, color, maxDay) {
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart plat-chart", role: "img" });
   svg.setAttribute("aria-label", platform.name);
   drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 8, 12);
+  const mid = svgEl("text", {
+    x: pad.l - 8,
+    y: y(maxY / 2),
+    "text-anchor": "end",
+    "dominant-baseline": "middle",
+    "font-size": "12",
+  });
+  mid.textContent = fmtInt(maxY / 2);
+  svg.append(mid);
   for (const day of platTicks(maxDay)) {
     const label = svgEl("text", {
       x: x(day),
