@@ -1793,8 +1793,8 @@ function seriesColors() {
 
 function niceMax(value) {
   const amount = Math.max(0, Math.round(Number(value) || 0));
-  if (amount <= 0) return 100000;
-  const step = amount <= 1000000 ? 100000 : 200000;
+  if (amount <= 0) return 50000;
+  const step = amount <= 1000000 ? 50000 : 100000;
   return Math.ceil(amount / step) * step;
 }
 
