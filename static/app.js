@@ -1998,7 +1998,7 @@ function blockTipNode() {
     ),
   );
   tip._fill = (line, point) => {
-    name.textContent = line.name;
+    name.textContent = line.face || line.name;
     when.textContent = point && point.date ? point.date : "";
     asmSum.textContent = fmtRub(point ? point.asm : 0);
     laySum.textContent = fmtRub(point ? point.lay : 0);
@@ -2018,6 +2018,7 @@ function renderBlockChart(lines, grain) {
     const points = Array.isArray(line.points) ? line.points : [];
     return {
       name: String(line.name || ""),
+      face: String(line.face || line.name || ""),
       color: line.color || axis.current,
       hot: line.hot || line.color || axis.current,
       asm: Number(line.asm) || 0,
@@ -2152,7 +2153,7 @@ function renderBlockChart(lines, grain) {
         else state.blockChartOff[line.name] = true;
         box.replaceWith(renderBlockChart(lines, grain));
       },
-    }, line.name);
+    }, line.face || line.name);
     item.style.setProperty("--swatch", line.color);
     legend.append(item);
   }

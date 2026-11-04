@@ -406,10 +406,9 @@ def _rounded_segment_path(cx, cy, outer, inner, start_deg, span_deg, rho):
     ])
 
 
-def _donut_segment(cx, cy, r, sw, start_deg, span_deg, color, key):
-    """Дуга кольца блоков. Углы чуть срезает скруглённый контур, прорисовка та же."""
-    css = "loss-arc-seg"
-    arc = _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css)
+def _donut_segment(cx, cy, r, sw, start_deg, span_deg, color, key, css_class="loss-arc-seg"):
+    """Дуга кольца. Углы чуть срезает скруглённый контур, прорисовка та же."""
+    arc = _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class)
     if span_deg >= 359.2 or not arc:
         return arc
     outer, inner = r + sw / 2, r - sw / 2
@@ -471,8 +470,8 @@ def build_loss_donut_svg(in_sum, out_sum, center_text):
     in_lbl, out_lbl = flow_share_labels(in_sum, out_sum)
     in_share, out_share = escape(in_lbl), escape(out_lbl)
     arcs = (
-        _donut_arc(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR, "loss-arc-seg arc-in")
-        + _donut_arc(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR, "loss-arc-seg arc-out")
+        _donut_segment(cx, cy, r, sw, in_start, in_span, FLOW_IN_COLOR, "in", "loss-arc-seg arc-in")
+        + _donut_segment(cx, cy, r, sw, out_start, out_span, FLOW_OUT_COLOR, "out", "loss-arc-seg arc-out")
     )
 
     def _seg_link(flow, start, span):
@@ -590,6 +589,14 @@ def _ring_number(name):
         return None
     number = int(match.group(1))
     return number if number in _RING_NUMBERS else None
+
+
+def _block_face(name):
+    """Подпись на кольце и в легенде графика: «блок 1», не «Рязань Тюшевское 1»."""
+    number = _ring_number(name)
+    if number is not None and str(name or "") in ALL_BLOCKS:
+        return f"блок {number}"
+    return str(name or "")
 
 
 def _arrange_ring_items(items):
@@ -871,7 +878,7 @@ def warehouse_block_items(curr):
     return [
         {
             "name": name,
-            "face": name,
+            "face": _block_face(name),
             "sum": sums[name],
             "pct": sums[name] / total * 100,
         }
@@ -2159,6 +2166,7 @@ def build_block_chart(curr, prev, period, has_prev, grain):
             )
         lines.append({
             "name": name,
+            "face": _block_face(name),
             "color": color,
             "hot": _brighten(color),
             "asm": _sum(asm, "loss_sum"),
@@ -2189,7 +2197,7 @@ def build_block_pages(curr, prev, period, items, has_prev, grain):
             sums[code] = _sum(part, "loss_sum")
         total = sums["5"] + sums["27"]
         pages[name] = {
-            "face": item.get("face") or name,
+            "face": name,
             "donut_svg": build_block_lr_donut_svg(sums["5"], sums["27"], fmt_rub(total)),
             "series": series,
         }
