@@ -127,8 +127,6 @@ BLOCK_DONUT_COLORS = (
     "#f778ba",
 )
 DONUT_CORNER = 8
-# Доля меньше этого порога не пишет имя на дуге: подписи слипаются. Чип над кольцом.
-BLOCK_CALLOUT_PCT = 8.0
 # Угол дуги на экране. Истинный процент остаётся в подписи, тонкая доля всё ещё нажимается.
 BLOCK_MIN_DEG = 12.0
 
@@ -200,6 +198,31 @@ def _donut_arc(cx, cy, r, sw, start_deg, span_deg, color, css_class="loss-arc-se
 def _polar(cx, cy, radius, deg):
     rad = math.radians(deg)
     return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
+
+
+def _pair_outline(cx, cy, r, sw, a0, a1, color):
+    """Тонкая замкнутая рамка двух соседних долей и зазора между ними.
+
+    Внешняя дуга по часовой, внутренняя обратно. Общей стороны между блоками нет.
+    Штрих на 3px снаружи заливки и на долю не садится.
+    """
+    span = a1 - a0
+    if span <= 0.4:
+        return ""
+    outer = r + sw / 2 + 3
+    inner = r - sw / 2 - 3
+    large = 1 if span > 180 else 0
+    x0, y0 = _polar(cx, cy, outer, a0)
+    x1, y1 = _polar(cx, cy, outer, a1)
+    x2, y2 = _polar(cx, cy, inner, a1)
+    x3, y3 = _polar(cx, cy, inner, a0)
+    return (
+        f'<path class="loss-pair" fill="none" pointer-events="none" stroke="{color}" '
+        f'd="M {x0:.2f} {y0:.2f} '
+        f'A {outer:.2f} {outer:.2f} 0 {large} 1 {x1:.2f} {y1:.2f} '
+        f'L {x2:.2f} {y2:.2f} '
+        f'A {inner:.2f} {inner:.2f} 0 {large} 0 {x3:.2f} {y3:.2f} Z" />'
+    )
 
 
 def _fillets_fit(span_deg, outer, inner, rho):
@@ -456,7 +479,7 @@ def _block_donut_color(index):
     return BLOCK_DONUT_COLORS[index % len(BLOCK_DONUT_COLORS)]
 
 
-_RING_NUMBERS = (1, 3, 2, 4)
+_RING_NUMBERS = (1, 2, 3, 4)
 
 
 def _ring_number(name):
@@ -468,7 +491,7 @@ def _ring_number(name):
 
 
 def _arrange_ring_items(items):
-    """По кругу: блок 1, затем 3, затем 2, затем 4. Остальные — после, по сумме."""
+    """По кругу: блок 1, затем 2, затем 3, затем 4. Остальные — после, по сумме."""
     by_number = {}
     rest = []
     for item in items or []:
@@ -494,15 +517,6 @@ def _text_side(mid):
     return anchor, cos_m, sin_m
 
 
-def _text_ys(anchor, sin_m, y, font):
-    line = font + 2
-    if anchor == "middle" and sin_m > 0:
-        return y, y + line
-    if anchor == "middle":
-        return y - line, y
-    return y - line / 2, y + line / 2
-
-
 def _text_box(x, y_name, y_pct, anchor, face, pct_text, font):
     width = max(len(face), len(pct_text), 1) * font * 0.58
     if anchor == "start":
@@ -512,7 +526,8 @@ def _text_box(x, y_name, y_pct, anchor, face, pct_text, font):
     else:
         left, right = x - width / 2, x + width / 2
     top = min(y_name, y_pct) - font
-    bottom = max(y_name, y_pct) + 3
+    # Низ рамки держит «у» под базовой линией имени.
+    bottom = max(y_name, y_pct) + font * 0.35
     return (left, top, right, bottom)
 
 
@@ -520,64 +535,147 @@ def _boxes_hit(a, b, pad=4):
     return not (a[2] + pad < b[0] or b[2] + pad < a[0] or a[3] + pad < b[1] or b[3] + pad < a[1])
 
 
-def _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font):
+def _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font):
+    """Имя цветом доли. Процент мельче и стоит строкой выше, без смены заливки."""
     return (
         f'<text class="loss-seg-label" text-anchor="{anchor}" fill="{color}" '
         f'font-size="{font}" pointer-events="none">'
+        f'<tspan class="loss-seg-pct" x="{x:.2f}" y="{y_pct:.2f}" font-size="{pct_font}">'
+        f"{escape(pct_text)}</tspan>"
         f'<tspan x="{x:.2f}" y="{y_name:.2f}">{escape(face)}</tspan>'
-        f'<tspan class="loss-seg-pct" x="{x:.2f}" y="{y_pct:.2f}">{escape(pct_text)}</tspan>'
         f"</text>"
     )
 
 
-def _block_label(cx, cy, r, sw, mid, face, pct_text, color):
-    """Имя и доля снаружи дуги, около 8px от внешнего края. Процент под именем."""
-    font = 11 if len(face) > 12 else 13
-    anchor, cos_m, sin_m = _text_side(mid)
-    outer = r + sw / 2
-    if anchor == "middle" and sin_m > 0:
-        radius = outer + 8 + font * 0.8
-    elif anchor == "middle":
-        radius = outer + 8
-    else:
-        radius = outer + 8 + 4
-    x = cx + radius * cos_m
-    y = cy + radius * sin_m
-    y_name, y_pct = _text_ys(anchor, sin_m, y, font)
-    svg = _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font)
-    box = _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
-    return svg, box
+def _darken(color, toward=0.2):
+    """Тот же тон, примерно на 20% ближе к чёрному. Штрих темнее заливки текста."""
+    raw = str(color or "").strip()
+    if raw.startswith("#"):
+        raw = raw[1:]
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    if len(raw) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in raw):
+        return color
+    scale = 1.0 - toward
+    channels = []
+    for index in (0, 2, 4):
+        channel = int(raw[index:index + 2], 16)
+        channels.append(f"{max(0, min(255, round(channel * scale))):02x}")
+    return "#" + "".join(channels)
+
+
+def _mix_oklab(a, b):
+    """Середина двух цветов в OKLab. Среднее в RGB мутит лавандовый с янтарным."""
+
+    def channels(color):
+        raw = str(color or "").strip()
+        if raw.startswith("#"):
+            raw = raw[1:]
+        if len(raw) == 3:
+            raw = "".join(ch * 2 for ch in raw)
+        if len(raw) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in raw):
+            return None
+        return tuple(int(raw[index:index + 2], 16) for index in (0, 2, 4))
+
+    left, right = channels(a), channels(b)
+    if left is None or right is None:
+        return a
+
+    def linear(channel):
+        value = channel / 255.0
+        if value <= 0.04045:
+            return value / 12.92
+        return ((value + 0.055) / 1.055) ** 2.4
+
+    def oklab(rgb):
+        red, green, blue = (linear(channel) for channel in rgb)
+        l = 0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue
+        m = 0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue
+        s = 0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue
+        l_, m_, s_ = (math.copysign(abs(v) ** (1.0 / 3.0), v) for v in (l, m, s))
+        return (
+            0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+            1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+            0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+        )
+
+    lab_a, lab_b = oklab(left), oklab(right)
+    L = (lab_a[0] + lab_b[0]) / 2
+    A = (lab_a[1] + lab_b[1]) / 2
+    B = (lab_a[2] + lab_b[2]) / 2
+    l_ = L + 0.3963377774 * A + 0.2158037573 * B
+    m_ = L - 0.1055613458 * A - 0.0638541728 * B
+    s_ = L - 0.0894841775 * A - 1.2914855480 * B
+    l = math.copysign(abs(l_) ** 3, l_)
+    m = math.copysign(abs(m_) ** 3, m_)
+    s = math.copysign(abs(s_) ** 3, s_)
+    rgb = (
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    )
+
+    def encode(channel):
+        if channel <= 0.0031308:
+            encoded = 12.92 * channel
+        else:
+            encoded = 1.055 * (channel ** (1.0 / 2.4)) - 0.055
+        return max(0, min(255, round(encoded * 255)))
+
+    return "#" + "".join(f"{encode(channel):02x}" for channel in rgb)
 
 
 def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
-    """Короткая стрелка цвета блока от дуги к подписи рядом с кольцом."""
+    """Имя лежит на короткой полке. До полки линия изгибается в сторону.
+
+    Полка горизонтальная и лишь на 8px длиннее имени. Подвод от дуги короче
+    и уходит по часовой, чтобы штрих не был прямым радиусом.
+    pad отодвигает полку, если рамка пересекла уже стоящую подпись.
+    Буквы с внешней стороны штриха, линия их не режет.
+    """
     font = 11 if len(face) > 12 else 13
+    pct_font = 10 if font > 12 else 9
     anchor, cos_m, sin_m = _text_side(mid)
     outer = r + sw / 2
-    head = 6.0
-    stem = 14.0 + pad
-    r0 = outer + 2
-    r_tip = r0 + stem
-    r_text = r_tip + 5
-    x0, y0 = _polar(cx, cy, r0, mid)
-    x_base, y_base = _polar(cx, cy, r_tip - head, mid)
-    x_tip, y_tip = _polar(cx, cy, r_tip, mid)
-    ang = math.radians(mid)
-    dx, dy = math.cos(ang), math.sin(ang)
-    px, py = -dy, dx
-    wing = 2.6
-    left = (x_base + px * wing, y_base + py * wing)
-    right = (x_base - px * wing, y_base - py * wing)
-    x = cx + r_text * cos_m
-    y = cy + r_text * sin_m
-    y_name, y_pct = _text_ys(anchor, sin_m, y, font)
-    arrow = (
-        f'<line class="loss-leader" x1="{x0:.2f}" y1="{y0:.2f}" x2="{x_base:.2f}" y2="{y_base:.2f}" '
-        f'stroke="{color}" />'
-        f'<polygon class="loss-leader-head" fill="{color}" points="'
-        f'{x_tip:.2f},{y_tip:.2f} {left[0]:.2f},{left[1]:.2f} {right[0]:.2f},{right[1]:.2f}" />'
+    text_w = max(len(face), 1) * font * 0.58
+    if anchor == "end":
+        run_x = -1.0
+    elif anchor == "start":
+        run_x = 1.0
+    else:
+        run_x = 1.0 if sin_m <= 0 else -1.0
+    tangent_x, tangent_y = -sin_m, cos_m
+    lead = 14.0 + pad
+    side = 14.0
+    overhang = 8.0
+    x0 = cx + (outer + 6.0) * cos_m
+    y0 = cy + (outer + 6.0) * sin_m
+    shelf_x = x0 + lead * cos_m + side * tangent_x
+    shelf_y = y0 + lead * sin_m + side * tangent_y
+    end_x = shelf_x + (text_w + overhang) * run_x
+    end_y = shelf_y
+    cpx = (x0 + shelf_x) / 2.0 + side * tangent_x
+    cpy = (y0 + shelf_y) / 2.0 + side * tangent_y
+    if anchor == "middle":
+        px = shelf_x + text_w / 2.0 * run_x
+    else:
+        px = shelf_x
+    # Снаружи дуги: сверху имя лежит на линии, снизу линия остаётся над именем.
+    # Процент всегда дальше от кольца, чем имя.
+    gap = 3.0
+    if shelf_y - cy > 0:
+        y_name = shelf_y + gap + font * 0.75
+        y_pct = y_name + pct_font + 2.0
+    else:
+        y_name = shelf_y - gap - font * 0.25
+        y_pct = y_name - (pct_font + 2.0)
+    x = px
+    path = (
+        f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
+        f'd="M {x0:.2f} {y0:.2f} Q {cpx:.2f} {cpy:.2f} {shelf_x:.2f} {shelf_y:.2f} '
+        f'L {end_x:.2f} {end_y:.2f}" />'
     )
-    svg = arrow + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font)
+    svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font)
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
 
 
@@ -635,7 +733,10 @@ def _block_gap(allocated):
 
 
 def build_blocks_donut_svg(items, center_text):
-    """Кольцо всех блоков. Крупные доли подписаны у дуги, мелкие — стрелкой рядом."""
+    """Кольцо всех блоков. У каждой доли кривая с именем, процент строкой выше.
+
+    Пары 1–2 и 3–4 обведены тонкой рамкой, если оба блока пары лежат на кольце.
+    """
     cx, cy, r, sw = 200, 200, 112, 50
     outer, inner, outset = r + sw / 2, r - sw / 2, 8
     hit_r = (outer + outset + inner) / 2
@@ -648,8 +749,8 @@ def build_blocks_donut_svg(items, center_text):
         raws[-1] += 360.0 - sum(raws)
     allocated = _block_display_spans(raws)
 
-    arcs, hits, labels, leaders = [], [], [], []
-    placed = []
+    arcs, hits, specs = [], [], []
+    drawn = {}
     cursor = -90.0
     for index, (item, raw) in enumerate(zip(rows, allocated)):
         raw = max(_f(raw), 0.0)
@@ -664,6 +765,9 @@ def build_blocks_donut_svg(items, center_text):
         color = _block_donut_color(index)
         if span <= 0.4:
             continue
+        number = _ring_number(name)
+        if number is not None and number not in drawn and name in ALL_BLOCKS:
+            drawn[number] = (start, start + span, color)
         pct_text = _fmt_share(pct)
         caption = escape(f"{face}, {pct_text}")
         href = escape("#block=" + quote(name, safe=""))
@@ -674,23 +778,26 @@ def build_blocks_donut_svg(items, center_text):
                 f'<a class="loss-seg" data-block="{escape(name)}" href="{href}" aria-label="{caption}">'
                 f"<title>{caption}</title>{hit}</a>"
             )
-        if pct >= BLOCK_CALLOUT_PCT:
-            text, box = _block_label(cx, cy, r, sw, mid, face, pct_text, color)
-            placed.append(box)
-            labels.append(
-                f'<a class="loss-seg-label-link" data-block="{escape(name)}" href="{href}">{text}</a>'
-            )
-        else:
-            leaders.append({
-                "mid": mid,
-                "face": face,
-                "pct_text": pct_text,
-                "color": color,
-                "name": name,
-                "href": href,
-            })
+        specs.append({
+            "mid": mid,
+            "face": face,
+            "pct_text": pct_text,
+            "color": color,
+            "name": name,
+            "href": href,
+        })
 
-    for spec in sorted(leaders, key=lambda item: item["mid"]):
+    pairs = []
+    for left, right in ((1, 2), (3, 4)):
+        if left not in drawn or right not in drawn:
+            continue
+        a0, _, color_a = drawn[left]
+        _, a1, color_b = drawn[right]
+        pairs.append(_pair_outline(cx, cy, r, sw, a0, a1, _mix_oklab(color_a, color_b)))
+
+    labels = []
+    placed = []
+    for spec in sorted(specs, key=lambda item: item["mid"]):
         chosen = None
         for step in range(4):
             text, box = _leader_label(
@@ -719,6 +826,7 @@ def build_blocks_donut_svg(items, center_text):
 <svg class="loss-donut" viewBox="0 0 400 400" role="img" aria-label="{aria}">
   <circle class="loss-track" cx="{cx}" cy="{cy}" r="{r}" fill="none" stroke="rgba(128,128,128,0.16)" stroke-width="{sw}"/>
   {''.join(arcs)}
+  {''.join(pairs)}
   {''.join(hits)}
   {''.join(labels)}
 </svg>
