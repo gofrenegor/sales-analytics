@@ -39,6 +39,10 @@
   </button>
   <div class="layout" hidden>
     <aside id="sidebar">
+      <div id="who" class="account-id">
+        <span class="grant-id-kicker">ID</span>
+        <span class="grant-id-value" id="who-id">—</span>
+      </div>
       <h2 id="sidebar-title">👤 Админ-панель</h2>
       <details id="admin-info" class="panel">
         <summary>ℹ️ Инфо</summary>
@@ -54,32 +58,16 @@
           </label>
           <div id="info-status-list"></div>
         </details>
-        <div id="info-main" class="info-admin">
-          <p class="info-label">Основная информация</p>
-          <div id="period-note" class="period-note" hidden></div>
-          <p id="compare-note" class="hint" hidden></p>
-        </div>
-        <details id="quality" class="panel info-admin" hidden>
-          <summary>Проверка данных</summary>
-          <div id="quality-body"></div>
-        </details>
       </details>
-      <div class="account-box">
-        <details id="password-fold" class="panel">
-          <summary>Смена пароля</summary>
-          <form id="password-panel" class="password-panel">
-            <input id="password-next" autocomplete="new-password" maxlength="64" placeholder="новый пароль" spellcheck="false" aria-label="Новый пароль">
-            <button type="button" id="password-random" class="ghost">случайный</button>
-            <button type="submit" class="primary">сохранить</button>
-            <p id="password-note" class="password-note" hidden role="status"></p>
-          </form>
-        </details>
-        <button type="button" id="logout-btn" class="wide ghost">выйти</button>
-        <div id="who" class="account-id">
-          <span class="grant-id-kicker">ID</span>
-          <span class="grant-id-value" id="who-id">—</span>
-        </div>
-      </div>
+      <details id="password-fold" class="panel">
+        <summary>Смена пароля</summary>
+        <form id="password-panel" class="password-panel">
+          <input id="password-next" autocomplete="new-password" maxlength="64" placeholder="новый пароль" spellcheck="false" aria-label="Новый пароль">
+          <button type="button" id="password-random" class="ghost">случайный</button>
+          <button type="submit" class="primary">сохранить</button>
+          <p id="password-note" class="password-note" hidden role="status"></p>
+        </form>
+      </details>
       <div class="admin-only">
       <label class="grant-phone">
         <span class="grant-id-kicker">Мой телефон</span>
@@ -97,11 +85,6 @@
         </span>
       </label>
       <button type="button" id="own-phone-save" class="wide ghost">Сохранить мои контакты</button>
-      <div id="own-secret" class="grant-secret" hidden>
-        <span class="grant-id-kicker">Мой пароль</span>
-        <input id="own-secret-value" class="grant-secret-value" readonly spellcheck="false" autocomplete="off" aria-label="Мой пароль">
-      </div>
-      <button type="button" id="own-password" class="wide ghost">сгенерировать мой пароль</button>
       <button type="button" id="grant-toggle" class="wide ghost" aria-expanded="false" aria-controls="grant-panel">Выдать доступ</button>
       <div id="grant-panel" class="grant-panel" hidden>
         <div class="grant-id" aria-disabled="true">
@@ -153,14 +136,24 @@
         </label>
         <div id="upload-preview"></div>
       </details>
-      <details class="panel">
-        <summary>ℹ️ Что в базе</summary>
+      <details id="db-fold" class="panel">
+        <summary>что в базе</summary>
+        <div id="info-main" class="info-admin">
+          <p class="info-label">Основная информация</p>
+          <div id="period-note" class="period-note" hidden></div>
+          <p id="compare-note" class="hint" hidden></p>
+        </div>
+        <details id="quality" class="panel info-admin" hidden>
+          <summary>Проверка данных</summary>
+          <div id="quality-body"></div>
+        </details>
         <div id="db-summary"></div>
         <hr>
         <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всё</label>
         <button type="button" id="wipe" class="wide danger" disabled>🗑️ Очистить базу</button>
       </details>
       </div>
+      <button type="button" id="logout-btn" class="wide ghost">выйти</button>
     </aside>
     <div id="backdrop"></div>
     <main>

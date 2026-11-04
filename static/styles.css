@@ -267,13 +267,10 @@ p { margin: 0.5rem 0; }
   width: 8.2rem;
   border-radius: 10px 0 0 10px;
 }
-.account-box {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 0.8rem;
+#who {
+  margin: 0 0 0.85rem;
 }
-.account-box > .panel { margin: 0; }
+#logout-btn { margin-top: 0.9rem; }
 .account-id {
   padding: 0.7rem 0.85rem;
   border-radius: 12px;
@@ -365,8 +362,12 @@ p { margin: 0.5rem 0; }
   background: transparent;
   font-size: 0.92rem;
 }
-#own-phone-save { margin: 0.45rem 0 0.45rem; }
-#own-password { margin: 0.45rem 0 0.7rem; }
+#own-phone-save { margin: 0.45rem 0 0.7rem; }
+#db-fold > .panel {
+  margin: 0.35rem 0 0.15rem;
+  padding: 0.15rem 0.65rem 0.55rem;
+}
+#info-main .info-label { margin-top: 0.35rem; }
 .grant-secret {
   padding: 0.7rem 0.85rem;
   border-radius: 12px;

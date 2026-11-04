@@ -3744,34 +3744,6 @@ function wireOwnPhone() {
     input.value = phoneDraft(input.value);
   });
   if (email && domain) bindNick(email, domain);
-  const ownPassword = document.getElementById("own-password");
-  const ownSecret = document.getElementById("own-secret");
-  const ownSecretValue = document.getElementById("own-secret-value");
-  ownSecretValue?.addEventListener("focus", () => ownSecretValue.select());
-  ownSecretValue?.addEventListener("click", () => ownSecretValue.select());
-  ownPassword?.addEventListener("click", async () => {
-    ownPassword.disabled = true;
-    try {
-      const data = await readJson(await fetch("/api/admin/access/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone: input.value,
-          email: email ? email.value : "",
-          domain: domain ? domain.value : "",
-        }),
-      }));
-      state.user = { ...state.user, ...data, ok: true };
-      delete state.user.password;
-      fillOwnContact(data);
-      showSecret(ownSecret, ownSecretValue, data.password);
-      setAdminStatus("Пароль готов");
-    } catch (error) {
-      setAdminStatus(error.message);
-    } finally {
-      ownPassword.disabled = false;
-    }
-  });
   button.addEventListener("click", async () => {
     button.disabled = true;
     try {
@@ -3917,6 +3889,18 @@ function wireAdmin() {
   });
 }
 
+function infoWide() {
+  const info = document.getElementById("admin-info");
+  if (!info?.open) return false;
+  return ["info-lr", "info-statuses"].some((id) => document.getElementById(id)?.open);
+}
+
+function syncInfoWidth() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar?.classList.contains("open")) return;
+  sidebar.classList.toggle("wide", infoWide());
+}
+
 function setAdminOpen(open) {
   const sidebar = document.getElementById("sidebar");
   const backdrop = document.getElementById("backdrop");
@@ -3925,18 +3909,15 @@ function setAdminOpen(open) {
   backdrop?.classList.toggle("show", open);
   toggle?.setAttribute("aria-expanded", open ? "true" : "false");
   if (!sidebar) return;
-  const topic = ["info-lr", "info-statuses"].some((id) => document.getElementById(id)?.open);
   if (!open) sidebar.classList.remove("wide");
-  else if (topic) sidebar.classList.add("wide");
+  else if (infoWide()) sidebar.classList.add("wide");
 }
 
 function wireInfoWidth() {
   const sidebar = document.getElementById("sidebar");
   if (!sidebar) return;
-  for (const id of ["info-lr", "info-statuses"]) {
-    document.getElementById(id)?.addEventListener("toggle", (event) => {
-      if (event.currentTarget.open) sidebar.classList.add("wide");
-    });
+  for (const id of ["admin-info", "info-lr", "info-statuses"]) {
+    document.getElementById(id)?.addEventListener("toggle", syncInfoWidth);
   }
 }
 
