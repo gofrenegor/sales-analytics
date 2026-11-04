@@ -99,10 +99,25 @@ function foundShare(row) {
   return (Number(row.found) / losses) * 100;
 }
 
+function foundShareShown(pct) {
+  if (pct == null || Number.isNaN(pct)) return null;
+  if (pct > 0 && pct < 0.5) return 0;
+  return Math.round(pct);
+}
+
 function foundShareText(pct) {
-  if (pct == null) return "—";
+  const shown = foundShareShown(pct);
+  if (shown == null) return "—";
   if (pct > 0 && pct < 0.5) return "<1%";
-  return `${Math.round(pct)}%`;
+  return `${shown}%`;
+}
+
+function foundShareClass(row) {
+  const shown = foundShareShown(foundShare(row));
+  if (shown == null) return "emp-found-share is-empty";
+  if (shown >= 70) return "emp-found-share is-green";
+  if (shown >= 30) return "emp-found-share is-yellow";
+  return "emp-found-share is-red";
 }
 
 function foundShareTitle(row) {
@@ -2741,7 +2756,7 @@ function renderEmployees(screen) {
         el("span", { class: "emp-qty" }, fmtInt(row.losses)),
         el("span", { class: "emp-loss-word" }, lossLabel(row.losses)),
         el("span", {
-          class: row.found == null ? "emp-found-share is-empty" : "emp-found-share",
+          class: foundShareClass(row),
           title: foundShareTitle(row),
         }, foundShareText(foundShare(row))),
       ),
