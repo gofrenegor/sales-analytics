@@ -64,8 +64,12 @@ BLOCK_MAPPING = {
     "Рязань Тюшевское 3": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 тест": "Рязань Тюшевское 3",
-    "Рязань 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 4": "Рязань Тюшевское 4",
+}
+
+# Одно КГТ блока 3 приходит двумя именами. Второе стирается до маппинга.
+PLATFORM_FOLD = {
+    "Рязань 3 КГТ": "Рязань Тюшевское 3 КГТ",
 }
 
 ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
@@ -1216,6 +1220,7 @@ def prepare_losses(df):
         df["loss_date"] = _strip_tz(pd.to_datetime(df["loss_date"], errors="coerce"))
     df["reason"] = df["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     df["block_name"] = df["block_name"].astype(str).str.replace(r"\*", "", regex=True).str.strip()
+    df["block_name"] = df["block_name"].replace(PLATFORM_FOLD)
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
     return classify_losses(df)
@@ -2209,8 +2214,8 @@ def _zip_lr_points(asm_rows, lay_rows):
 def build_block_chart(curr, prev, period, has_prev, grain):
     """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
 
-    У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, чтобы под графиком
-    можно было раскрыть состав линии.
+    У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, графики площадок
+    ложатся на поле этого графика.
     """
     curr_blocks, curr_reasons = _frame_keys(curr)
     prev_blocks, prev_reasons = _frame_keys(prev)
