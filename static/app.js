@@ -2373,13 +2373,20 @@ function renderBlockChart(lines, grain) {
     anchor.x = at.x;
     anchor.y = at.y;
     const screen = anchor.matrixTransform(svg.getScreenCTM());
+    const width = tip.offsetWidth;
+    const height = tip.offsetHeight;
     let left = screen.x - host.left + 14;
-    let top = screen.y - host.top - tip.offsetHeight - 12;
-    if (top < 8) top = screen.y - host.top + 14;
-    if (left + tip.offsetWidth > host.width) left = Math.max(8, host.width - tip.offsetWidth - 8);
+    if (left + width > host.width) left = Math.max(8, host.width - width - 8);
     if (left < 8) left = 8;
+    const hero = wrap.closest(".hero");
+    const donut = hero ? hero.querySelector(".loss-donut") : null;
+    const donutBox = donut ? donut.getBoundingClientRect() : null;
+    const ringBottom = donutBox ? donutBox.top + donutBox.height * 0.86 : host.top - height - 36;
+    let topAbs = host.top - height - 18;
+    if (topAbs < ringBottom + 8) topAbs = ringBottom + 8;
+    if (topAbs < 8) topAbs = 8;
     tip.style.left = `${left}px`;
-    tip.style.top = `${top}px`;
+    tip.style.top = `${topAbs - host.top}px`;
   }
 
   function nearestDate(line, local) {
@@ -2435,15 +2442,13 @@ function renderBlockChart(lines, grain) {
 
   function fillPlats(line) {
     const list = line.platforms || [];
-    const sums = [0];
-    for (const platform of list) {
-      for (const row of platform.current) sums.push(row.sum);
-      for (const row of platform.previous) sums.push(row.sum);
-    }
-    const scaleY = niceMax(Math.max(...sums));
     platRow.dataset.count = String(list.length);
     platRow.replaceChildren();
     for (const platform of list) {
+      const sums = [0];
+      for (const row of platform.current) sums.push(row.sum);
+      for (const row of platform.previous) sums.push(row.sum);
+      const scaleY = niceMax(Math.max(...sums));
       const card = el(
         "figure",
         { class: "block-plat" },
