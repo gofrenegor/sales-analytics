@@ -43,6 +43,7 @@
   --green-dim: rgba(63, 185, 80, 0.14);
   --red: #ff6b6b;
   --red-dim: rgba(255, 75, 75, 0.14);
+  --amber: #e3b341;
   --amber-dim: rgba(210, 153, 34, 0.16);
   --note-bg: rgba(76, 154, 255, 0.1);
   --note-border: rgba(76, 154, 255, 0.26);
@@ -93,6 +94,7 @@
   --green-dim: rgba(26, 127, 55, 0.1);
   --red: #cf222e;
   --red-dim: rgba(207, 34, 46, 0.1);
+  --amber: #9a6700;
   --amber-dim: rgba(154, 103, 0, 0.12);
   --note-bg: rgba(9, 105, 218, 0.06);
   --note-border: rgba(9, 105, 218, 0.16);
@@ -138,6 +140,7 @@
     --green-dim: rgba(26, 127, 55, 0.1);
     --red: #cf222e;
     --red-dim: rgba(207, 34, 46, 0.1);
+    --amber: #9a6700;
     --amber-dim: rgba(154, 103, 0, 0.12);
     --note-bg: rgba(9, 105, 218, 0.06);
     --note-border: rgba(9, 105, 218, 0.16);
@@ -923,8 +926,10 @@ button.prob-line:active { transform: scale(0.97); }
 .emp-found-share {
   font-weight: 750;
   font-variant-numeric: tabular-nums;
-  color: var(--green-ink);
 }
+.emp-found-share.is-green { color: var(--green-ink); }
+.emp-found-share.is-yellow { color: var(--amber); }
+.emp-found-share.is-red { color: var(--red); }
 .emp-found-share.is-empty { color: var(--muted); font-weight: 600; }
 .emp-sum {
   justify-self: end;
