@@ -42,6 +42,8 @@ STAGE_MAPPING = {
 }
 OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
+# Кольцо блоков: в дырке и в процентах только сборка и раскладка.
+BLOCK_RING_LRS = ("5", "27")
 # Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
 STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
 # Эти статусы не уходят в оперку и брак. Группа — название места списания.
@@ -841,12 +843,16 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
 
 
-def warehouse_block_items(curr, total):
-    """Группы block_group кадра склада без брака: сначала блоки маппинга, затем остальные по сумме."""
-    total = _f(total)
-    if total <= 0 or curr is None or len(curr) == 0 or "block_group" not in getattr(curr, "columns", []):
+def warehouse_block_items(curr):
+    """Группы block_group без брака, только LR 5 и LR 27. Процент — доля этой суммы."""
+    columns = getattr(curr, "columns", [])
+    if curr is None or len(curr) == 0 or "block_group" not in columns or "reason" not in columns:
         return []
-    grouped = curr.groupby("block_group", sort=False)["loss_sum"].sum()
+    reason = curr["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    part = curr.loc[reason.isin(BLOCK_RING_LRS)]
+    if len(part) == 0:
+        return []
+    grouped = part.groupby("block_group", sort=False)["loss_sum"].sum()
     sums = {}
     for key, value in grouped.items():
         name = _as_name(key).strip()
@@ -859,6 +865,9 @@ def warehouse_block_items(curr, total):
     rest = [name for name in sums if name not in known]
     rest.sort(key=lambda name: (-sums[name], name))
     ordered.extend(rest)
+    total = sum(sums[name] for name in ordered)
+    if total <= 0:
+        return []
     return [
         {
             "name": name,
@@ -2250,7 +2259,8 @@ def build_report(df_curr, df_prev, period):
         )
     total_sum = _sum(curr, "loss_sum")
     total_qty = _sum(curr, "loss_qty")
-    block_items = warehouse_block_items(curr, total_sum)
+    block_items = warehouse_block_items(curr)
+    block_sum = sum(item["sum"] for item in block_items)
     prev_sum = _sum(prev, "loss_sum")
     prev_qty = _sum(prev, "loss_qty")
     other_sum = _sum(other_curr, "loss_sum")
@@ -2290,8 +2300,8 @@ def build_report(df_curr, df_prev, period):
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
             "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
             "blocks": {
-                "total": total_sum,
-                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(total_sum)),
+                "total": block_sum,
+                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(block_sum)),
                 "items": block_items,
                 "lines": build_block_chart(curr, prev, period, has_prev, chart_grain),
             },
