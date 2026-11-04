@@ -1792,11 +1792,10 @@ function seriesColors() {
 }
 
 function niceMax(value) {
-  if (value <= 0) return 1;
-  const pow = 10 ** Math.floor(Math.log10(value));
-  const normalized = value / pow;
-  const step = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
-  return step * pow;
+  const amount = Math.max(0, Math.round(Number(value) || 0));
+  if (amount <= 0) return 100000;
+  const step = amount <= 1000000 ? 100000 : 200000;
+  return Math.ceil(amount / step) * step;
 }
 
 function svgEl(name, attrs) {
