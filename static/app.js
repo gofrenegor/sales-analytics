@@ -1791,11 +1791,39 @@ function seriesColors() {
     : { current: "#4C9AFF", previous: "#8b95a5", grid: "rgba(128,128,128,0.16)", axis: "#7d8794" };
 }
 
+const LOSS_STEP = 50000;
+
 function niceMax(value) {
   const amount = Math.max(0, Math.round(Number(value) || 0));
-  if (amount <= 0) return 50000;
-  const step = amount <= 1000000 ? 50000 : 100000;
-  return Math.ceil(amount / step) * step;
+  if (amount <= 0) return LOSS_STEP;
+  return Math.ceil(amount / LOSS_STEP) * LOSS_STEP;
+}
+
+function drawLossAxis(svg, maxY, y, x1, x2, color, anchorX, font) {
+  const ticks = [];
+  for (let value = 0; value <= maxY; value += LOSS_STEP) ticks.push(value);
+  const gap = ticks.length > 1 ? Math.abs(y(0) - y(LOSS_STEP)) : font + 4;
+  const size = Math.min(font, gap * 0.8);
+  for (const value of ticks) {
+    const yy = y(value);
+    svg.append(svgEl("line", {
+      x1,
+      x2,
+      y1: yy,
+      y2: yy,
+      stroke: color,
+      "stroke-dasharray": value === 0 ? "0" : "3 4",
+    }));
+    const label = svgEl("text", {
+      x: anchorX,
+      y: yy,
+      "text-anchor": "end",
+      "dominant-baseline": "middle",
+      "font-size": size.toFixed(2),
+    });
+    label.textContent = fmtInt(value);
+    svg.append(label);
+  }
 }
 
 function svgEl(name, attrs) {
@@ -1841,14 +1869,7 @@ function renderChart(rows, grain) {
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart", role: "img" });
   svg.setAttribute("aria-label", hourly ? "Динамика списаний по часам" : "Динамика списаний по дням");
-  for (let i = 0; i <= 4; i += 1) {
-    const value = maxY * i / 4;
-    const yy = y(value);
-    svg.append(svgEl("line", { x1: pad.l, x2: width - pad.r, y1: yy, y2: yy, stroke: colors.grid, "stroke-dasharray": i === 0 ? "0" : "3 4" }));
-    const label = svgEl("text", { x: pad.l - 10, y: yy, "text-anchor": "end", "dominant-baseline": "middle", "font-size": "12" });
-    label.textContent = fmtInt(value);
-    svg.append(label);
-  }
+  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, colors.grid, pad.l - 10, 12);
   for (const day of ticks) {
     const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
     label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
@@ -2063,27 +2084,7 @@ function renderPlatformChart(platform, grain, color, maxY, maxDay) {
   const y = (value) => pad.t + innerH - (value / maxY) * innerH;
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart plat-chart", role: "img" });
   svg.setAttribute("aria-label", platform.name);
-  for (let i = 0; i <= 2; i += 1) {
-    const value = (maxY * i) / 2;
-    const yy = y(value);
-    svg.append(svgEl("line", {
-      x1: pad.l,
-      x2: width - pad.r,
-      y1: yy,
-      y2: yy,
-      stroke: axis.grid,
-      "stroke-dasharray": i === 0 ? "0" : "3 4",
-    }));
-    const label = svgEl("text", {
-      x: pad.l - 8,
-      y: yy,
-      "text-anchor": "end",
-      "dominant-baseline": "middle",
-      "font-size": "11",
-    });
-    label.textContent = fmtInt(value);
-    svg.append(label);
-  }
+  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 8, 11);
   for (const day of platTicks(maxDay)) {
     const label = svgEl("text", {
       x: x(day),
@@ -2183,14 +2184,7 @@ function renderBlockChart(lines, grain) {
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart block-chart", role: "img" });
   svg.setAttribute("aria-label", hourly ? "Динамика потерь по блокам, часы" : "Динамика потерь по блокам");
-  for (let i = 0; i <= 4; i += 1) {
-    const value = maxY * i / 4;
-    const yy = y(value);
-    svg.append(svgEl("line", { x1: pad.l, x2: width - pad.r, y1: yy, y2: yy, stroke: axis.grid, "stroke-dasharray": i === 0 ? "0" : "3 4" }));
-    const label = svgEl("text", { x: pad.l - 10, y: yy, "text-anchor": "end", "dominant-baseline": "middle", "font-size": "12" });
-    label.textContent = fmtInt(value);
-    svg.append(label);
-  }
+  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 10, 12);
   for (const day of ticks) {
     const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
     label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
