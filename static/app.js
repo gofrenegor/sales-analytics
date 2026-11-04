@@ -2269,16 +2269,16 @@ function renderBlockChart(lines, grain) {
   const hit = svgEl("rect", { x: pad.l, y: pad.t, width: innerW, height: innerH, fill: "transparent" });
   svg.append(hit);
   const tip = blockTipNode();
-  const wrap = el("div", { class: "chart-wrap block-chart" });
-  wrap.append(svg, tip);
-  const legend = el("div", { class: "legend" });
   const platRow = el("div", { class: "block-plats-row" });
   const platPanel = el(
     "div",
     { class: "block-plats", "aria-hidden": "true" },
     el("div", { class: "block-plats-clip" }, platRow),
   );
-  const box = el("div", { class: "block-chart-box" }, wrap, platPanel, legend);
+  const wrap = el("div", { class: "chart-wrap block-chart" });
+  wrap.append(svg, platPanel, tip);
+  const legend = el("div", { class: "legend" });
+  const box = el("div", { class: "block-chart-box" }, wrap, legend);
   for (const line of drawn) {
     const gone = Boolean(off[line.name]);
     const item = el("button", {
@@ -2304,7 +2304,7 @@ function renderBlockChart(lines, grain) {
   const stroke = 2.25;
   const lineEnterPx = 4;
   const focusAwayPx = 22;
-  const platAwayPx = 20;
+  const platAwayPx = 40;
 
   function nearestLine(line, local) {
     const pts = line.currentPts;
@@ -2442,6 +2442,7 @@ function renderBlockChart(lines, grain) {
       for (const row of platform.previous) sums.push(row.sum);
     }
     const scaleY = niceMax(Math.max(...sums));
+    platRow.dataset.count = String(list.length);
     platRow.replaceChildren();
     for (const platform of list) {
       const card = el(
