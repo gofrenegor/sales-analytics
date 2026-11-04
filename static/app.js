@@ -2456,9 +2456,13 @@ function renderBlockChart(lines, grain) {
           "figcaption",
           { class: "block-plat-name" },
           el("span", null, platform.name),
-          el("b", null, fmtRub(platform.sum)),
         ),
-        renderPlatformChart(platform, grain, line.color, scaleY, maxDay),
+        el(
+          "div",
+          { class: "block-plat-plot" },
+          el("b", { class: "block-plat-sum" }, fmtRub(platform.sum)),
+          renderPlatformChart(platform, grain, line.color, scaleY, maxDay),
+        ),
       );
       card.style.setProperty("--swatch", line.color);
       platRow.append(card);
