@@ -2105,20 +2105,49 @@ def _frame_keys(frame):
     return _text_key(frame["block_group"]), _text_key(frame["reason"])
 
 
+def _zip_lr_points(asm_rows, lay_rows):
+    """Один день: сумма линии — только LR 5 и LR 27, доли лежат рядом."""
+    count = max(len(asm_rows), len(lay_rows))
+    rows = []
+    for index in range(count):
+        left = asm_rows[index] if index < len(asm_rows) else None
+        right = lay_rows[index] if index < len(lay_rows) else None
+        base = left or right
+        if not base:
+            continue
+        asm = _f(left.get("sum")) if left else 0.0
+        lay = _f(right.get("sum")) if right else 0.0
+        rows.append({
+            "period": base.get("period"),
+            "day": base.get("day"),
+            "date": base.get("date"),
+            "sum": asm + lay,
+            "asm": asm,
+            "lay": lay,
+        })
+    return rows
+
+
 def build_block_chart(curr, prev, period, has_prev, grain):
-    """Четыре линии среза «блоки»: сумма каждого блока и доли сборки / раскладки."""
+    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно."""
     curr_blocks, curr_reasons = _frame_keys(curr)
     prev_blocks, prev_reasons = _frame_keys(prev)
     lines = []
     for index, name in enumerate(ALL_BLOCKS):
         color = _block_donut_color(index)
-        part = _block_named(curr, curr_blocks, name)
-        points = _block_points(part, period, "Текущий период", grain)
-        if has_prev:
-            old = _block_named(prev, prev_blocks, name)
-            points = points + _block_points(old, period, "Прошлый период", grain)
         asm = _block_reason_part(curr, curr_blocks, curr_reasons, name, "5")
         lay = _block_reason_part(curr, curr_blocks, curr_reasons, name, "27")
+        points = _zip_lr_points(
+            _block_points(asm, period, "Текущий период", grain),
+            _block_points(lay, period, "Текущий период", grain),
+        )
+        if has_prev:
+            old_asm = _block_reason_part(prev, prev_blocks, prev_reasons, name, "5")
+            old_lay = _block_reason_part(prev, prev_blocks, prev_reasons, name, "27")
+            points = points + _zip_lr_points(
+                _block_points(old_asm, period, "Прошлый период", grain),
+                _block_points(old_lay, period, "Прошлый период", grain),
+            )
         lines.append({
             "name": name,
             "color": color,

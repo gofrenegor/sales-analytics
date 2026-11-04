@@ -2101,6 +2101,21 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 }
 .lg.prev::before { background: #8b95a5; }
 .lg.block::before { background: var(--swatch, var(--blue)); }
+button.lg.block {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.lg.block.is-off {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  opacity: 0.45;
+}
 .block-chart-box .chart-line.block-now,
 .block-chart-box .chart-dots,
 .block-chart-box .lg.block {
@@ -2110,7 +2125,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
 .block-chart-box.is-focus .chart-dots:not(.is-hot) {
   opacity: 0;
 }
-.block-chart-box.is-focus .lg.block:not(.is-hot) { opacity: 0.32; }
+.block-chart-box.is-focus .lg.block:not(.is-hot):not(.is-off) { opacity: 0.32; }
 .block-tip {
   min-width: 17rem;
   opacity: 0;
@@ -2128,7 +2143,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   color: var(--muted);
   font-size: 13px;
   font-weight: 650;
-  margin-bottom: 8px;
+  margin-bottom: 2px;
+}
+.block-tip-date {
+  font-size: 15px;
+  font-weight: 750;
+  margin: 0 0 8px;
+  font-variant-numeric: tabular-nums;
 }
 .block-tip-split { display: grid; grid-template-columns: 1fr 1fr; }
 .block-tip-side {
