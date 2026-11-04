@@ -267,44 +267,28 @@ p { margin: 0.5rem 0; }
   width: 8.2rem;
   border-radius: 10px 0 0 10px;
 }
-.who[hidden] { display: none; }
-.who {
+.account-box {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  color: var(--muted);
-  font-size: 0.8125rem;
-  font-variant-numeric: tabular-nums;
+  margin-top: 0.8rem;
 }
-.who button {
-  background: transparent;
-  border: 0;
-  padding: 0;
-  color: var(--muted);
-  font-weight: 650;
-  transition: color 160ms var(--ease-out), transform 160ms var(--ease-out);
+.account-box > .panel { margin: 0; }
+.account-id {
+  padding: 0.7rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
 }
-.who button:hover { color: var(--text); }
-.who button:active { transform: scale(0.97); }
-.account { position: relative; }
+.admin-only { margin-top: 0.8rem; }
+#sidebar[data-role="view"] .admin-only { display: none; }
 .password-panel {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 6;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  width: min(18rem, 80vw);
-  padding: 0.7rem;
-  border: 1px solid var(--line-strong);
-  border-radius: 12px;
-  background: var(--sidebar);
-  box-shadow: var(--shadow);
-  transform-origin: top left;
+  margin-top: 0.15rem;
 }
 .password-panel[hidden] { display: none; }
-.password-panel:not([hidden]) { animation: pane-reveal 180ms var(--ease-out) both; }
 .password-panel input {
   flex: 1 0 100%;
   height: 2.5rem;

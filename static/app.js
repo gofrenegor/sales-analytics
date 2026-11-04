@@ -4162,13 +4162,15 @@ function showGate() {
   const gate = document.getElementById("gate");
   const layout = document.querySelector(".layout");
   const toggle = document.getElementById("admin-toggle");
-  const who = document.getElementById("who");
   if (gate) gate.hidden = false;
   if (layout) layout.hidden = true;
   if (toggle) toggle.hidden = true;
-  if (who) who.hidden = true;
-  const passwordPanel = document.getElementById("password-panel");
-  if (passwordPanel) passwordPanel.hidden = true;
+  paintAccount(null);
+  const fold = document.getElementById("password-fold");
+  if (fold) fold.open = false;
+  const next = document.getElementById("password-next");
+  if (next) next.value = "";
+  setPasswordNote("");
   setAdminOpen(false);
   document.getElementById("gate-contact")?.focus();
 }
@@ -4238,25 +4240,33 @@ function fillOwnContact(user) {
   }
 }
 
+function paintAccount(user) {
+  const sidebar = document.getElementById("sidebar");
+  const title = document.getElementById("sidebar-title");
+  const toggle = document.getElementById("admin-toggle");
+  const whoId = document.getElementById("who-id");
+  const admin = Boolean(user && user.role === "admin");
+  if (sidebar) {
+    if (user) sidebar.dataset.role = admin ? "admin" : "view";
+    else sidebar.removeAttribute("data-role");
+  }
+  if (title) title.textContent = user && !admin ? "👤 Панель" : "👤 Админ-панель";
+  if (toggle && user) toggle.setAttribute("aria-label", admin ? "Админ-панель" : "Панель");
+  if (whoId) whoId.textContent = user ? String(user.id) : "—";
+}
+
 function applySession() {
   const user = state.user;
   const gate = document.getElementById("gate");
   const layout = document.querySelector(".layout");
   const toggle = document.getElementById("admin-toggle");
-  const who = document.getElementById("who");
   if (gate) gate.hidden = true;
   if (layout) layout.hidden = false;
   const admin = user && user.role === "admin";
-  if (toggle) toggle.hidden = !admin;
+  if (toggle) toggle.hidden = !user;
   if (!admin) setAdminOpen(false);
+  paintAccount(user);
   fillOwnContact(user);
-  if (!who) return;
-  who.hidden = false;
-  who.replaceChildren(
-    document.createTextNode(`ID ${user.id}`),
-    el("button", { type: "button", onclick: () => togglePassword() }, "пароль"),
-    el("button", { type: "button", onclick: () => logout() }, "выйти"),
-  );
 }
 
 const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -4275,20 +4285,11 @@ function setPasswordNote(text, bad) {
   note.classList.toggle("is-error", Boolean(bad));
 }
 
-function togglePassword() {
-  const panel = document.getElementById("password-panel");
-  const input = document.getElementById("password-next");
-  if (!panel) return;
-  panel.hidden = !panel.hidden;
-  if (panel.hidden) return;
-  setPasswordNote("");
-  input?.focus();
-}
-
 function wirePassword() {
   const panel = document.getElementById("password-panel");
   const input = document.getElementById("password-next");
   const random = document.getElementById("password-random");
+  const logoutBtn = document.getElementById("logout-btn");
   if (!panel || !input) return;
   random?.addEventListener("click", () => {
     input.value = randomPassword();
@@ -4319,14 +4320,7 @@ function wirePassword() {
       if (save) save.disabled = false;
     }
   });
-  document.addEventListener("click", (event) => {
-    if (panel.hidden) return;
-    if (document.getElementById("account")?.contains(event.target)) return;
-    panel.hidden = true;
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !panel.hidden) panel.hidden = true;
-  });
+  logoutBtn?.addEventListener("click", () => logout());
 }
 
 async function logout() {

@@ -39,7 +39,39 @@
   </button>
   <div class="layout" hidden>
     <aside id="sidebar">
-      <h2>👤 Админ-панель</h2>
+      <h2 id="sidebar-title">👤 Админ-панель</h2>
+      <details id="admin-info" class="panel">
+        <summary>ℹ️ Инфо</summary>
+        <div id="period-note" class="period-note" hidden></div>
+        <p id="compare-note" class="hint" hidden></p>
+        <details id="quality" class="panel" hidden>
+          <summary>🔍 Проверка данных (что не распознано)</summary>
+          <div id="quality-body"></div>
+        </details>
+        <details id="info-statuses" class="panel">
+          <summary>статусы</summary>
+        </details>
+        <details id="info-lr" class="panel">
+          <summary>lost reason(lr)</summary>
+        </details>
+      </details>
+      <div class="account-box">
+        <details id="password-fold" class="panel">
+          <summary>Смена пароля</summary>
+          <form id="password-panel" class="password-panel">
+            <input id="password-next" autocomplete="new-password" maxlength="64" placeholder="новый пароль" spellcheck="false" aria-label="Новый пароль">
+            <button type="button" id="password-random" class="ghost">случайный</button>
+            <button type="submit" class="primary">сохранить</button>
+            <p id="password-note" class="password-note" hidden role="status"></p>
+          </form>
+        </details>
+        <button type="button" id="logout-btn" class="wide ghost">выйти</button>
+        <div id="who" class="account-id">
+          <span class="grant-id-kicker">ID</span>
+          <span class="grant-id-value" id="who-id">—</span>
+        </div>
+      </div>
+      <div class="admin-only">
       <label class="grant-phone">
         <span class="grant-id-kicker">Мой телефон</span>
         <input id="own-phone" inputmode="tel" autocomplete="tel" placeholder="+7" aria-label="Мой телефон">
@@ -104,15 +136,6 @@
       <button type="button" id="cache-btn" class="wide ghost">🔄 Сбросить кэш данных</button>
       <button type="button" id="theme" class="wide ghost">🌓 Тема</button>
       <p id="admin-status" class="hint" hidden></p>
-      <details id="admin-info" class="panel">
-        <summary>ℹ️ Инфо</summary>
-        <div id="period-note" class="period-note" hidden></div>
-        <p id="compare-note" class="hint" hidden></p>
-        <details id="quality" class="panel" hidden>
-          <summary>🔍 Проверка данных (что не распознано)</summary>
-          <div id="quality-body"></div>
-        </details>
-      </details>
       <details class="panel" open>
         <summary>📥 Загрузка данных</summary>
         <label class="file">
@@ -128,20 +151,12 @@
         <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всё</label>
         <button type="button" id="wipe" class="wide danger" disabled>🗑️ Очистить базу</button>
       </details>
+      </div>
     </aside>
     <div id="backdrop"></div>
     <main>
       <header class="top">
         <h1>📦 Аналитика списаний</h1>
-        <div class="account" id="account">
-          <div id="who" class="who" hidden></div>
-          <form id="password-panel" class="password-panel" hidden>
-            <input id="password-next" autocomplete="new-password" maxlength="64" placeholder="новый пароль" spellcheck="false" aria-label="Новый пароль">
-            <button type="button" id="password-random" class="ghost">случайный</button>
-            <button type="submit" class="primary">сохранить</button>
-            <p id="password-note" class="password-note" hidden role="status"></p>
-          </form>
-        </div>
         <label class="search">
           <span class="sr">Поиск LR или площадки</span>
           <input id="search" type="search" placeholder="LR или площадка" autocomplete="off" enterkeyhint="search">
