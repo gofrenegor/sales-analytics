@@ -10,6 +10,7 @@ const state = {
   group: "",
   block: "",
   blockLr: "5",
+  blockChartOff: {},
   slice: "flows",
   report: null,
   employees: null,
@@ -1969,12 +1970,14 @@ function renderChart(rows, grain) {
 
 function blockTipNode() {
   const name = el("div", { class: "block-tip-name" });
+  const when = el("div", { class: "block-tip-date" });
   const asmSum = el("b", { class: "block-tip-sum" });
   const laySum = el("b", { class: "block-tip-sum" });
   const tip = el(
     "div",
     { class: "chart-tip block-tip", role: "tooltip" },
     name,
+    when,
     el(
       "div",
       { class: "block-tip-split" },
@@ -1994,10 +1997,11 @@ function blockTipNode() {
       ),
     ),
   );
-  tip._fill = (line) => {
+  tip._fill = (line, point) => {
     name.textContent = line.name;
-    asmSum.textContent = fmtRub(line.asm);
-    laySum.textContent = fmtRub(line.lay);
+    when.textContent = point && point.date ? point.date : "";
+    asmSum.textContent = fmtRub(point ? point.asm : 0);
+    laySum.textContent = fmtRub(point ? point.lay : 0);
   };
   return tip;
 }
@@ -2034,7 +2038,8 @@ function renderBlockChart(lines, grain) {
   const spacing = (innerW / span) * minStep;
   const digits = hourly ? 2 : String(maxDay).length;
   const fontPx = Math.min(12, (spacing * 0.84) / (digits * 0.72));
-  const sums = prepared.flatMap((line) => [
+  const off = state.blockChartOff || {};
+  const sums = prepared.filter((line) => !off[line.name]).flatMap((line) => [
     ...line.current.map((row) => row.sum),
     ...line.previous.map((row) => row.sum),
   ]);
@@ -2059,7 +2064,14 @@ function renderBlockChart(lines, grain) {
   }
 
   function toPts(series) {
-    return series.map((row) => ({ x: x(row.day), y: y(row.sum) }));
+    return series.map((row) => ({
+      x: x(row.day),
+      y: y(row.sum),
+      day: row.day,
+      date: row.date || "",
+      asm: Number(row.asm) || 0,
+      lay: Number(row.lay) || 0,
+    }));
   }
   function pathOf(pts) {
     return pts.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
@@ -2069,8 +2081,9 @@ function renderBlockChart(lines, grain) {
     currentPts: toPts(line.current),
     previousPts: toPts(line.previous),
   }));
+  const shown = drawn.filter((line) => !off[line.name]);
 
-  for (const line of drawn) {
+  for (const line of shown) {
     if (!line.previousPts.length) continue;
     svg.append(svgEl("path", {
       d: pathOf(line.previousPts),
@@ -2084,7 +2097,7 @@ function renderBlockChart(lines, grain) {
       "stroke-dasharray": "6 5",
     }));
   }
-  for (const line of drawn) {
+  for (const line of shown) {
     if (!line.currentPts.length) continue;
     svg.append(svgEl("path", {
       d: pathOf(line.currentPts),
@@ -2098,7 +2111,7 @@ function renderBlockChart(lines, grain) {
       opacity: "0",
     }));
   }
-  for (const line of drawn) {
+  for (const line of shown) {
     if (!line.currentPts.length) continue;
     const d = pathOf(line.currentPts);
     svg.append(svgEl("path", {
@@ -2126,7 +2139,20 @@ function renderBlockChart(lines, grain) {
   const legend = el("div", { class: "legend" });
   const box = el("div", { class: "block-chart-box" }, wrap, legend);
   for (const line of drawn) {
-    const item = el("span", { class: "lg block", "data-block": line.name }, line.name);
+    const gone = Boolean(off[line.name]);
+    const item = el("button", {
+      type: "button",
+      class: gone ? "lg block is-off" : "lg block",
+      "data-block": line.name,
+      "aria-pressed": gone ? "false" : "true",
+      title: gone ? "Вернуть на график" : "Убрать с графика",
+      onclick: () => {
+        if (!state.blockChartOff) state.blockChartOff = {};
+        if (state.blockChartOff[line.name]) delete state.blockChartOff[line.name];
+        else state.blockChartOff[line.name] = true;
+        box.replaceWith(renderBlockChart(lines, grain));
+      },
+    }, line.name);
     item.style.setProperty("--swatch", line.color);
     legend.append(item);
   }
@@ -2165,7 +2191,7 @@ function renderBlockChart(lines, grain) {
     let best = null;
     let bestDist = Infinity;
     let bestAt = null;
-    for (const line of drawn) {
+    for (const line of shown) {
       const hit = nearestLine(line, local);
       if (!hit || hit.dist >= bestDist) continue;
       best = line;
@@ -2204,17 +2230,32 @@ function renderBlockChart(lines, grain) {
     tip.style.top = `${top}px`;
   }
 
-  function showLine(line, at) {
+  function nearestDate(line, local) {
+    const pts = line.currentPts;
+    let best = pts[0];
+    let bestDist = Math.abs(local.x - best.x);
+    for (let i = 1; i < pts.length; i += 1) {
+      const dist = Math.abs(local.x - pts[i].x);
+      if (dist < bestDist) {
+        best = pts[i];
+        bestDist = dist;
+      }
+    }
+    return best;
+  }
+
+  function showLine(line, local) {
+    const point = nearestDate(line, local);
     const opening = !tip.classList.contains("is-in") || hotName !== line.name;
-    tip._fill(line);
+    tip._fill(line, point);
     tip.hidden = false;
     if (opening && !reducedMotion()) {
       tip.classList.remove("is-in");
       void tip.offsetWidth;
     }
-    placeTip(at);
+    placeTip(point);
     tip.classList.add("is-in");
-    paint(line.name);
+    if (hotName !== line.name) paint(line.name);
   }
 
   function hideLine() {
@@ -2238,15 +2279,14 @@ function renderBlockChart(lines, grain) {
     const enter = stroke / 2 + 5 / mapped.scale;
     const leave = stroke / 2 + 8 / mapped.scale;
     if (found.line && found.dist <= enter) {
-      if (found.line.name === hotName) placeTip(found.at);
-      else showLine(found.line, found.at);
+      showLine(found.line, mapped.local);
       return;
     }
     if (hotName) {
-      const hot = drawn.find((line) => line.name === hotName);
+      const hot = shown.find((line) => line.name === hotName);
       const still = hot ? nearestLine(hot, mapped.local) : null;
       if (still && still.dist <= leave) {
-        placeTip(still.at);
+        showLine(hot, mapped.local);
         return;
       }
       hideLine();
@@ -2267,7 +2307,7 @@ function renderBlockChart(lines, grain) {
         hideLine();
         return;
       }
-      showLine(found.line, found.at);
+      showLine(found.line, mapped.local);
     });
   }
 
