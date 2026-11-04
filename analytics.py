@@ -200,44 +200,128 @@ def _polar(cx, cy, radius, deg):
     return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
 
 
-# Рамка пары. Зазор до заливки маленький, углы заметно круглые, не стык linejoin.
-PAIR_OUTLINE_GAP = 1.0
-PAIR_OUTLINE_RADIUS = 16.0
+# Зазор между заливкой и ближайшим краем штриха — в пикселях экрана.
+# Толщина штриха в CSS. Штрих по центру линии, поэтому ось пути дальше на полтолщины.
+PAIR_GAP_PX = 2.0
+PAIR_STROKE_PX = 1.25
 
 
-def _pair_outline(cx, cy, r, sw, a0, a1, color):
-    """Тонкая замкнутая рамка двух соседних долей и зазора между ними.
+def _pair_dist(scale):
+    """Сдвиг оси штриха от края заливки, в единицах viewBox."""
+    scale = scale if scale and scale > 0 else 1.0
+    return (PAIR_GAP_PX + PAIR_STROKE_PX / 2.0) / scale
 
-    Внешняя дуга по часовой, внутренняя обратно. Общей стороны между блоками нет.
-    Штрих в 1px от заливки. Углы срезаны тем же скруглением, что у короткой дуги,
-    но радиус больше, чтобы край читался круглым.
+
+def _pair_ref_scale():
+    """Пиксели экрана на единицу viewBox у широкого кольца: 56rem × 1.06."""
+    return (56 * 16 * 1.06) / 400
+
+
+def _push(center, point, extra):
+    vx, vy = point[0] - center[0], point[1] - center[1]
+    length = math.hypot(vx, vy) or 1.0
+    gain = (length + extra) / length
+    return (center[0] + vx * gain, center[1] + vy * gain)
+
+
+def _ray_side(cx, cy, outer, inner, angle, rho, end):
+    """Центры скруглений и точки касания одной радиальной стороны доли."""
+    outer_c = outer - rho
+    inner_c = inner + rho
+    d_o = math.degrees(math.asin(rho / outer_c))
+    d_i = math.degrees(math.asin(rho / inner_c))
+    sign = -1 if end else 1
+    ang_o = angle + sign * d_o
+    ang_i = angle + sign * d_i
+    reach_o = outer_c * math.cos(math.radians(d_o))
+    reach_i = inner_c * math.cos(math.radians(d_i))
+    return {
+        "d_o": d_o,
+        "d_i": d_i,
+        "ang_o": ang_o,
+        "ang_i": ang_i,
+        "c_o": _polar(cx, cy, outer_c, ang_o),
+        "c_i": _polar(cx, cy, inner_c, ang_i),
+        "o": _polar(cx, cy, outer, ang_o),
+        "i": _polar(cx, cy, inner, ang_i),
+        "rad_o": _polar(cx, cy, reach_o, angle),
+        "rad_i": _polar(cx, cy, reach_i, angle),
+    }
+
+
+def _pair_centerline(cx, cy, outer, inner, a0, a1, rho0, rho1, dist):
+    """Ось штриха: контур пары, сдвинутый наружу на dist.
+
+    Углы повторяют скругление доли и уходят вместе с ним, поэтому штрих
+    не срезает заливку. Общей стороны между блоками нет.
     """
     span = a1 - a0
-    if span <= 0.4:
+    if span <= 0.4 or dist < 0 or inner - dist <= 1:
         return ""
-    outer = r + sw / 2 + PAIR_OUTLINE_GAP
-    inner = r - sw / 2 - PAIR_OUTLINE_GAP
-    if _fillets_fit(span, outer, inner, PAIR_OUTLINE_RADIUS):
-        rho = PAIR_OUTLINE_RADIUS
-    else:
-        rho = _corner_radius(span, outer, inner)
-    if rho:
-        d = _rounded_segment_path(cx, cy, outer, inner, a0, span, rho)
-    else:
-        large = 1 if span > 180 else 0
-        x0, y0 = _polar(cx, cy, outer, a0)
-        x1, y1 = _polar(cx, cy, outer, a1)
-        x2, y2 = _polar(cx, cy, inner, a1)
-        x3, y3 = _polar(cx, cy, inner, a0)
-        d = (
-            f"M {x0:.2f} {y0:.2f} "
-            f"A {outer:.2f} {outer:.2f} 0 {large} 1 {x1:.2f} {y1:.2f} "
-            f"L {x2:.2f} {y2:.2f} "
-            f"A {inner:.2f} {inner:.2f} 0 {large} 0 {x3:.2f} {y3:.2f} Z"
-        )
+    limit = min(DONUT_CORNER, max(0.0, (outer - inner) / 2 - 1))
+    rho0 = min(max(rho0, 0.0), limit)
+    rho1 = min(max(rho1, 0.0), limit)
+
+    def fit(rho):
+        if rho < 1.5:
+            return 0.0
+        if _fillets_fit(span, outer, inner, rho) and _fillets_fit(span, outer + dist, inner - dist, rho + dist):
+            return rho
+        return 0.0
+
+    rho0, rho1 = fit(rho0), fit(rho1)
+    if min(rho0, rho1) < 1.5:
+        return ""
+
+    start = _ray_side(cx, cy, outer, inner, a0, rho0, False)
+    end = _ray_side(cx, cy, outer, inner, a1, rho1, True)
+    origin = (cx, cy)
+    o0 = _push(origin, start["o"], dist)
+    o1 = _push(origin, end["o"], dist)
+    i0 = _push(start["c_i"], start["i"], dist)
+    i1 = _push(end["c_i"], end["i"], dist)
+    t_o0 = _push(start["c_o"], start["rad_o"], dist)
+    t_i0 = _push(start["c_i"], start["rad_i"], dist)
+    t_o1 = _push(end["c_o"], end["rad_o"], dist)
+    t_i1 = _push(end["c_i"], end["rad_i"], dist)
+
+    def sweep_of(center, p0, p1):
+        cross = (p0[0] - center[0]) * (p1[1] - center[1]) - (p0[1] - center[1]) * (p1[0] - center[0])
+        return 1 if cross > 0 else 0
+
+    def arc(radius, large, sweep, point):
+        return f"A {radius:.2f} {radius:.2f} 0 {large} {sweep} {point[0]:.2f} {point[1]:.2f}"
+
+    def pt(point):
+        return f"{point[0]:.2f} {point[1]:.2f}"
+
+    large_o = 1 if end["ang_o"] - start["ang_o"] > 180 else 0
+    large_i = 1 if end["ang_i"] - start["ang_i"] > 180 else 0
+    return " ".join([
+        f"M {pt(o0)}",
+        arc(outer + dist, large_o, 1, o1),
+        arc(rho1 + dist, 0, sweep_of(end["c_o"], o1, t_o1), t_o1),
+        f"L {pt(t_i1)}",
+        arc(rho1 + dist, 0, sweep_of(end["c_i"], t_i1, i1), i1),
+        arc(inner - dist, large_i, 0, i0),
+        arc(rho0 + dist, 0, sweep_of(start["c_i"], i0, t_i0), t_i0),
+        f"L {pt(t_o0)}",
+        arc(rho0 + dist, 0, sweep_of(start["c_o"], t_o0, o0), o0),
+        "Z",
+    ])
+
+
+def _pair_outline(cx, cy, r, sw, a0, a1, rho0, rho1, color, scale):
+    """Тонкая рамка двух соседних долей. Штрих снаружи, в PAIR_GAP_PX от заливки."""
+    outer, inner = r + sw / 2, r - sw / 2
+    dist = _pair_dist(scale)
+    d = _pair_centerline(cx, cy, outer, inner, a0, a1, rho0, rho1, dist)
+    if not d:
+        return ""
     return (
         f'<path class="loss-pair" fill="none" pointer-events="none" stroke="{color}" '
-        f'stroke-linejoin="round" stroke-linecap="round" d="{d}" />'
+        f'data-a0="{a0:.4f}" data-a1="{a1:.4f}" data-rho0="{rho0:.4f}" data-rho1="{rho1:.4f}" '
+        f'vector-effect="non-scaling-stroke" d="{d}" />'
     )
 
 
@@ -788,7 +872,7 @@ def build_blocks_donut_svg(items, center_text):
             continue
         number = _ring_number(name)
         if number is not None and number not in drawn and name in ALL_BLOCKS:
-            drawn[number] = (start, start + span, color)
+            drawn[number] = (start, start + span, color, _corner_radius(span, r + sw / 2, r - sw / 2))
         pct_text = _fmt_share(pct)
         caption = escape(f"{face}, {pct_text}")
         href = escape("#block=" + quote(name, safe=""))
@@ -812,9 +896,11 @@ def build_blocks_donut_svg(items, center_text):
     for left, right in ((1, 2), (3, 4)):
         if left not in drawn or right not in drawn:
             continue
-        a0, _, color_a = drawn[left]
-        _, a1, color_b = drawn[right]
-        pairs.append(_pair_outline(cx, cy, r, sw, a0, a1, _mix_oklab(color_a, color_b)))
+        a0, _, color_a, rho0 = drawn[left]
+        _, a1, color_b, rho1 = drawn[right]
+        pairs.append(_pair_outline(
+            cx, cy, r, sw, a0, a1, rho0, rho1, _mix_oklab(color_a, color_b), _pair_ref_scale(),
+        ))
 
     labels = []
     placed = []
