@@ -1799,12 +1799,18 @@ function niceMax(value) {
   return Math.ceil(amount / LOSS_STEP) * LOSS_STEP;
 }
 
+function seriesPeak(rows) {
+  let peak = 0;
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const sum = Number(row && row.sum) || 0;
+    if (sum > peak) peak = sum;
+  }
+  return peak;
+}
+
 function drawLossAxis(svg, maxY, y, x1, x2, color, anchorX, font) {
-  const ticks = [];
-  for (let value = 0; value <= maxY; value += LOSS_STEP) ticks.push(value);
-  const gap = ticks.length > 1 ? Math.abs(y(0) - y(LOSS_STEP)) : font + 4;
-  const size = Math.min(font, gap * 0.8);
-  for (const value of ticks) {
+  for (const mark of [0, 0.5, 1]) {
+    const value = maxY * mark;
     const yy = y(value);
     svg.append(svgEl("line", {
       x1,
@@ -1812,14 +1818,15 @@ function drawLossAxis(svg, maxY, y, x1, x2, color, anchorX, font) {
       y1: yy,
       y2: yy,
       stroke: color,
-      "stroke-dasharray": value === 0 ? "0" : "3 4",
+      "stroke-dasharray": mark === 0 ? "0" : "3 4",
     }));
+    if (mark === 0.5) continue;
     const label = svgEl("text", {
       x: anchorX,
       y: yy,
       "text-anchor": "end",
       "dominant-baseline": "middle",
-      "font-size": size.toFixed(2),
+      "font-size": String(font),
     });
     label.textContent = fmtInt(value);
     svg.append(label);
@@ -2071,20 +2078,21 @@ function platTicks(maxDay) {
   return days;
 }
 
-function renderPlatformChart(platform, grain, color, maxY, maxDay) {
+function renderPlatformChart(platform, grain, color, maxDay) {
   const hourly = grain === "hour";
   const axis = seriesColors();
   const height = 168;
   const width = 560;
-  const pad = { l: 64, r: 10, t: 10, b: 22 };
+  const pad = { l: 84, r: 10, t: 14, b: 22 };
   const innerW = width - pad.l - pad.r;
   const innerH = height - pad.t - pad.b;
+  const maxY = niceMax(Math.max(seriesPeak(platform.current), seriesPeak(platform.previous)));
   const span = Math.max(maxDay - 1, 1);
   const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / span) * innerW);
   const y = (value) => pad.t + innerH - (value / maxY) * innerH;
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart plat-chart", role: "img" });
   svg.setAttribute("aria-label", platform.name);
-  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 8, 11);
+  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 8, 12);
   for (const day of platTicks(maxDay)) {
     const label = svgEl("text", {
       x: x(day),
@@ -2439,10 +2447,6 @@ function renderBlockChart(lines, grain) {
     platRow.dataset.count = String(list.length);
     platRow.replaceChildren();
     for (const platform of list) {
-      const sums = [0];
-      for (const row of platform.current) sums.push(row.sum);
-      for (const row of platform.previous) sums.push(row.sum);
-      const scaleY = niceMax(Math.max(...sums));
       const card = el(
         "figure",
         { class: "block-plat" },
@@ -2455,7 +2459,7 @@ function renderBlockChart(lines, grain) {
           "div",
           { class: "block-plat-plot" },
           el("b", { class: "block-plat-sum" }, fmtRub(platform.sum)),
-          renderPlatformChart(platform, grain, line.color, scaleY, maxDay),
+          renderPlatformChart(platform, grain, line.color, maxDay),
         ),
       );
       card.style.setProperty("--swatch", line.color);
