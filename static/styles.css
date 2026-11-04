@@ -1632,7 +1632,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
 }
 .loss-leader {
   fill: none;
-  stroke-width: 1.5;
+  stroke-width: 1;
   stroke-linecap: round;
   stroke-linejoin: round;
   pointer-events: none;

@@ -628,8 +628,9 @@ def _mix_oklab(a, b):
 def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     """Имя лежит на короткой полке. До полки линия изгибается в сторону.
 
-    Полка горизонтальная и лишь на 8px длиннее имени. Подвод от дуги короче
-    и уходит по часовой, чтобы штрих не был прямым радиусом.
+    Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
+    линия начинается в 2px от дуги, уходит по часовой и закругляется
+    на стыке с полкой. Концы штриха круглые.
     pad отодвигает полку, если рамка пересекла уже стоящую подпись.
     Буквы с внешней стороны штриха, линия их не режет.
     """
@@ -645,17 +646,20 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     else:
         run_x = 1.0 if sin_m <= 0 else -1.0
     tangent_x, tangent_y = -sin_m, cos_m
-    lead = 14.0 + pad
-    side = 14.0
+    lead = 6.0 + pad
+    side = 6.0
     overhang = 8.0
-    x0 = cx + (outer + 6.0) * cos_m
-    y0 = cy + (outer + 6.0) * sin_m
+    x0 = cx + (outer + 2.0) * cos_m
+    y0 = cy + (outer + 2.0) * sin_m
     shelf_x = x0 + lead * cos_m + side * tangent_x
     shelf_y = y0 + lead * sin_m + side * tangent_y
     end_x = shelf_x + (text_w + overhang) * run_x
     end_y = shelf_y
-    cpx = (x0 + shelf_x) / 2.0 + side * tangent_x
-    cpy = (y0 + shelf_y) / 2.0 + side * tangent_y
+    turn = 8.0
+    c1x = x0 + (shelf_x - x0) * 0.55 + side * tangent_x
+    c1y = y0 + (shelf_y - y0) * 0.55 + side * tangent_y
+    c2x = shelf_x - run_x * turn
+    c2y = shelf_y
     if anchor == "middle":
         px = shelf_x + text_w / 2.0 * run_x
     else:
@@ -672,8 +676,9 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     x = px
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
-        f'd="M {x0:.2f} {y0:.2f} Q {cpx:.2f} {cpy:.2f} {shelf_x:.2f} {shelf_y:.2f} '
-        f'L {end_x:.2f} {end_y:.2f}" />'
+        f'stroke-linecap="round" stroke-linejoin="round" '
+        f'd="M {x0:.2f} {y0:.2f} C {c1x:.2f} {c1y:.2f} {c2x:.2f} {c2y:.2f} '
+        f'{shelf_x:.2f} {shelf_y:.2f} L {end_x:.2f} {end_y:.2f}" />'
     )
     svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font)
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
