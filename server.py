@@ -659,6 +659,7 @@ def _static_asset_stamp() -> str:
             max(
                 (STATIC / "app.js").stat().st_mtime,
                 (STATIC / "styles.css").stat().st_mtime,
+                (STATIC / "info-copy.js").stat().st_mtime,
             )
         )
     )

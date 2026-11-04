@@ -42,17 +42,21 @@
       <h2 id="sidebar-title">👤 Админ-панель</h2>
       <details id="admin-info" class="panel">
         <summary>ℹ️ Инфо</summary>
-        <div id="period-note" class="period-note" hidden></div>
-        <p id="compare-note" class="hint" hidden></p>
-        <details id="quality" class="panel" hidden>
-          <summary>🔍 Проверка данных (что не распознано)</summary>
-          <div id="quality-body"></div>
+        <details id="info-lr" class="panel">
+          <summary>Lostreason</summary>
+          <div id="info-lr-list"></div>
         </details>
         <details id="info-statuses" class="panel">
           <summary>статусы</summary>
         </details>
-        <details id="info-lr" class="panel">
-          <summary>lost reason(lr)</summary>
+        <div id="info-main" class="info-admin">
+          <p class="info-label">Основная информация</p>
+          <div id="period-note" class="period-note" hidden></div>
+          <p id="compare-note" class="hint" hidden></p>
+        </div>
+        <details id="quality" class="panel info-admin" hidden>
+          <summary>Проверка данных</summary>
+          <div id="quality-body"></div>
         </details>
       </details>
       <div class="account-box">
@@ -277,6 +281,7 @@
     </main>
   </div>
   <script src="/static/app.js?v=2"></script>
+  <script src="/static/info-copy.js?v=2"></script>
   <noscript><p class="box warn">Для дашборда нужен JavaScript.</p></noscript>
 </body>
 </html>

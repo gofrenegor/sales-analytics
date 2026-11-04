@@ -3913,6 +3913,20 @@ function setAdminOpen(open) {
   sidebar?.classList.toggle("open", open);
   backdrop?.classList.toggle("show", open);
   toggle?.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!sidebar) return;
+  const topic = ["info-lr", "info-statuses"].some((id) => document.getElementById(id)?.open);
+  if (!open) sidebar.classList.remove("wide");
+  else if (topic) sidebar.classList.add("wide");
+}
+
+function wireInfoWidth() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+  for (const id of ["info-lr", "info-statuses"]) {
+    document.getElementById(id)?.addEventListener("toggle", (event) => {
+      if (event.currentTarget.open) sidebar.classList.add("wide");
+    });
+  }
 }
 
 function wireAdminPanel() {
@@ -3920,6 +3934,7 @@ function wireAdminPanel() {
   const backdrop = document.getElementById("backdrop");
   if (!sidebar || !backdrop) return;
   const toggle = document.getElementById("admin-toggle");
+  wireInfoWidth();
   if (toggle) {
     toggle.addEventListener("click", () => setAdminOpen(!sidebar.classList.contains("open")));
     backdrop.addEventListener("click", () => setAdminOpen(false));
@@ -3932,7 +3947,7 @@ function wireAdminPanel() {
     backdrop.classList.toggle("show");
   });
   backdrop.addEventListener("click", () => {
-    sidebar.classList.remove("open");
+    sidebar.classList.remove("open", "wide");
     backdrop.classList.remove("show");
   });
 }
