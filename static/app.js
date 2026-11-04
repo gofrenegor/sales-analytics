@@ -3126,20 +3126,6 @@ function renderDashboard(screen) {
   hero.append(donutCol);
   if (!blocksMode) {
     const side = el("div");
-    side.append(el(
-      "button",
-      {
-        type: "button",
-        class: "flow-btn pre",
-        title: "Открыть предсписок",
-        onclick: () => go({ view: "flow", flow: "pre", group: "", block: "" }),
-      },
-      el(
-        "span",
-        { class: "flow-copy" },
-        el("span", { class: "flow-name" }, "предсписок"),
-      ),
-    ));
     for (const code of ["out", "in"]) {
       const flow = state.report.flows[code];
       const title = code === "in" ? "входящий поток" : "исходящий поток";
