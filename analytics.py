@@ -629,7 +629,8 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     """Имя лежит на короткой полке. До полки линия изгибается в сторону.
 
     Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
-    линия начинается в 2px от дуги и чуть уходит по часовой.
+    линия начинается в 2px от дуги, уходит по часовой и закругляется
+    на стыке с полкой. Концы штриха круглые.
     pad отодвигает полку, если рамка пересекла уже стоящую подпись.
     Буквы с внешней стороны штриха, линия их не режет.
     """
@@ -654,8 +655,11 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     shelf_y = y0 + lead * sin_m + side * tangent_y
     end_x = shelf_x + (text_w + overhang) * run_x
     end_y = shelf_y
-    cpx = (x0 + shelf_x) / 2.0 + side * tangent_x
-    cpy = (y0 + shelf_y) / 2.0 + side * tangent_y
+    turn = 8.0
+    c1x = x0 + (shelf_x - x0) * 0.55 + side * tangent_x
+    c1y = y0 + (shelf_y - y0) * 0.55 + side * tangent_y
+    c2x = shelf_x - run_x * turn
+    c2y = shelf_y
     if anchor == "middle":
         px = shelf_x + text_w / 2.0 * run_x
     else:
@@ -672,8 +676,9 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     x = px
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
-        f'd="M {x0:.2f} {y0:.2f} Q {cpx:.2f} {cpy:.2f} {shelf_x:.2f} {shelf_y:.2f} '
-        f'L {end_x:.2f} {end_y:.2f}" />'
+        f'stroke-linecap="round" stroke-linejoin="round" '
+        f'd="M {x0:.2f} {y0:.2f} C {c1x:.2f} {c1y:.2f} {c2x:.2f} {c2y:.2f} '
+        f'{shelf_x:.2f} {shelf_y:.2f} L {end_x:.2f} {end_y:.2f}" />'
     )
     svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font)
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
