@@ -1542,7 +1542,7 @@ def pack_cards(g, has_prev):
                     kind, arrow = "n", "•"
                 chip = {
                     "kind": kind,
-                    "text": f"{arrow} {abs(growth):.1f}% · {diff:+,.0f} ₽".replace(",", " "),
+                    "text": f"{arrow} {abs(growth):.1f}% {diff:+,.0f} ₽".replace(",", " "),
                 }
         rows.append({
             "name": "" if rec.name is None else str(rec.name),
