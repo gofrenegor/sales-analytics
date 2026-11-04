@@ -1507,6 +1507,39 @@ input[type="date"]:focus {
   color: var(--muted);
 }
 #info-lr-list { margin-top: 0.15rem; }
+#info-statuses .st-find {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: block;
+  margin: 0.35rem 0 0.15rem;
+  padding: 0.15rem 0 0.45rem;
+  background: var(--sidebar);
+}
+#info-statuses .st-find input {
+  width: 100%;
+  height: 2.3rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+.st-row {
+  display: grid;
+  grid-template-columns: 3.1rem minmax(0, 1fr);
+  gap: 0.65rem;
+  align-items: baseline;
+  padding: 0.38rem 0.1rem;
+  border-top: 1px solid var(--line);
+}
+.st-code {
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.st-empty { margin: 0.45rem 0; color: var(--muted); }
 #info-lr .lr + .lr { border-top: 1px solid var(--line); }
 #info-lr .lr > summary {
   display: grid;
