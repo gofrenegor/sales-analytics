@@ -647,6 +647,63 @@ def _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font):
     )
 
 
+def _oklab_lift(color):
+    """Чуть выше по светлоте OKLab, тон не уходит в серый."""
+    raw = str(color or "").strip()
+    if raw.startswith("#"):
+        raw = raw[1:]
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    if len(raw) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in raw):
+        return color
+    rgb = tuple(int(raw[index:index + 2], 16) for index in (0, 2, 4))
+
+    def linear(channel):
+        value = channel / 255.0
+        if value <= 0.04045:
+            return value / 12.92
+        return ((value + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (linear(channel) for channel in rgb)
+    l = 0.4122214708 * red + 0.5363325363 * green + 0.0514459929 * blue
+    m = 0.2119034982 * red + 0.6806995451 * green + 0.1073969566 * blue
+    s = 0.0883024619 * red + 0.2817188376 * green + 0.6299787005 * blue
+    l_, m_, s_ = (math.copysign(abs(v) ** (1.0 / 3.0), v) for v in (l, m, s))
+    L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    A = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    B = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+    L = min(0.92, L + 0.16)
+    gain = 1.15
+    A *= gain
+    B *= gain
+    l_ = L + 0.3963377774 * A + 0.2158037573 * B
+    m_ = L - 0.1055613458 * A - 0.0638541728 * B
+    s_ = L - 0.0894841775 * A - 1.2914855480 * B
+    l = math.copysign(abs(l_) ** 3, l_)
+    m = math.copysign(abs(m_) ** 3, m_)
+    s = math.copysign(abs(s_) ** 3, s_)
+    out = (
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+    )
+
+    def encode(channel):
+        channel = max(0.0, channel)
+        if channel <= 0.0031308:
+            encoded = 12.92 * channel
+        else:
+            encoded = 1.055 * (channel ** (1.0 / 2.4)) - 0.055
+        return max(0, min(255, round(encoded * 255)))
+
+    return "#" + "".join(f"{encode(channel):02x}" for channel in out)
+
+
+def _brighten(color):
+    """Тот же тон, светлее. Обводка линии блока на графике."""
+    return _oklab_lift(color)
+
+
 def _darken(color, toward=0.2):
     """Тот же тон, примерно на 20% ближе к чёрному. Штрих темнее заливки текста."""
     raw = str(color or "").strip()
@@ -2022,6 +2079,14 @@ def _block_reason_part(frame, blocks, reasons, name, code):
     return frame.loc[(blocks == name) & (reasons == code)]
 
 
+def _block_named(frame, blocks, name):
+    if frame is None or not hasattr(frame, "iloc"):
+        return frame
+    if blocks is None or len(frame) == 0:
+        return frame.iloc[0:0]
+    return frame.loc[blocks == name]
+
+
 def _block_points(frame, period, label, grain):
     if grain == "hour":
         day = period["_start"] if label == "Текущий период" else period["_prev_start"]
@@ -2038,6 +2103,31 @@ def _frame_keys(frame):
     if "block_group" not in columns or "reason" not in columns:
         return None, None
     return _text_key(frame["block_group"]), _text_key(frame["reason"])
+
+
+def build_block_chart(curr, prev, period, has_prev, grain):
+    """Четыре линии среза «блоки»: сумма каждого блока и доли сборки / раскладки."""
+    curr_blocks, curr_reasons = _frame_keys(curr)
+    prev_blocks, prev_reasons = _frame_keys(prev)
+    lines = []
+    for index, name in enumerate(ALL_BLOCKS):
+        color = _block_donut_color(index)
+        part = _block_named(curr, curr_blocks, name)
+        points = _block_points(part, period, "Текущий период", grain)
+        if has_prev:
+            old = _block_named(prev, prev_blocks, name)
+            points = points + _block_points(old, period, "Прошлый период", grain)
+        asm = _block_reason_part(curr, curr_blocks, curr_reasons, name, "5")
+        lay = _block_reason_part(curr, curr_blocks, curr_reasons, name, "27")
+        lines.append({
+            "name": name,
+            "color": color,
+            "hot": _brighten(color),
+            "asm": _sum(asm, "loss_sum"),
+            "lay": _sum(lay, "loss_sum"),
+            "points": points,
+        })
+    return lines
 
 
 def build_block_pages(curr, prev, period, items, has_prev, grain):
@@ -2174,6 +2264,7 @@ def build_report(df_curr, df_prev, period):
                 "total": total_sum,
                 "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(total_sum)),
                 "items": block_items,
+                "lines": build_block_chart(curr, prev, period, has_prev, chart_grain),
             },
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,

@@ -1967,6 +1967,313 @@ function renderChart(rows, grain) {
   return el("div", null, wrap, legend);
 }
 
+function blockTipNode() {
+  const name = el("div", { class: "block-tip-name" });
+  const asmSum = el("b", { class: "block-tip-sum" });
+  const laySum = el("b", { class: "block-tip-sum" });
+  const tip = el(
+    "div",
+    { class: "chart-tip block-tip", role: "tooltip" },
+    name,
+    el(
+      "div",
+      { class: "block-tip-split" },
+      el(
+        "div",
+        { class: "block-tip-side" },
+        el("span", { class: "block-tip-k" }, "сборка"),
+        el("span", { class: "block-tip-lr" }, "5 LR"),
+        asmSum,
+      ),
+      el(
+        "div",
+        { class: "block-tip-side" },
+        el("span", { class: "block-tip-k" }, "раскладка"),
+        el("span", { class: "block-tip-lr" }, "27 LR"),
+        laySum,
+      ),
+    ),
+  );
+  tip._fill = (line) => {
+    name.textContent = line.name;
+    asmSum.textContent = fmtRub(line.asm);
+    laySum.textContent = fmtRub(line.lay);
+  };
+  return tip;
+}
+
+function renderBlockChart(lines, grain) {
+  const hourly = grain === "hour";
+  const axis = seriesColors();
+  const height = 400;
+  const width = 1280;
+  const pad = { l: 96, r: 28, t: 18, b: 40 };
+  const innerW = width - pad.l - pad.r;
+  const innerH = height - pad.t - pad.b;
+  const prepared = (lines || []).map((line) => {
+    const points = Array.isArray(line.points) ? line.points : [];
+    return {
+      name: String(line.name || ""),
+      color: line.color || axis.current,
+      hot: line.hot || line.color || axis.current,
+      asm: Number(line.asm) || 0,
+      lay: Number(line.lay) || 0,
+      current: points.filter((row) => row.period === "Текущий период").sort((a, b) => a.day - b.day),
+      previous: points.filter((row) => row.period === "Прошлый период").sort((a, b) => a.day - b.day),
+    };
+  }).filter((line) => line.name && line.current.length);
+  const days = prepared.flatMap((line) => [
+    ...line.current.map((row) => row.day),
+    ...line.previous.map((row) => row.day),
+  ]);
+  const maxDay = Math.max(1, ...days);
+  const ticks = chartTickDays(maxDay);
+  let minStep = ticks.length > 1 ? ticks[1] - ticks[0] : 1;
+  for (let i = 2; i < ticks.length; i += 1) minStep = Math.min(minStep, ticks[i] - ticks[i - 1]);
+  const span = Math.max(maxDay - 1, 1);
+  const spacing = (innerW / span) * minStep;
+  const digits = hourly ? 2 : String(maxDay).length;
+  const fontPx = Math.min(12, (spacing * 0.84) / (digits * 0.72));
+  const sums = prepared.flatMap((line) => [
+    ...line.current.map((row) => row.sum),
+    ...line.previous.map((row) => row.sum),
+  ]);
+  const maxY = niceMax(Math.max(0, ...sums));
+  const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / (maxDay - 1)) * innerW);
+  const y = (value) => pad.t + innerH - (value / maxY) * innerH;
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart block-chart", role: "img" });
+  svg.setAttribute("aria-label", hourly ? "Динамика потерь по блокам, часы" : "Динамика потерь по блокам");
+  for (let i = 0; i <= 4; i += 1) {
+    const value = maxY * i / 4;
+    const yy = y(value);
+    svg.append(svgEl("line", { x1: pad.l, x2: width - pad.r, y1: yy, y2: yy, stroke: axis.grid, "stroke-dasharray": i === 0 ? "0" : "3 4" }));
+    const label = svgEl("text", { x: pad.l - 10, y: yy, "text-anchor": "end", "dominant-baseline": "middle", "font-size": "12" });
+    label.textContent = fmtInt(value);
+    svg.append(label);
+  }
+  for (const day of ticks) {
+    const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
+    label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
+    svg.append(label);
+  }
+
+  function toPts(series) {
+    return series.map((row) => ({ x: x(row.day), y: y(row.sum) }));
+  }
+  function pathOf(pts) {
+    return pts.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  }
+  const drawn = prepared.map((line) => ({
+    ...line,
+    currentPts: toPts(line.current),
+    previousPts: toPts(line.previous),
+  }));
+
+  for (const line of drawn) {
+    if (!line.previousPts.length) continue;
+    svg.append(svgEl("path", {
+      d: pathOf(line.previousPts),
+      class: "chart-line block-prev",
+      "data-block": line.name,
+      fill: "none",
+      stroke: "#9c9892",
+      "stroke-width": "2.25",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+      "stroke-dasharray": "6 5",
+    }));
+  }
+  for (const line of drawn) {
+    if (!line.currentPts.length) continue;
+    svg.append(svgEl("path", {
+      d: pathOf(line.currentPts),
+      class: "chart-line-glow",
+      "data-block": line.name,
+      fill: "none",
+      stroke: line.hot,
+      "stroke-width": "8",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+      opacity: "0",
+    }));
+  }
+  for (const line of drawn) {
+    if (!line.currentPts.length) continue;
+    const d = pathOf(line.currentPts);
+    svg.append(svgEl("path", {
+      d,
+      class: "chart-line block-now",
+      "data-block": line.name,
+      fill: "none",
+      stroke: line.color,
+      "stroke-width": "2.25",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    }));
+    const dots = svgEl("g", { class: "chart-dots", "data-block": line.name });
+    for (const point of line.currentPts) {
+      dots.append(svgEl("circle", { cx: point.x, cy: point.y, r: "3.2", fill: line.color }));
+    }
+    svg.append(dots);
+  }
+
+  const hit = svgEl("rect", { x: pad.l, y: pad.t, width: innerW, height: innerH, fill: "transparent" });
+  svg.append(hit);
+  const tip = blockTipNode();
+  const wrap = el("div", { class: "chart-wrap block-chart" });
+  wrap.append(svg, tip);
+  const legend = el("div", { class: "legend" });
+  const box = el("div", { class: "block-chart-box" }, wrap, legend);
+  for (const line of drawn) {
+    const item = el("span", { class: "lg block", "data-block": line.name }, line.name);
+    item.style.setProperty("--swatch", line.color);
+    legend.append(item);
+  }
+
+  let hotName = "";
+  const stroke = 2.25;
+
+  function nearestLine(line, local) {
+    const pts = line.currentPts;
+    if (!pts.length) return null;
+    if (pts.length === 1) {
+      return { dist: Math.hypot(local.x - pts[0].x, local.y - pts[0].y), at: pts[0] };
+    }
+    let bestDist = Infinity;
+    let bestAt = pts[0];
+    for (let i = 0; i < pts.length - 1; i += 1) {
+      const a = pts[i];
+      const b = pts[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy || 1;
+      let t = ((local.x - a.x) * dx + (local.y - a.y) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + t * dx;
+      const py = a.y + t * dy;
+      const dist = Math.hypot(local.x - px, local.y - py);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestAt = { x: px, y: py };
+      }
+    }
+    return { dist: bestDist, at: bestAt };
+  }
+
+  function nearest(local) {
+    let best = null;
+    let bestDist = Infinity;
+    let bestAt = null;
+    for (const line of drawn) {
+      const hit = nearestLine(line, local);
+      if (!hit || hit.dist >= bestDist) continue;
+      best = line;
+      bestDist = hit.dist;
+      bestAt = hit.at;
+    }
+    return { line: best, dist: bestDist, at: bestAt };
+  }
+
+  function paint(name) {
+    hotName = name || "";
+    box.classList.toggle("is-focus", Boolean(hotName));
+    const nodes = [
+      ...svg.querySelectorAll("[data-block]"),
+      ...legend.querySelectorAll("[data-block]"),
+    ];
+    for (const node of nodes) {
+      const on = node.dataset.block === hotName;
+      node.classList.toggle("is-hot", on && !node.classList.contains("block-prev"));
+      node.classList.toggle("is-on", on && node.classList.contains("block-prev"));
+    }
+  }
+
+  function placeTip(at) {
+    const host = wrap.getBoundingClientRect();
+    const anchor = svg.createSVGPoint();
+    anchor.x = at.x;
+    anchor.y = at.y;
+    const screen = anchor.matrixTransform(svg.getScreenCTM());
+    let left = screen.x - host.left + 14;
+    let top = screen.y - host.top - tip.offsetHeight - 12;
+    if (top < 8) top = screen.y - host.top + 14;
+    if (left + tip.offsetWidth > host.width) left = Math.max(8, host.width - tip.offsetWidth - 8);
+    if (left < 8) left = 8;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+
+  function showLine(line, at) {
+    const opening = !tip.classList.contains("is-in") || hotName !== line.name;
+    tip._fill(line);
+    tip.hidden = false;
+    if (opening && !reducedMotion()) {
+      tip.classList.remove("is-in");
+      void tip.offsetWidth;
+    }
+    placeTip(at);
+    tip.classList.add("is-in");
+    paint(line.name);
+  }
+
+  function hideLine() {
+    tip.classList.remove("is-in");
+    paint("");
+  }
+
+  function localOf(event) {
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    return { local: point.matrixTransform(ctm.inverse()), scale: Math.hypot(ctm.a, ctm.b) || 1 };
+  }
+
+  function onMove(event) {
+    const mapped = localOf(event);
+    if (!mapped) return;
+    const found = nearest(mapped.local);
+    const enter = stroke / 2 + 2 / mapped.scale;
+    const leave = stroke / 2 + 8 / mapped.scale;
+    if (found.line && found.dist <= enter) {
+      if (found.line.name === hotName) placeTip(found.at);
+      else showLine(found.line, found.at);
+      return;
+    }
+    if (hotName) {
+      const hot = drawn.find((line) => line.name === hotName);
+      const still = hot ? nearestLine(hot, mapped.local) : null;
+      if (still && still.dist <= leave) {
+        placeTip(still.at);
+        return;
+      }
+      hideLine();
+    }
+  }
+
+  const fine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  if (fine) {
+    wrap.addEventListener("pointermove", onMove);
+    wrap.addEventListener("pointerleave", hideLine);
+  } else {
+    wrap.addEventListener("pointerup", (event) => {
+      const mapped = localOf(event);
+      if (!mapped) return;
+      const found = nearest(mapped.local);
+      const reach = stroke / 2 + 24 / mapped.scale;
+      if (!found.line || found.dist > reach || found.line.name === hotName) {
+        hideLine();
+        return;
+      }
+      showLine(found.line, found.at);
+    });
+  }
+
+  return box;
+}
+
 function empPack() {
   const data = state.employees;
   if (!data) return null;
@@ -2564,11 +2871,15 @@ function renderDashboard(screen) {
   }
   if (state.report.show_daily) {
     const hourly = state.report.chart_grain === "hour";
+    const lines = blocksMode && dash.blocks && Array.isArray(dash.blocks.lines) ? dash.blocks.lines : null;
+    const blockLines = lines && lines.length;
     const chartCol = el(
       "div",
       { class: "daily-chart" },
-      el("h3", { class: "section-title" }, hourly ? "Динамика по часам" : "Динамика по дням"),
-      renderChart(state.report.daily, state.report.chart_grain),
+      el("h3", { class: "section-title" }, blockLines ? "Динамика потерь" : (hourly ? "Динамика по часам" : "Динамика по дням")),
+      blockLines
+        ? renderBlockChart(lines, state.report.chart_grain)
+        : renderChart(state.report.daily, state.report.chart_grain),
     );
     hero.append(el("div", { class: "daily-board" }, chartCol));
   }

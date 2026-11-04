@@ -2100,6 +2100,72 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-sp
   background: var(--blue);
 }
 .lg.prev::before { background: #8b95a5; }
+.lg.block::before { background: var(--swatch, var(--blue)); }
+.block-chart-box .chart-line.block-now,
+.block-chart-box .chart-dots,
+.block-chart-box .lg.block {
+  transition: opacity 0.4s var(--ease-out);
+}
+.block-chart-box.is-focus .chart-line.block-now:not(.is-hot),
+.block-chart-box.is-focus .chart-dots:not(.is-hot) {
+  opacity: 0;
+}
+.block-chart-box.is-focus .lg.block:not(.is-hot) { opacity: 0.32; }
+.block-tip {
+  min-width: 17rem;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 250ms var(--ease-out), transform 250ms var(--ease-out), visibility 0s linear 250ms;
+}
+.block-tip.is-in {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 250ms var(--ease-out), transform 250ms var(--ease-out), visibility 0s linear 0s;
+}
+.block-tip-name {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 8px;
+}
+.block-tip-split { display: grid; grid-template-columns: 1fr 1fr; }
+.block-tip-side {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 6.5rem;
+}
+.block-tip-side:first-child { padding-right: 14px; }
+.block-tip-side + .block-tip-side {
+  border-left: 1px solid var(--line-strong);
+  padding-left: 14px;
+}
+.block-tip-k { font-size: 15px; font-weight: 750; }
+.block-tip-lr { color: var(--muted); font-size: 13px; }
+.block-tip-sum {
+  font-size: 1.15rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+/* BLOCK-LINE-GLOW */
+.block-chart-box .chart-line.block-prev {
+  opacity: 0;
+  transition: opacity 0.4s var(--ease-out);
+}
+.block-chart-box.is-focus .chart-line.block-prev.is-on { opacity: 0.4; }
+.block-chart-box .chart-line-glow {
+  opacity: 0;
+  stroke-width: 2.25;
+  pointer-events: none;
+  transition: opacity 0.4s var(--ease-out), stroke-width 0.4s var(--ease-out);
+}
+.block-chart-box.is-focus .chart-line-glow.is-hot {
+  opacity: 1;
+  stroke-width: 8;
+}
+/* BLOCK-LINE-GLOW-END */
 
 .chart-tip {
   position: absolute;
