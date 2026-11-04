@@ -200,28 +200,44 @@ def _polar(cx, cy, radius, deg):
     return cx + radius * math.cos(rad), cy + radius * math.sin(rad)
 
 
+# Рамка пары. Зазор до заливки маленький, углы заметно круглые, не стык linejoin.
+PAIR_OUTLINE_GAP = 1.0
+PAIR_OUTLINE_RADIUS = 16.0
+
+
 def _pair_outline(cx, cy, r, sw, a0, a1, color):
     """Тонкая замкнутая рамка двух соседних долей и зазора между ними.
 
     Внешняя дуга по часовой, внутренняя обратно. Общей стороны между блоками нет.
-    Штрих на 3px снаружи заливки и на долю не садится.
+    Штрих в 1px от заливки. Углы срезаны тем же скруглением, что у короткой дуги,
+    но радиус больше, чтобы край читался круглым.
     """
     span = a1 - a0
     if span <= 0.4:
         return ""
-    outer = r + sw / 2 + 3
-    inner = r - sw / 2 - 3
-    large = 1 if span > 180 else 0
-    x0, y0 = _polar(cx, cy, outer, a0)
-    x1, y1 = _polar(cx, cy, outer, a1)
-    x2, y2 = _polar(cx, cy, inner, a1)
-    x3, y3 = _polar(cx, cy, inner, a0)
+    outer = r + sw / 2 + PAIR_OUTLINE_GAP
+    inner = r - sw / 2 - PAIR_OUTLINE_GAP
+    if _fillets_fit(span, outer, inner, PAIR_OUTLINE_RADIUS):
+        rho = PAIR_OUTLINE_RADIUS
+    else:
+        rho = _corner_radius(span, outer, inner)
+    if rho:
+        d = _rounded_segment_path(cx, cy, outer, inner, a0, span, rho)
+    else:
+        large = 1 if span > 180 else 0
+        x0, y0 = _polar(cx, cy, outer, a0)
+        x1, y1 = _polar(cx, cy, outer, a1)
+        x2, y2 = _polar(cx, cy, inner, a1)
+        x3, y3 = _polar(cx, cy, inner, a0)
+        d = (
+            f"M {x0:.2f} {y0:.2f} "
+            f"A {outer:.2f} {outer:.2f} 0 {large} 1 {x1:.2f} {y1:.2f} "
+            f"L {x2:.2f} {y2:.2f} "
+            f"A {inner:.2f} {inner:.2f} 0 {large} 0 {x3:.2f} {y3:.2f} Z"
+        )
     return (
         f'<path class="loss-pair" fill="none" pointer-events="none" stroke="{color}" '
-        f'd="M {x0:.2f} {y0:.2f} '
-        f'A {outer:.2f} {outer:.2f} 0 {large} 1 {x1:.2f} {y1:.2f} '
-        f'L {x2:.2f} {y2:.2f} '
-        f'A {inner:.2f} {inner:.2f} 0 {large} 0 {x3:.2f} {y3:.2f} Z" />'
+        f'stroke-linejoin="round" stroke-linecap="round" d="{d}" />'
     )
 
 
