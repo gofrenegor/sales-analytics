@@ -1695,7 +1695,7 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  width: min(100%, calc(56rem * 1.06));
+  width: min(100%, calc(56rem * 1.06 * 0.75));
 }
 .loss-donut-wrap {
   position: relative;
@@ -2448,7 +2448,7 @@ button.lg.block {
   .loss-pct-out { grid-area: out; justify-self: start; text-align: left; }
   .loss-ring-row.loss-ring-blocks {
     display: flex;
-    width: min(100%, calc(32rem * 1.06));
+    width: min(100%, calc(32rem * 1.06 * 0.75));
   }
 }
 
