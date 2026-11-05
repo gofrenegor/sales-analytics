@@ -2284,8 +2284,8 @@ button.lg.block {
   z-index: 4;
   left: 7.5%;
   right: 2.1875%;
-  top: 4.5%;
-  bottom: 10%;
+  top: 0;
+  bottom: 0;
   border: 1px solid var(--ash);
   border-radius: 12px;
   background: var(--sidebar);
@@ -2317,7 +2317,7 @@ button.lg.block {
   gap: 8px 12px;
   height: 100%;
   min-height: 0;
-  padding: 8px 10px 4px;
+  padding: 56px 16px 12px;
 }
 .block-plats-row[data-count="1"] { grid-template-columns: minmax(0, 1fr); }
 .block-plat {
@@ -2374,23 +2374,15 @@ button.lg.block {
 .plat-prev { opacity: 0.4; }
 .block-period {
   position: absolute;
-  z-index: 5;
-  left: calc((7.5% + (100% - 2.1875%)) / 2);
-  top: 4.5%;
+  z-index: 2;
+  top: 16px;
+  left: 50%;
   display: flex;
   align-items: baseline;
   gap: 10px;
   margin: 0;
   pointer-events: none;
-  opacity: 0;
-  visibility: hidden;
-  transform: translate(-50%, calc(-100% - 10px));
-  transition: opacity 0.4s var(--ease-out), visibility 0s linear 0.4s;
-}
-.block-chart-box.is-plats .block-period {
-  opacity: 1;
-  visibility: visible;
-  transition: opacity 0.4s var(--ease-out), visibility 0s linear 0s;
+  transform: translateX(-50%);
 }
 .block-period-name {
   color: var(--muted);

@@ -2289,16 +2289,17 @@ function renderBlockChart(lines, grain) {
   svg.append(hit);
   const tip = blockTipNode();
   const platRow = el("div", { class: "block-plats-row" });
+  const periodName = el("span", { class: "block-period-name" });
+  const periodSum = el("b", { class: "block-period-sum" });
+  const period = el("div", { class: "block-period" }, periodName, periodSum);
   const platPanel = el(
     "div",
     { class: "block-plats", "aria-hidden": "true" },
     el("div", { class: "block-plats-clip" }, platRow),
+    period,
   );
-  const periodName = el("span", { class: "block-period-name" });
-  const periodSum = el("b", { class: "block-period-sum" });
-  const period = el("div", { class: "block-period", "aria-hidden": "true" }, periodName, periodSum);
   const wrap = el("div", { class: "chart-wrap block-chart" });
-  wrap.append(svg, platPanel, period, tip);
+  wrap.append(svg, platPanel, tip);
   const legend = el("div", { class: "legend" });
   const box = el("div", { class: "block-chart-box" }, wrap, legend);
   for (const line of drawn) {
@@ -2408,7 +2409,7 @@ function renderBlockChart(lines, grain) {
     const hero = wrap.closest(".hero");
     const donut = hero ? hero.querySelector(".loss-donut") : null;
     const donutBox = donut ? donut.getBoundingClientRect() : null;
-    const lift = box.classList.contains("is-plats") ? period.offsetHeight + 16 : 0;
+    const lift = platPanel.getAttribute("aria-hidden") === "false" ? period.offsetHeight + 16 : 0;
     const ringBottom = donutBox ? donutBox.top + donutBox.height * 0.86 - lift : host.top - height - 36 - lift;
     let topAbs = host.top - height - 18 - lift;
     if (topAbs < ringBottom + 8) topAbs = ringBottom + 8;
@@ -2502,8 +2503,6 @@ function renderBlockChart(lines, grain) {
     syncWatch();
     platPanel.classList.remove("is-in");
     platPanel.setAttribute("aria-hidden", "true");
-    period.setAttribute("aria-hidden", "true");
-    box.classList.remove("is-plats");
     placeTip();
     const next = event ? lineAt(event) : null;
     platArm = !next || next.name !== closed;
@@ -2516,8 +2515,6 @@ function renderBlockChart(lines, grain) {
     platArm = false;
     fillPlats(line);
     platPanel.setAttribute("aria-hidden", "false");
-    period.setAttribute("aria-hidden", "false");
-    box.classList.add("is-plats");
     syncWatch();
     placeTip();
     if (reducedMotion()) {
