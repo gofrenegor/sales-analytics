@@ -2309,6 +2309,75 @@ button.lg.block {
     transform 0.4s var(--ease-out),
     visibility 0s linear 0s;
 }
+/* PLAT-PIN */
+.plat-pin-hint {
+  margin: 0 0 0.35rem;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+.daily-chart:has(.plat-pin-hint) > .section-title { margin-bottom: 0.15rem; }
+.plat-pin-hint kbd {
+  display: inline-block;
+  margin-right: 0.35em;
+  padding: 0 0.38em;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--card);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+}
+.plat-pin-mark {
+  position: absolute;
+  z-index: 7;
+  left: calc(7.5% + (100% - 7.5% - 2.1875%) / 2);
+  top: 50%;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.86);
+}
+.plat-pin-mark svg { width: 26px; height: 26px; display: block; }
+.plat-pin-mark path {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+}
+.plat-pin-mark.is-in { animation: plat-pin-in 0.4s linear forwards; }
+.plat-pin-mark.is-in path { animation: plat-tick 0.4s linear forwards; }
+.plat-pin-mark.is-away { animation: plat-pin-away 0.45s linear forwards; }
+.plat-pin-mark.is-away path { stroke-dashoffset: 0; }
+@keyframes plat-pin-in {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.82); }
+  15% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  25% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  75% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes plat-tick {
+  0% { stroke-dashoffset: 20; }
+  25% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes plat-pin-away {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(0.86); }
+  22% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  42% { opacity: 1; transform: translate(-50%, calc(-50% - 6px)) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, calc(-50% - 72px)) scale(0.7); }
+}
+/* PLAT-PIN-END */
 .block-plats-clip { height: 100%; min-height: 0; }
 .block-plats-row {
   display: grid;
