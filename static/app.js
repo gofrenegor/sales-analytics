@@ -2202,6 +2202,15 @@ function renderBlockChart(lines, grain) {
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart block-chart", role: "img" });
   svg.setAttribute("aria-label", hourly ? "Динамика потерь по блокам, часы" : "Динамика потерь по блокам");
   drawLossAxis(svg, maxY, y, pad.l, width - pad.r, axis.grid, pad.l - 10, 12);
+  const mid = svgEl("text", {
+    x: pad.l - 10,
+    y: y(maxY / 2),
+    "text-anchor": "end",
+    "dominant-baseline": "middle",
+    "font-size": "12",
+  });
+  mid.textContent = fmtInt(maxY / 2);
+  svg.append(mid);
   for (const day of ticks) {
     const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
     label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
