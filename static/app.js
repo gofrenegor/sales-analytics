@@ -2056,6 +2056,14 @@ function setPlatWatch(fn) {
   if (platPointerWatch) window.addEventListener("pointermove", platPointerWatch);
 }
 
+let platKeyWatch = null;
+
+function setPlatKey(fn) {
+  if (platKeyWatch) window.removeEventListener("keydown", platKeyWatch);
+  platKeyWatch = fn || null;
+  if (platKeyWatch) window.addEventListener("keydown", platKeyWatch);
+}
+
 function splitChartPeriods(points) {
   const rows = Array.isArray(points) ? points : [];
   const byDay = (a, b) => a.day - b.day;
@@ -2147,6 +2155,7 @@ function renderPlatformChart(platform, grain, color, maxDay) {
 
 function renderBlockChart(lines, grain) {
   setPlatWatch(null);
+  setPlatKey(null);
   const hourly = grain === "hour";
   const axis = seriesColors();
   const height = 400;
@@ -2298,8 +2307,24 @@ function renderBlockChart(lines, grain) {
     el("div", { class: "block-plats-clip" }, platRow),
     period,
   );
+  const pinMark = el(
+    "div",
+    { class: "plat-pin-mark", "aria-hidden": "true" },
+    (() => {
+      const svgMark = svgEl("svg", { viewBox: "0 0 24 24", "aria-hidden": "true" });
+      svgMark.append(svgEl("path", {
+        d: "M6.2 12.5 10.1 16.3 17.8 8",
+        fill: "none",
+        stroke: "#fff",
+        "stroke-width": "2.4",
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      }));
+      return svgMark;
+    })(),
+  );
   const wrap = el("div", { class: "chart-wrap block-chart" });
-  wrap.append(svg, platPanel, tip);
+  wrap.append(svg, platPanel, pinMark, tip);
   const legend = el("div", { class: "legend" });
   const box = el("div", { class: "block-chart-box" }, wrap, legend);
   for (const line of drawn) {
@@ -2324,6 +2349,8 @@ function renderBlockChart(lines, grain) {
   let hotName = "";
   let platArm = true;
   let platOpen = null;
+  let platPinned = false;
+  let pointerXY = null;
   const stroke = 2.25;
   const lineEnterPx = 4;
   const focusAwayPx = 22;
@@ -2500,6 +2527,7 @@ function renderBlockChart(lines, grain) {
   function shutPlats(event) {
     const closed = platOpen ? platOpen.name : "";
     platOpen = null;
+    platPinned = false;
     syncWatch();
     platPanel.classList.remove("is-in");
     platPanel.setAttribute("aria-hidden", "true");
@@ -2527,9 +2555,42 @@ function renderBlockChart(lines, grain) {
   }
 
   function onPlatMove(event) {
-    if (!platOpen) return;
+    if (!platOpen || platPinned) return;
     const away = Math.hypot(event.clientX - platOpen.x, event.clientY - platOpen.y);
     if (away >= platAwayPx) shutPlats(event);
+  }
+
+  function dropPinIfAway() {
+    if (platPinned || !platOpen || !pointerXY) return;
+    const away = Math.hypot(pointerXY.x - platOpen.x, pointerXY.y - platOpen.y);
+    if (away >= platAwayPx) shutPlats({ clientX: pointerXY.x, clientY: pointerXY.y });
+  }
+
+  function playPinMark(away) {
+    pinMark.classList.remove("is-in", "is-away");
+    if (reducedMotion()) return;
+    void pinMark.offsetWidth;
+    pinMark.classList.add(away ? "is-away" : "is-in");
+  }
+
+  function typingField() {
+    const node = document.activeElement;
+    if (!node) return false;
+    if (node.isContentEditable) return true;
+    return node.tagName === "INPUT" || node.tagName === "TEXTAREA" || node.tagName === "SELECT";
+  }
+
+  function onPinKey(event) {
+    if (!box.isConnected) {
+      setPlatKey(null);
+      return;
+    }
+    if (event.repeat || event.key !== "Shift") return;
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!platOpen || typingField()) return;
+    platPinned = !platPinned;
+    playPinMark(!platPinned);
+    if (!platPinned) dropPinIfAway();
   }
 
   function releaseFocus(event) {
@@ -2545,6 +2606,7 @@ function renderBlockChart(lines, grain) {
   }
 
   function onChartPointer(event) {
+    pointerXY = { x: event.clientX, y: event.clientY };
     onPlatMove(event);
     releaseFocus(event);
   }
@@ -2594,6 +2656,7 @@ function renderBlockChart(lines, grain) {
       showLine(found.line, mapped.local);
     });
   }
+  setPlatKey(onPinKey);
 
   return box;
 }
@@ -3187,10 +3250,18 @@ function renderDashboard(screen) {
       "div",
       { class: "daily-chart" },
       el("h3", { class: "section-title" }, blockLines ? "Динамика потерь" : (hourly ? "Динамика по часам" : "Динамика по дням")),
-      blockLines
-        ? renderBlockChart(lines, state.report.chart_grain)
-        : renderChart(state.report.daily, state.report.chart_grain),
     );
+    if (blockLines) {
+      chartCol.append(el(
+        "p",
+        { class: "plat-pin-hint" },
+        el("kbd", null, "shift"),
+        "закрепляет мультиграфик на экране",
+      ));
+    }
+    chartCol.append(blockLines
+      ? renderBlockChart(lines, state.report.chart_grain)
+      : renderChart(state.report.daily, state.report.chart_grain));
     hero.append(el("div", { class: "daily-board" }, chartCol));
   }
   screen.append(hero);
@@ -3362,6 +3433,7 @@ function renderScreen() {
 }
 
 function fillScreen(screen) {
+  setPlatKey(null);
   const report = state.report;
   if (state.view === "employees") {
     renderEmployees(screen);
