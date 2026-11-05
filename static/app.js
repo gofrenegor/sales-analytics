@@ -2285,8 +2285,11 @@ function renderBlockChart(lines, grain) {
     { class: "block-plats", "aria-hidden": "true" },
     el("div", { class: "block-plats-clip" }, platRow),
   );
+  const periodName = el("span", { class: "block-period-name" });
+  const periodSum = el("b", { class: "block-period-sum" });
+  const period = el("div", { class: "block-period", "aria-hidden": "true" }, periodName, periodSum);
   const wrap = el("div", { class: "chart-wrap block-chart" });
-  wrap.append(svg, platPanel, tip);
+  wrap.append(svg, platPanel, period, tip);
   const legend = el("div", { class: "legend" });
   const box = el("div", { class: "block-chart-box" }, wrap, legend);
   for (const line of drawn) {
@@ -2378,11 +2381,15 @@ function renderBlockChart(lines, grain) {
     }
   }
 
+  let tipAt = null;
+
   function placeTip(at) {
+    if (at) tipAt = at;
+    if (!tipAt) return;
     const host = wrap.getBoundingClientRect();
     const anchor = svg.createSVGPoint();
-    anchor.x = at.x;
-    anchor.y = at.y;
+    anchor.x = tipAt.x;
+    anchor.y = tipAt.y;
     const screen = anchor.matrixTransform(svg.getScreenCTM());
     const width = tip.offsetWidth;
     const height = tip.offsetHeight;
@@ -2392,8 +2399,9 @@ function renderBlockChart(lines, grain) {
     const hero = wrap.closest(".hero");
     const donut = hero ? hero.querySelector(".loss-donut") : null;
     const donutBox = donut ? donut.getBoundingClientRect() : null;
-    const ringBottom = donutBox ? donutBox.top + donutBox.height * 0.86 : host.top - height - 36;
-    let topAbs = host.top - height - 18;
+    const lift = box.classList.contains("is-plats") ? period.offsetHeight + 16 : 0;
+    const ringBottom = donutBox ? donutBox.top + donutBox.height * 0.86 - lift : host.top - height - 36 - lift;
+    let topAbs = host.top - height - 18 - lift;
     if (topAbs < ringBottom + 8) topAbs = ringBottom + 8;
     if (topAbs < 8) topAbs = 8;
     tip.style.left = `${left}px`;
@@ -2455,6 +2463,9 @@ function renderBlockChart(lines, grain) {
     const list = line.platforms || [];
     platRow.dataset.count = String(list.length);
     platRow.replaceChildren();
+    periodName.textContent = line.face || line.name;
+    periodSum.textContent = fmtRub((Number(line.asm) || 0) + (Number(line.lay) || 0));
+    period.style.setProperty("--swatch", line.color);
     for (const platform of list) {
       const card = el(
         "figure",
@@ -2482,6 +2493,9 @@ function renderBlockChart(lines, grain) {
     syncWatch();
     platPanel.classList.remove("is-in");
     platPanel.setAttribute("aria-hidden", "true");
+    period.setAttribute("aria-hidden", "true");
+    box.classList.remove("is-plats");
+    placeTip();
     const next = event ? lineAt(event) : null;
     platArm = !next || next.name !== closed;
   }
@@ -2493,7 +2507,10 @@ function renderBlockChart(lines, grain) {
     platArm = false;
     fillPlats(line);
     platPanel.setAttribute("aria-hidden", "false");
+    period.setAttribute("aria-hidden", "false");
+    box.classList.add("is-plats");
     syncWatch();
+    placeTip();
     if (reducedMotion()) {
       platPanel.classList.add("is-in");
       return;
@@ -2536,9 +2553,9 @@ function renderBlockChart(lines, grain) {
     const inZone = Boolean(found.line && found.dist <= enter);
     if (!inZone && !platOpen) platArm = true;
     if (inZone) {
-      showLine(found.line, mapped.local);
       if (!platOpen && platArm) openPlats(found.line, event);
       else if (platOpen && platOpen.name !== found.line.name) openPlats(found.line, event);
+      showLine(found.line, mapped.local);
       return;
     }
     if (hotName) {
@@ -2567,8 +2584,8 @@ function renderBlockChart(lines, grain) {
         platArm = true;
         return;
       }
-      showLine(found.line, mapped.local);
       openPlats(found.line, event);
+      showLine(found.line, mapped.local);
     });
   }
 
