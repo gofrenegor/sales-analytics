@@ -484,6 +484,10 @@ def _employees_page_payload(period, lr, page, sort, query):
             return (-row["sum"], -row["losses"], tie)
         if sort == "found":
             return (row["found"] is None, -(row["found"] or 0), -row["losses"], -row["sum"], tie)
+        if sort == "found_share":
+            known = row["found"] is not None and row["losses"] > 0
+            share = row["found"] / row["losses"] if known else 0
+            return (not known, -share, -(row["found"] or 0), -row["losses"], -row["sum"], tie)
         return (-row["losses"], -row["sum"], tie)
 
     rows.sort(key=sort_key)
@@ -547,7 +551,7 @@ def employees(
     end: str | None = None,
     lr: str | None = Query(default=None, pattern="^(5|27)$"),
     page: int = Query(default=0, ge=0, le=1000000),
-    sort: str = Query(default="qty", pattern="^(qty|sum|found)$"),
+    sort: str = Query(default="qty", pattern="^(qty|sum|found|found_share)$"),
     q: str = Query(default="", max_length=64, pattern=r"^[0-9]*$"),
     user=Depends(actor),
 ):

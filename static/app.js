@@ -2801,13 +2801,13 @@ function bindEmpSortDismiss() {
 
 function empSortControl() {
   bindEmpSortDismiss();
-  const sortMode = ["sum", "found"].includes(state.empSort) ? state.empSort : "qty";
+  const sortMode = ["sum", "found", "found_share"].includes(state.empSort) ? state.empSort : "qty";
   const menu = el("div", {
     class: "emp-sort-menu",
     role: "menu",
     hidden: state.empSortOpen ? null : true,
   });
-  for (const item of [["qty", "штуки"], ["sum", "рубли"], ["found", "найденные товары"]]) {
+  for (const item of [["qty", "штуки"], ["sum", "рубли"], ["found", "найденные товары"], ["found_share", "процент находов"]]) {
     const code = item[0];
     menu.append(el("button", {
       type: "button",
