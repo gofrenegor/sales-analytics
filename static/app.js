@@ -3060,9 +3060,11 @@ function renderProblemRows(screen) {
   const list = el("div", { class: "prob-list" });
   for (const row of rows.slice(page.start, page.end)) {
     const name = String(row.row || "");
+    const aisle = name.split(".")[2];
+    const label = /^\d+$/.test(aisle || "") ? `ряд ${Number(aisle)}` : name;
     const open = state.rowOpen === name;
     const card = el("div", { class: open ? "prob-card is-open" : "prob-card" });
-    const line = problemLine(name, row.skips, row.sum, "button");
+    const line = problemLine(label, row.skips, row.sum, "button");
     line.type = "button";
     line.setAttribute("aria-expanded", open ? "true" : "false");
     line.onclick = () => {
