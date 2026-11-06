@@ -817,29 +817,26 @@ def _mix_oklab(a, b):
     return "#" + "".join(f"{encode(channel):02x}" for channel in rgb)
 
 
-def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
+def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction):
     """Имя лежит на короткой полке. До полки линия изгибается в сторону.
 
     Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
-    линия начинается в 2px от дуги, уходит по часовой и закругляется
+    линия начинается в 2px от дуги, уходит по касательной и закругляется
     на стыке с полкой. Концы штриха круглые.
-    pad отодвигает полку, если рамка пересекла уже стоящую подпись.
+    Отступ полки от дуги одинаковый для всех долей. direction задаёт сторону
+    горизонтальной полки: соседние подписи у вершины можно развести в стороны.
     Буквы с внешней стороны штриха, линия их не режет.
     """
     font = 11 if len(face) > 12 else 13
     pct_font = 10 if font > 12 else 9
-    anchor, cos_m, sin_m = _text_side(mid)
+    _, cos_m, sin_m = _text_side(mid)
+    run_x = float(direction)
+    anchor = "start" if run_x > 0 else "end"
     outer = r + sw / 2
     text_w = max(len(face), 1) * font * 0.58
-    if anchor == "end":
-        run_x = -1.0
-    elif anchor == "start":
-        run_x = 1.0
-    else:
-        run_x = 1.0 if sin_m <= 0 else -1.0
     tangent_x, tangent_y = -sin_m, cos_m
-    lead = 6.0 + pad
-    side = 6.0
+    lead = 8.0
+    side = 6.0 if tangent_x * run_x >= 0 else -6.0
     overhang = 8.0
     x0 = cx + (outer + 2.0) * cos_m
     y0 = cy + (outer + 2.0) * sin_m
@@ -852,10 +849,6 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     c1y = y0 + (shelf_y - y0) * 0.55 + side * tangent_y
     c2x = shelf_x - run_x * turn
     c2y = shelf_y
-    if anchor == "middle":
-        px = shelf_x + text_w / 2.0 * run_x
-    else:
-        px = shelf_x
     # Снаружи дуги: сверху имя лежит на линии, снизу линия остаётся над именем.
     # Процент всегда дальше от кольца, чем имя.
     gap = 3.0
@@ -865,7 +858,7 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, pad):
     else:
         y_name = shelf_y - gap - font * 0.25
         y_pct = y_name - (pct_font + 2.0)
-    x = px
+    x = shelf_x
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
         f'stroke-linecap="round" stroke-linejoin="round" '
@@ -1005,9 +998,16 @@ def build_blocks_donut_svg(items, center_text):
     placed = []
     for spec in sorted(specs, key=lambda item: item["mid"]):
         chosen = None
-        for step in range(4):
+        cos_m = math.cos(math.radians(spec["mid"]))
+        direction = 1 if cos_m >= 0 else -1
+        directions = [direction]
+        # У вершин соседние короткие доли делят одну высоту. Разводим полки
+        # влево и вправо, сохраняя радиальный отступ вместо выноса вверх/вниз.
+        if abs(cos_m) < 0.35:
+            directions.append(-direction)
+        for direction in directions:
             text, box = _leader_label(
-                cx, cy, r, sw, spec["mid"], spec["face"], spec["pct_text"], spec["color"], step * 18,
+                cx, cy, r, sw, spec["mid"], spec["face"], spec["pct_text"], spec["color"], direction,
             )
             chosen = (text, box)
             if not any(_boxes_hit(box, other) for other in placed):
