@@ -420,7 +420,7 @@ def _problem_rows_payload(period):
     existing = db.known_columns() or ()
     return {
         "ready": "mx" in existing,
-        "rows": analytics.build_problem_rows(current),
+        "blocks": analytics.build_problem_blocks(current),
     }
 
 
@@ -478,14 +478,14 @@ def employee_rows(
     end: str | None = None,
     user=Depends(actor),
 ):
-    """Проблемные ряды сборки: ряд, число пропусков, сумма. Список сотрудников это не читает."""
+    """Проблемные ряды сборки: 4 блока, 7 этажей, внутри ряды. Список сотрудников это не читает."""
     blocked = denied(user)
     if blocked:
         return blocked
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employee-rows", period, _problem_rows_payload)
+    return _cached_json("employee-rows-v2", period, _problem_rows_payload)
 
 
 @app.get("/api/employees/items")

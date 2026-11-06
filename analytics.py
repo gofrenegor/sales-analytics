@@ -2411,6 +2411,10 @@ def build_employee_items(df, badge, lr):
     return items
 
 
+FLOOR_COUNT = 7
+_FLOOR_WORD = re.compile(r"этаж\s*0*(\d+)", re.IGNORECASE)
+
+
 def aisle_name(value):
     """Ряд из кода МХ. «РЗТК2.2.13.185.3.3» → «РЗТК2.2», первые два куска."""
     text = sticker_text(value)
@@ -2422,10 +2426,82 @@ def aisle_name(value):
     return text
 
 
-def build_problem_rows(df):
-    """Пропуски сборки (LR 5) по ряду МХ. Внутри ряда — полное место.
+def floor_of(value):
+    """Этаж 1–7 из МХ. «Этаж 7» или второй кусок «РЗТК2.2.…» → 2. Иначе None."""
+    text = sticker_text(value)
+    if not text:
+        return None
+    named = _FLOOR_WORD.search(text)
+    if named:
+        number = int(named.group(1))
+        return number if 1 <= number <= FLOOR_COUNT else None
+    parts = [part for part in text.split(".") if part]
+    if len(parts) < 2 or not re.fullmatch(r"0*\d+", parts[1].strip()):
+        return None
+    number = int(parts[1])
+    return number if 1 <= number <= FLOOR_COUNT else None
 
-    Строка места: код, число пропусков, сумма. Пустое МХ — «не указан».
+
+def _known_block(value):
+    text = str(value or "").strip()
+    return text if text in ALL_BLOCKS else ""
+
+
+def _problem_places(group):
+    """Ряды одного этажа: код ряда, пропуски, сумма, внутри полные МХ."""
+    if group is None or len(group) == 0:
+        return []
+    rows = []
+    for name, row_group in group.groupby("row", sort=False):
+        spots = []
+        for mx, spot in row_group.groupby("mx", sort=False):
+            spots.append({
+                "mx": str(mx),
+                "skips": int(len(spot)),
+                "sum": _f(spot["sum"].sum()),
+            })
+        spots.sort(key=lambda item: (-item["skips"], -item["sum"], item["mx"]))
+        rows.append({
+            "row": str(name),
+            "skips": int(len(row_group)),
+            "sum": _f(row_group["sum"].sum()),
+            "places": spots,
+        })
+    rows.sort(key=lambda item: (-item["skips"], -item["sum"], item["row"]))
+    return rows
+
+
+def _problem_floors(group):
+    """Семь этажей блока по порядку. Этаж вне 1–7 — «не указан», только если есть пропуски."""
+    floors = []
+    for number in range(1, FLOOR_COUNT + 1):
+        chunk = group.loc[group["floor"] == number] if len(group) else group
+        floors.append({
+            "floor": str(number),
+            "face": f"этаж {number}",
+            "skips": int(len(chunk)),
+            "sum": _f(chunk["sum"].sum()) if len(chunk) else 0.0,
+            "rows": _problem_places(chunk),
+        })
+    if len(group) == 0:
+        return floors
+    unknown = group.loc[group["floor"] == 0]
+    if len(unknown):
+        floors.append({
+            "floor": "0",
+            "face": "не указан",
+            "skips": int(len(unknown)),
+            "sum": _f(unknown["sum"].sum()),
+            "rows": _problem_places(unknown),
+        })
+    return floors
+
+
+def build_problem_blocks(df):
+    """Пропуски сборки (LR 5): 4 блока, в каждом 7 этажей, внутри ряды МХ.
+
+    Пустой период — пустой список. Если пропуски есть, блоки 1–4 на месте,
+    даже с нулём. Чужой блок — строка «не указан» в конце.
     """
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return []
@@ -2437,27 +2513,38 @@ def build_problem_rows(df):
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
-    frame = pd.DataFrame({"mx": places.to_numpy(), "sum": sums.to_numpy()}, index=part.index)
+    if "block_group" in part.columns:
+        blocks = part["block_group"].map(_known_block)
+    else:
+        blocks = pd.Series("", index=part.index)
+    frame = pd.DataFrame({
+        "mx": places.to_numpy(),
+        "sum": sums.to_numpy(),
+        "block": blocks.to_numpy(),
+        "floor": places.map(lambda value: floor_of(value) or 0).to_numpy(),
+    }, index=part.index)
     frame["row"] = frame["mx"].map(lambda value: aisle_name(value) or "не указан")
     frame.loc[frame["mx"] == "", "mx"] = "не указан"
-    rows = []
-    for name, group in frame.groupby("row", sort=False):
-        spots = []
-        for mx, spot in group.groupby("mx", sort=False):
-            spots.append({
-                "mx": str(mx),
-                "skips": int(len(spot)),
-                "sum": _f(spot["sum"].sum()),
-            })
-        spots.sort(key=lambda item: (-item["skips"], -item["sum"], item["mx"]))
-        rows.append({
-            "row": str(name),
-            "skips": int(len(group)),
-            "sum": _f(group["sum"].sum()),
-            "places": spots,
+    result = []
+    for name in ALL_BLOCKS:
+        chunk = frame.loc[frame["block"] == name]
+        result.append({
+            "block": name,
+            "face": _block_face(name),
+            "skips": int(len(chunk)),
+            "sum": _f(chunk["sum"].sum()) if len(chunk) else 0.0,
+            "floors": _problem_floors(chunk),
         })
-    rows.sort(key=lambda item: (-item["skips"], -item["sum"], item["row"]))
-    return rows
+    other = frame.loc[frame["block"] == ""]
+    if len(other):
+        result.append({
+            "block": "не указан",
+            "face": "не указан",
+            "skips": int(len(other)),
+            "sum": _f(other["sum"].sum()),
+            "floors": _problem_floors(other),
+        })
+    return result
 
 
 def _flow_code(title):

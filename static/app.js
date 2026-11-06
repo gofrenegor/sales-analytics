@@ -28,11 +28,13 @@ const state = {
   empOpen: "",
   empDetail: null,
   empCache: {},
-  rows: null,
+  blocks: null,
   rowsKey: "",
   rowsLoading: false,
   rowsError: "",
   rowsReady: true,
+  rowBlock: "",
+  rowFloor: "",
   rowOpen: "",
   rowPage: 0,
   user: null,
@@ -1210,11 +1212,13 @@ function resetEmployees() {
   state.empPage = 0;
   state.empRows = false;
   state.empLrMotion = "";
-  state.rows = null;
+  state.blocks = null;
   state.rowsKey = "";
   state.rowsLoading = false;
   state.rowsError = "";
   state.rowsReady = true;
+  state.rowBlock = "";
+  state.rowFloor = "";
   state.rowOpen = "";
   state.rowPage = 0;
 }
@@ -1316,12 +1320,12 @@ async function loadEmployees() {
 async function loadProblemRows() {
   if (freeRangePending() || !state.report || state.report.empty) return;
   const key = periodKey();
-  if (state.rows && state.rowsKey === key) return;
+  if (state.blocks && state.rowsKey === key) return;
   if (state.rowsLoading && state.rowsKey === key) return;
   const seq = ++rowsSeq;
   state.rowsLoading = true;
   state.rowsError = "";
-  state.rows = null;
+  state.blocks = null;
   state.rowsKey = key;
   if (state.view === "employees") render();
   try {
@@ -1334,7 +1338,7 @@ async function loadProblemRows() {
       return;
     }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
-    state.rows = data.rows || [];
+    state.blocks = data.blocks || [];
     state.rowsReady = data.ready !== false;
     state.rowsLoading = false;
   } catch (error) {
@@ -2800,6 +2804,8 @@ function pickEmpLr(code) {
   if (code === "5" && state.empLr === "5") {
     if (!state.empRows) return;
     state.empRows = false;
+    state.rowBlock = "";
+    state.rowFloor = "";
     state.rowOpen = "";
     render();
     return;
@@ -2807,6 +2813,8 @@ function pickEmpLr(code) {
   if (code === "27" && state.empLr === "27") return;
   state.empLr = code;
   state.empRows = false;
+  state.rowBlock = "";
+  state.rowFloor = "";
   state.rowOpen = "";
   state.empPage = 0;
   state.empSortOpen = false;
@@ -2820,6 +2828,9 @@ function openProblemRows() {
   state.empRows = true;
   state.empOpen = "";
   state.empSortOpen = false;
+  state.rowBlock = "";
+  state.rowFloor = "";
+  state.rowOpen = "";
   state.rowPage = 0;
   render();
   loadProblemRows();
@@ -2872,6 +2883,48 @@ function problemLine(name, count, sum, tag) {
   );
 }
 
+function problemTotals(items) {
+  return (items || []).reduce((acc, item) => {
+    acc.skips += Number(item.skips) || 0;
+    acc.sum += Number(item.sum) || 0;
+    return acc;
+  }, { skips: 0, sum: 0 });
+}
+
+function problemHead(screen, sub, skips, sum) {
+  if (sub) screen.append(el("div", { class: "sub" }, sub));
+  screen.append(
+    el("div", { class: "big-sum" }, fmtRub(sum)),
+    el("p", { class: "hint prob-total" }, `${fmtInt(skips)} ${skipLabel(skips)}`),
+  );
+}
+
+function problemBack(onclick) {
+  return el("button", { type: "button", class: "back prob-back", onclick }, "← Назад");
+}
+
+function problemButton(name, count, sum, onclick) {
+  const line = problemLine(name, count, sum, "button");
+  line.type = "button";
+  line.onclick = onclick;
+  return line;
+}
+
+function problemMxBlank(blocks) {
+  if (!state.rowsReady) return true;
+  let named = 0;
+  let blank = 0;
+  for (const block of blocks || []) {
+    for (const floor of block.floors || []) {
+      for (const row of floor.rows || []) {
+        named += 1;
+        if (row.row === "не указан") blank += 1;
+      }
+    }
+  }
+  return named > 0 && blank === named;
+}
+
 function renderProblemRows(screen) {
   if (freeRangePending()) {
     screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
@@ -2889,33 +2942,82 @@ function renderProblemRows(screen) {
     screen.append(el("p", { class: "box bad" }, state.rowsError));
     return;
   }
-  if (state.rowsLoading || state.rows == null) {
+  if (state.rowsLoading || state.blocks == null) {
     screen.append(el("p", { class: "hint" }, "Загрузка рядов…"));
     return;
   }
-  const all = state.rows;
-  const skips = all.reduce((sum, row) => sum + (Number(row.skips) || 0), 0);
-  const total = all.reduce((sum, row) => sum + (Number(row.sum) || 0), 0);
-  screen.append(
-    el("div", { class: "sub" }, `Рядов: ${fmtInt(all.length)}`),
-    el("div", { class: "big-sum" }, fmtRub(total)),
-    el("p", { class: "hint prob-total" }, `${fmtInt(skips)} ${skipLabel(skips)}`),
-  );
-  const blank = !state.rowsReady || (all.length > 0 && all.every((row) => row.row === "не указан"));
-  if (blank) {
-    screen.append(el("p", { class: "hint" }, "МХ пустое. В выгрузке нужна колонка «МХ» или «Место хранения» — загрузите период ещё раз."));
-  }
-  if (!all.length) {
+  const blocks = state.blocks;
+  const all = problemTotals(blocks);
+  if (!blocks.length || all.skips <= 0) {
     screen.append(el("p", { class: "box warn" }, "Нет пропусков сборки за этот период."));
     return;
   }
-  const pages = empPages(all.length);
+  let block = blocks.find((item) => item.block === state.rowBlock);
+  if (state.rowBlock && !block) {
+    state.rowBlock = "";
+    state.rowFloor = "";
+    block = null;
+  }
+  const floor = block ? (block.floors || []).find((item) => item.floor === state.rowFloor) : null;
+  if (state.rowFloor && !floor) state.rowFloor = "";
+  if (!block) {
+    problemHead(screen, "", all.skips, all.sum);
+    if (problemMxBlank(blocks)) {
+      screen.append(el("p", { class: "hint" }, "МХ пустое. В выгрузке нужна колонка «МХ» или «Место хранения» — загрузите период ещё раз."));
+    }
+    const list = el("div", { class: "prob-list" });
+    for (const item of blocks) {
+      list.append(problemButton(item.face || "не указан", item.skips, item.sum, () => {
+        state.rowBlock = item.block;
+        state.rowFloor = "";
+        state.rowOpen = "";
+        state.rowPage = 0;
+        render();
+      }));
+    }
+    screen.append(list);
+    return;
+  }
+  if (!floor) {
+    problemHead(screen, block.face || "не указан", block.skips, block.sum);
+    screen.append(problemBack(() => {
+      state.rowBlock = "";
+      state.rowFloor = "";
+      state.rowOpen = "";
+      state.rowPage = 0;
+      render();
+    }));
+    const list = el("div", { class: "prob-list" });
+    for (const item of block.floors || []) {
+      list.append(problemButton(item.face || "не указан", item.skips, item.sum, () => {
+        state.rowFloor = item.floor;
+        state.rowOpen = "";
+        state.rowPage = 0;
+        render();
+      }));
+    }
+    screen.append(list);
+    return;
+  }
+  const rows = floor.rows || [];
+  problemHead(screen, floor.face || "не указан", floor.skips, floor.sum);
+  screen.append(problemBack(() => {
+    state.rowFloor = "";
+    state.rowOpen = "";
+    state.rowPage = 0;
+    render();
+  }));
+  if (!rows.length) {
+    screen.append(el("p", { class: "box warn" }, "Нет пропусков на этом этаже."));
+    return;
+  }
+  const pages = empPages(rows.length);
   let pageIndex = state.rowPage;
   if (pageIndex >= pages.length) pageIndex = 0;
   if (pageIndex !== state.rowPage) state.rowPage = pageIndex;
   const page = pages[pageIndex];
   const list = el("div", { class: "prob-list" });
-  for (const row of all.slice(page.start, page.end)) {
+  for (const row of rows.slice(page.start, page.end)) {
     const name = String(row.row || "");
     const open = state.rowOpen === name;
     const card = el("div", { class: open ? "prob-card is-open" : "prob-card" });

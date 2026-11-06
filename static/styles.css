@@ -610,6 +610,7 @@ main {
   color: #fff;
 }
 .prob-total { margin: 0.1rem 0 0.35rem; }
+.prob-back { margin: 0.15rem 0 0.15rem; }
 .prob-list {
   display: flex;
   flex-direction: column;
