@@ -2344,18 +2344,39 @@ def _found_count(group):
 
 
 def _employee_badges(part):
-    rows = []
-    for badge, group in part.groupby("badge", sort=False):
-        flags = group["wmi"].tolist()
-        rows.append({
-            "badge": str(badge or ""),
-            "losses": int(len(group)),
-            "sum": _f(group["loss_sum"].sum()),
-            "wmi": bool(any(flags)),
-            "found": _found_count(group),
-        })
+    part = part.copy()
+    flags = part["posted"].map(posted_flag) if "posted" in part.columns else pd.Series("", index=part.index)
+    part["found_count"] = flags.eq("1")
+    part["has_posted"] = flags.isin(["1", "0"])
+    grouped = part.groupby("badge", sort=False).agg(
+        losses=("badge", "size"), amount=("loss_sum", "sum"),
+        wmi=("wmi", "any"), found=("found_count", "sum"),
+        has_posted=("has_posted", "any"),
+    )
+    rows = [{
+        "badge": str(badge or ""), "losses": int(row.losses),
+        "sum": _f(row.amount), "wmi": bool(row.wmi),
+        "found": int(row.found) if row.has_posted else None,
+    } for badge, row in grouped.iterrows()]
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
     return rows
+
+
+def prepare_employee_losses(df):
+    """Только поля списка сотрудников, без классификации склада и графиков."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    part = df.copy()
+    if "assembly_employee_id" in part.columns:
+        part["assembly_employee_id"] = part["assembly_employee_id"].map(_optional_badge)
+    reason = part["reason"] if "reason" in part else pd.Series("", index=part.index)
+    part["reason"] = reason.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    status = part["status_before"] if "status_before" in part else pd.Series("", index=part.index)
+    part["status_before"] = status.fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+    forced = part["status_before"].map(STATUS_FORCE_LR)
+    hit = forced.notna() & ~part["reason"].eq("5")
+    part.loc[hit, "reason"] = forced.loc[hit]
+    return part.loc[part["reason"].isin(EMPLOYEE_LRS)]
 
 
 def build_employees(df):

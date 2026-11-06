@@ -30,7 +30,7 @@ _cache = BoundedCache(64, 128 * 1024 * 1024, 3600)
 _ready = BoundedCache(256, 32 * 1024 * 1024, 3600)
 _summary = BoundedCache(1, 1024 * 1024, 60)
 _build_locks = {name: [threading.RLock() for _ in range(64)]
-                for name in ("frame", "json", "summary")}
+                for name in ("frame", "json", "summary", "employees")}
 SESSION_TTL = 60 * 60 * 24 * 30
 _columns_cache = None
 _generation = 0
@@ -53,8 +53,7 @@ FRAME_COLUMNS = {
         "reason", "status_before", "block_id", "office_id", "posted", "mx",
     ),
     "employees": (
-        "loss_date", "block_name", "loss_sum",
-        "reason", "status_before", "block_id", "office_id",
+        "block_name", "loss_sum", "reason", "status_before",
         "status_employee_id", "assembly_employee_id", "posted",
     ),
     # Проблемные ряды сборки: МХ и сумма. Бейджик и стикер не читаются.
@@ -631,6 +630,8 @@ def load_data(start, end, columns):
         if is_missing_table(exc):
             return analytics.prepare_losses(pd.DataFrame())
         raise DataError(f"Не удалось получить данные из базы: {public_error(exc)}") from exc
+    if tuple(columns) == FRAME_COLUMNS["employees"]:
+        return analytics.prepare_employee_losses(df)
     return analytics.prepare_losses(df)
 
 
@@ -700,6 +701,24 @@ def load_cached(start, end, kind="report"):
             if generation == _generation:
                 _cache.put(key, df, generation, size)
         return df
+
+
+def load_employee_summary(start, end):
+    """Общий компактный список для страниц, поиска и сортировки; кэш инвалидируется импортом."""
+    key = ("employee-summary-v1", start.isoformat(), end.isoformat())
+    with build_lock(("employees", key)):
+        with _cache_lock:
+            generation = _generation
+            hit = _cache.get(key, generation)
+        if hit is not None:
+            return hit
+        summary = analytics.build_employees(load_cached(start, end, "employees"))
+        # Включает запас под Python-объекты, чтобы соблюдать бюджет памяти кэша.
+        size = len(json.dumps(summary, ensure_ascii=False).encode("utf-8")) * 6
+        with _cache_lock:
+            if generation == _generation:
+                _cache.put(key, summary, generation, size)
+        return summary
 
 
 def ready_key(kind, period):
