@@ -1361,21 +1361,18 @@ def read_twin_frame(file):
 
 
 def prepare_twin(frames):
-    """Строки twin: стикер и наименование МХ. Новых потерь из них не будет.
+    """Строки twin: «Товар (ШК)» и наименование МХ. Новых потерь из них не будет.
 
-    Стыковка со суперсетом — по «ВБ Стикер». «Товар (ШК)» остаётся запасным ключом.
+    Стыковка со суперсетом только по ШК. Стикер в суперсете замаскирован и не сравнивается.
     Если в файле есть лостризон или статус, остаются только 5 ЛР и ORS.
     Файл без этих колонок уже является отчётом пропусков сборки.
     """
     if not frames:
         raise ValueError("Нет файлов")
     df = pd.concat(frames, ignore_index=True)
-    if "sticker" not in df.columns:
-        df["sticker"] = ""
     if "barcode" not in df.columns:
         df["barcode"] = ""
     df = df.copy()
-    df["sticker"] = df["sticker"].map(sticker_key)
     df["barcode"] = df["barcode"].map(sticker_text)
     stats = {
         "skipped_no_date": 0,
@@ -1385,16 +1382,13 @@ def prepare_twin(frames):
         "skipped_not_lr": 0,
         "duplicates": 0,
     }
-    no_key = (df["sticker"] == "") & (df["barcode"] == "")
+    no_key = df["barcode"] == ""
     stats["skipped_no_barcode"] = int(no_key.sum())
-    stats["skipped_no_sticker"] = int((df["sticker"] == "").sum()) if (df["sticker"] != "").any() else 0
     df = df.loc[~no_key]
     if df.empty:
-        return df, stats
+        raise ValueError("В twin нет колонки «Товар (ШК)» или она пустая.")
     if "mx" not in df.columns or not (df["mx"].map(sticker_text) != "").any():
-        raise ValueError(
-            "В twin нет колонки «Наименование МХ» или она пустая."
-        )
+        raise ValueError("В twin нет колонки «Наименование МХ» или она пустая.")
     df["mx"] = df["mx"].map(sticker_text)
     blank_mx = df["mx"] == ""
     stats["skipped_no_mx"] = int(blank_mx.sum())
@@ -1405,8 +1399,7 @@ def prepare_twin(frames):
         df = df.loc[keep]
     if not df.empty:
         before = len(df)
-        df["twin_key"] = df["sticker"].where(df["sticker"] != "", df["barcode"])
-        df = df.drop_duplicates(subset=["twin_key"], keep="last")
+        df = df.drop_duplicates(subset=["barcode"], keep="last")
         stats["duplicates"] = before - len(df)
     return df, stats
 

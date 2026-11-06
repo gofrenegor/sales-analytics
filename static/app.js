@@ -3929,17 +3929,17 @@ function wireAdmin() {
       preview.append(el("p", { class: "box ok" }, `Прочитано файлов: ${data.files}, строк к загрузке: ${data.rows}`));
       if (data.start) preview.append(el("p", { class: "box info" }, `Период: ${fmtDate(data.start)} — ${fmtDate(data.end)}`));
       if (data.skipped_no_date) preview.append(el("p", { class: "box warn" }, `Пропущено строк без даты: ${data.skipped_no_date}`));
-      if (data.skipped_no_barcode) preview.append(el("p", { class: "box warn" }, twin ? `Пропущено без стикера и ШК: ${data.skipped_no_barcode}` : `Пропущено без ШК: ${data.skipped_no_barcode}`));
+      if (data.skipped_no_barcode) preview.append(el("p", { class: "box warn" }, `Пропущено без ШК: ${data.skipped_no_barcode}`));
       if (data.skipped_no_mx) preview.append(el("p", { class: "box warn" }, `Пропущено без наименования МХ: ${data.skipped_no_mx}`));
       if (data.skipped_not_lr) preview.append(el("p", { class: "box warn" }, `Пропущено не 5 ЛР: ${data.skipped_not_lr}`));
       if (data.duplicates) preview.append(el("p", { class: "box warn" }, `Удалено повторов: ${data.duplicates}`));
       const saveLabel = twin ? "Дописать МХ" : "💾 ВЫГРУЗИТЬ В БАЗУ";
       if (twin) {
-        preview.append(el("p", { class: "box info" }, `Совпало со стикерами суперсета: ${fmtInt(data.matched || 0)}`));
-        if (data.unmatched) preview.append(el("p", { class: "box warn" }, `Стикер не найден в суперсете: ${fmtInt(data.unmatched)}`));
-        preview.append(el("p", { class: "hint" }, "Наименование МХ встанет справа от стикера. Суммы и остальные потери не меняются."));
+        preview.append(el("p", { class: "box info" }, `Совпало по ШК: ${fmtInt(data.matched || 0)}`));
+        if (data.unmatched) preview.append(el("p", { class: "box warn" }, `ШК не найден в суперсете: ${fmtInt(data.unmatched)}`));
+        preview.append(el("p", { class: "hint" }, "Наименование МХ встанет на строку сборщика с этим ШК, справа от стикера. Суммы не меняются."));
         if (!data.token) {
-          preview.append(el("p", { class: "box warn" }, "В суперсете нет этих стикеров. Сначала загрузите суперсет."));
+          preview.append(el("p", { class: "box warn" }, "В суперсете нет этих ШК. Сначала загрузите суперсет."));
           return;
         }
       } else {

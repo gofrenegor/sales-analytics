@@ -761,7 +761,7 @@ def _carry_mx(conn, df, d_min, d_max):
 
 
 def _twin_window(frame):
-    """Окно дат только если в twin есть «Дата первого списания». Иначе стикер ищется по всей базе."""
+    """Окно дат только если в twin есть «Дата первого списания». Иначе ШК ищется по всей базе."""
     if frame is None or "loss_date" not in getattr(frame, "columns", []):
         return None, None
     dates = pd.to_datetime(frame["loss_date"], errors="coerce").dropna()
@@ -799,38 +799,26 @@ def _assembly_rows(conn, d_min, d_max):
 
 
 def plan_twin(frame):
-    """Сколько строк twin находят пропуск сборки. Сначала стикер, затем ШК. Ничего не пишет."""
+    """Сколько строк twin находят пропуск сборки по ШК. Стикер не сравнивается. Ничего не пишет."""
     d_min, d_max = _twin_window(frame)
     engine = get_engine()
     with engine.connect() as conn:
         existing = _assembly_rows(conn, d_min, d_max)
-    by_sticker = {}
     by_barcode = {}
     if len(existing):
-        stickers = (
-            existing["last_sticker"].tolist()
-            if "last_sticker" in existing.columns
-            else [""] * len(existing)
-        )
-        for raw_bar, raw_sticker in zip(existing["barcode"].tolist(), stickers):
+        for raw_bar in existing["barcode"].tolist():
             codes = analytics.barcode_forms(raw_bar)
             if not codes:
                 continue
             code_set = set(codes)
             for form in codes:
                 by_barcode.setdefault(form, set()).update(code_set)
-            key = analytics.sticker_key(raw_sticker)
-            if key:
-                by_sticker.setdefault(key, set()).update(code_set)
-    stickers = frame["sticker"].tolist() if "sticker" in frame.columns else [""] * len(frame)
     barcodes = frame["barcode"].tolist() if "barcode" in frame.columns else [""] * len(frame)
     places = frame["mx"].map(analytics.sticker_text).tolist()
     by_code = {}
     matched = 0
-    for sticker, barcode, place in zip(stickers, barcodes, places):
-        found = by_sticker.get(analytics.sticker_key(sticker), set())
-        if not found and barcode:
-            found = by_barcode.get(analytics.sticker_text(barcode), set())
+    for barcode, place in zip(barcodes, places):
+        found = by_barcode.get(analytics.sticker_text(barcode), set()) if barcode else set()
         if not found:
             continue
         matched += 1
@@ -847,7 +835,7 @@ def plan_twin(frame):
 
 
 def apply_twin(frame):
-    """Дописывает наименование МХ к стикеру пропуска. Период и остальные потери не трогает."""
+    """Дописывает наименование МХ на строку сборки с тем же ШК. Период и остальные потери не трогает."""
     plan = plan_twin(frame)
     if not plan["updates"]:
         return plan
