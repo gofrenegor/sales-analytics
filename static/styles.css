@@ -1744,6 +1744,49 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   stroke-linejoin: round;
   pointer-events: none;
 }
+.loss-block-arc {
+  transform-box: view-box;
+  transform-origin: 200px 200px;
+  transition: transform 100ms var(--ease-out), opacity 100ms var(--ease-out);
+}
+.loss-ring-blocks .loss-pair,
+.loss-ring-blocks .loss-seg-label,
+.loss-ring-blocks .loss-seg-label-link > .loss-leader {
+  transition: opacity 100ms var(--ease-out);
+}
+.loss-seg-detail {
+  opacity: 0;
+  pointer-events: none;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  transition: opacity 100ms var(--ease-out);
+}
+.loss-ring-blocks .loss-seg-label-link > .loss-leader-shelf {
+  transform-box: view-box;
+  transform: scaleX(1);
+  transition: transform 300ms var(--ease-out), opacity 100ms var(--ease-out);
+}
+.loss-ring-blocks .has-hot-block .loss-block-arc:not(.is-hot) { opacity: 0.25; }
+.loss-ring-blocks .has-hot-block .loss-block-arc.is-hot { transform: scale(1.04); }
+.loss-ring-blocks .has-hot-block .loss-pair,
+.loss-ring-blocks .has-hot-block .loss-seg-label,
+.loss-ring-blocks .has-hot-block .loss-seg-label-link:not(.is-hot) > .loss-leader { opacity: 0; }
+.loss-ring-blocks .has-hot-block .loss-seg-label-link:not(.is-hot) .loss-seg-label { pointer-events: none; }
+.loss-ring-blocks .has-hot-block .loss-seg-label-link.is-hot .loss-seg-detail {
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 200ms var(--ease-out) 100ms;
+}
+.loss-ring-blocks .has-hot-block .is-hot .loss-leader-shelf {
+  transform: scaleX(var(--shelf-scale, 1));
+}
+.loss-ring-blocks .has-hot-block a.loss-seg.is-hot .loss-seg-hit { stroke: transparent; }
+@media (prefers-reduced-motion: reduce) {
+  .loss-ring-blocks .has-hot-block .loss-block-arc.is-hot { transform: none; }
+  .loss-ring-blocks .loss-leader-shelf { transition-duration: 0.01ms !important; }
+  .loss-ring-blocks .loss-seg-detail { transition-delay: 0ms !important; }
+}
 .loss-pair {
   fill: none;
   stroke-width: 1.25px;

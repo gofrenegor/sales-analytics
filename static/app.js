@@ -1806,9 +1806,30 @@ function bindDonut(host) {
     });
   });
   const blocks = [...host.querySelectorAll("[data-block]")];
+  const measureShelf = (label) => {
+    if (!label.isConnected) return;
+    const shelf = label.querySelector(".loss-leader-shelf");
+    if (!shelf) return;
+    const widths = [...label.querySelectorAll(".loss-seg-detail tspan")].map((line) => line.getComputedTextLength());
+    const width = Math.max(0, ...widths);
+    if (width > 0) label.style.setProperty("--shelf-scale", String(width / Number(shelf.dataset.width)));
+  };
+  blocks.filter((node) => node.matches(".loss-seg-label-link")).forEach(measureShelf);
+  if (document.fonts) document.fonts.ready.then(() => {
+    blocks.filter((node) => node.isConnected && node.matches(".loss-seg-label-link")).forEach(measureShelf);
+  });
   const paint = (name, on) => {
-    blocks.forEach((node) => {
-      if (node.dataset.block === name) node.classList.toggle("is-hot", on);
+    host.querySelectorAll(".loss-ring-blocks .loss-donut").forEach((svg) => {
+      if (!on && svg.dataset.hotBlock !== name) return;
+      svg.dataset.hotBlock = on ? name : "";
+      svg.classList.toggle("has-hot-block", on);
+      svg.querySelectorAll("[data-block]").forEach((node) => {
+        if (on && node.dataset.block === name && node.matches(".loss-seg-label-link")) measureShelf(node);
+        node.classList.toggle("is-hot", on && node.dataset.block === name);
+      });
+      svg.querySelectorAll(".loss-block-arc").forEach((arc) => {
+        arc.classList.toggle("is-hot", on && arc.dataset.blockArc === name);
+      });
     });
   };
   blocks.forEach((link) => {
@@ -1816,8 +1837,14 @@ function bindDonut(host) {
       event.preventDefault();
       go({ view: "block_loss", block: link.dataset.block, slice: "blocks", flow: "", group: "" });
     });
-    link.addEventListener("mouseenter", () => paint(link.dataset.block, true));
-    link.addEventListener("mouseleave", () => paint(link.dataset.block, false));
+    link.addEventListener("mouseenter", () => {
+      if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) paint(link.dataset.block, true);
+    });
+    link.addEventListener("mouseleave", (event) => {
+      if (event.relatedTarget?.closest?.("[data-block]")?.dataset.block !== link.dataset.block) {
+        paint(link.dataset.block, false);
+      }
+    });
     link.addEventListener("focus", () => paint(link.dataset.block, true));
     link.addEventListener("blur", () => paint(link.dataset.block, false));
   });

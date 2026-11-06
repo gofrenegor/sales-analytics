@@ -818,7 +818,7 @@ def _mix_oklab(a, b):
     return "#" + "".join(f"{encode(channel):02x}" for channel in rgb)
 
 
-def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction):
+def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0, qty=0):
     """Имя лежит на короткой полке. До полки линия изгибается в сторону.
 
     Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
@@ -864,9 +864,19 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction):
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
         f'stroke-linecap="round" stroke-linejoin="round" '
         f'd="M {x0:.2f} {y0:.2f} C {c1x:.2f} {c1y:.2f} {c2x:.2f} {c2y:.2f} '
-        f'{shelf_x:.2f} {shelf_y:.2f} L {end_x:.2f} {end_y:.2f}" />'
+        f'{shelf_x:.2f} {shelf_y:.2f}" />'
+        f'<line class="loss-leader loss-leader-shelf" stroke="{_darken(color)}" '
+        f'x1="{shelf_x:.2f}" y1="{shelf_y:.2f}" x2="{end_x:.2f}" y2="{end_y:.2f}" '
+        f'data-width="{text_w + overhang:.2f}" '
+        f'style="transform-origin: {shelf_x:.2f}px {shelf_y:.2f}px" />'
     )
-    svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font)
+    quantity = f"{_f(qty):,.0f}".replace(",", " ") + " шт."
+    detail = (
+        f'<text class="loss-seg-detail" text-anchor="{anchor}" fill="{color}" font-size="{font}" '
+        f'aria-hidden="true"><tspan x="{x:.2f}" y="{y_name:.2f}">{escape(fmt_rub(amount))}</tspan>'
+        f'<tspan x="{x:.2f}" y="{y_pct:.2f}" font-size="{pct_font}">{escape(quantity)}</tspan></text>'
+    )
+    svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font) + detail
     return svg, _text_box(x, y_name, y_pct, anchor, face, pct_text, font)
 
 
@@ -880,6 +890,7 @@ def warehouse_block_items(curr):
     if len(part) == 0:
         return []
     grouped = part.groupby("block_group", sort=False)["loss_sum"].sum()
+    quantities = part.groupby("block_group", sort=False)["loss_qty"].sum() if "loss_qty" in part else pd.Series(dtype=float)
     sums = {}
     for key, value in grouped.items():
         name = _as_name(key).strip()
@@ -896,6 +907,7 @@ def warehouse_block_items(curr):
             "name": name,
             "face": _block_face(name),
             "sum": sums[name],
+            "qty": _f(quantities.get(name, 0)),
             "pct": sums[name] / total * 100,
         }
         for name in ordered
@@ -963,14 +975,17 @@ def build_blocks_donut_svg(items, center_text):
         if number is not None and number not in drawn and name in ALL_BLOCKS:
             drawn[number] = (start, start + span, color, _corner_radius(span, r + sw / 2, r - sw / 2))
         pct_text = _fmt_share(pct)
-        caption = escape(f"{face}, {pct_text}")
+        caption = escape(f"{face}, {pct_text}, {fmt_rub(item.get('sum'))}, {_f(item.get('qty')):g} шт.")
         href = escape("#block=" + quote(name, safe=""))
-        arcs.append(_donut_segment(cx, cy, r, sw, start, span, color, f"b{index}"))
+        arcs.append(
+            f'<g class="loss-block-arc" data-block-arc="{escape(name)}">'
+            + _donut_segment(cx, cy, r, sw, start, span, color, f"b{index}") + '</g>'
+        )
         hit = _donut_arc(cx, cy, hit_r, hit_sw, start, span, "transparent", "loss-seg-hit")
         if hit:
             hits.append(
                 f'<a class="loss-seg" data-block="{escape(name)}" href="{href}" aria-label="{caption}">'
-                f"<title>{caption}</title>{hit}</a>"
+                f"{hit}</a>"
             )
         specs.append({
             "mid": mid,
@@ -979,6 +994,8 @@ def build_blocks_donut_svg(items, center_text):
             "color": color,
             "name": name,
             "href": href,
+            "sum": _f(item.get("sum")),
+            "qty": _f(item.get("qty")),
         })
 
     pairs = []
@@ -1005,6 +1022,7 @@ def build_blocks_donut_svg(items, center_text):
         for direction in directions:
             text, box = _leader_label(
                 cx, cy, r, sw, spec["mid"], spec["face"], spec["pct_text"], spec["color"], direction,
+                spec["sum"], spec["qty"],
             )
             chosen = (text, box)
             if not any(_boxes_hit(box, other) for other in placed):
