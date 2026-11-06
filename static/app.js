@@ -447,7 +447,7 @@ function readUrl() {
   state.flow = params.get("flow") || "";
   state.group = params.get("group") || "";
   state.block = params.get("block") || "";
-  state.slice = params.get("slice") === "blocks" ? "blocks" : "flows";
+  state.slice = ["blocks", "writeoffs"].includes(params.get("slice")) ? params.get("slice") : "flows";
   if (state.view === "employees") {
     state.flow = "";
     state.group = "";
@@ -489,7 +489,7 @@ function writeUrl(push) {
     if (state.group) params.set("group", state.group);
     if (state.block) params.set("block", state.block);
   }
-  if (state.slice === "blocks") params.set("slice", "blocks");
+  if (["blocks", "writeoffs"].includes(state.slice)) params.set("slice", state.slice);
   const url = `/?${params.toString()}`;
   if (push) history.pushState(null, "", url);
   else history.replaceState(null, "", url);
@@ -3385,7 +3385,91 @@ function renderEmpDetail(detail, lr) {
   return box;
 }
 
+const WRITEOFF_COLUMNS = [
+  ["qty", "Всего, шт"], ["unposted_qty", "Без оприход., шт"], ["posted_qty", "Оприходовано, шт"],
+  ["sum", "Все списания, ₽"], ["unposted_sum", "Без оприход., ₽"], ["posted_sum", "Оприходовано, ₽"],
+  ["share", "Доля списаний, %"], ["posted_share", "Оприходовано, %"], ["net_share", "Доля без оприход., %"],
+];
+
+function renderWarehouseWriteoffs(screen) {
+  const report = state.report.warehouse_writeoffs;
+  screen.append(el("h2", null, "Списания склад"));
+  if (!report?.total) {
+    screen.append(el("p", { class: "hint" }, "Нет списаний за выбранный период."));
+    return;
+  }
+  const total = report.total;
+  const percent = (value) => value == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 5 }).format(value) + "%";
+  const headings = ["Поток / зона / тип потери / статус", ...WRITEOFF_COLUMNS.map(([, title]) => title)];
+  const csv = [];
+  const collect = (items, path = []) => {
+    for (const item of items) {
+      const names = [...path, item.name];
+      csv.push([names.join(" / "), ...WRITEOFF_COLUMNS.map(([key]) => item[key])]);
+      collect(item.children || [], names);
+    }
+  };
+  collect(report.groups);
+  csv.push([total.name, ...WRITEOFF_COLUMNS.map(([key]) => total[key])]);
+  screen.append(el("div", { class: "writeoff-head" },
+    el("div", null, el("div", { class: "big-sum" }, fmtRub(total.sum)), el("p", { class: "hint" }, `${fmtInt(total.qty)} шт за выбранный период`)),
+    downloadButton(exportName("spisaniya-sklad"), headings, csv),
+  ));
+  screen.append(el("p", { class: "hint" }, "Раскройте поток → зону → тип потери → статус. Доли списаний считаются от общей суммы этого отчёта; процент оприходования — от суммы строки. Оборот в данных отсутствует."));
+  if (total.unknown_qty || total.unknown_sum) {
+    screen.append(el("p", { class: "box warn" }, `Флаг оприходования не указан: ${fmtInt(total.unknown_qty)} шт · ${fmtRub(total.unknown_sum)}. Эти строки входят в общий итог, но не в показатели «Оприходовано» и «Без оприходования».`));
+  }
+  const table = el("table", { class: "writeoff-table" });
+  table.append(el("caption", { class: "sr" }, "Детализация складских списаний по новому маппингу"));
+  table.append(el("thead", null, el("tr", null, headings.map((title) => el("th", { scope: "col" }, title)))));
+  const body = el("tbody");
+  const cells = (item, row) => {
+    for (const [key] of WRITEOFF_COLUMNS) {
+      const text = key.includes("share") ? percent(item[key]) : fmtInt(item[key]);
+      row.append(el("td", null, text));
+    }
+  };
+  let sequence = 0;
+  const appendRows = (items, depth = 0, ancestors = []) => {
+    for (const item of items) {
+      const id = `writeoff-${++sequence}`;
+      const children = item.children || [];
+      const row = el("tr", { class: `writeoff-level-${depth}` });
+      row.hidden = depth > 0;
+      const cell = el("th", { scope: "row" });
+      cell.style.setProperty("--depth", depth);
+      if (children.length) {
+        const button = el("button", { type: "button", "aria-expanded": "false" },
+          el("span", { class: "writeoff-chevron", "aria-hidden": "true" }, "›"), item.name);
+        button.addEventListener("click", () => {
+          const open = button.getAttribute("aria-expanded") !== "true";
+          button.setAttribute("aria-expanded", String(open));
+          body.querySelectorAll("tr").forEach((child) => {
+            if (child._ancestors?.includes(id)) {
+              child.hidden = !open || child._ancestors.some((key) => body.querySelector(`[data-writeoff="${key}"] button`)?.getAttribute("aria-expanded") !== "true");
+            }
+          });
+        });
+        cell.append(button);
+      } else cell.append(el("span", { class: "writeoff-leaf" }, item.name));
+      row.dataset.writeoff = id;
+      row._ancestors = ancestors;
+      row.append(cell);
+      cells(item, row);
+      body.append(row);
+      appendRows(children, depth + 1, [...ancestors, id]);
+    }
+  };
+  appendRows(report.groups);
+  table.append(body);
+  const foot = el("tr", null, el("th", { scope: "row" }, "Общий итог"));
+  cells(total, foot);
+  table.append(el("tfoot", null, foot));
+  screen.append(el("div", { class: "writeoff-scroll", tabindex: "0", role: "region", "aria-label": "Таблица списаний, прокрутка по горизонтали" }, table));
+}
+
 function renderDashboard(screen) {
+  if (state.slice === "writeoffs") { renderWarehouseWriteoffs(screen); return; }
   const dash = state.report.dashboard;
   const blocksMode = state.slice === "blocks";
   const hero = el("div", { class: blocksMode ? "hero hero-blocks" : "hero" });
@@ -3704,7 +3788,7 @@ function presentScreen(pane) {
 }
 
 function clearForkMotion() {
-  for (const id of ["slice-blocks", "slice-flows"]) {
+  for (const id of ["slice-blocks", "slice-flows", "slice-writeoffs"]) {
     const node = document.getElementById(id);
     if (!node) continue;
     node.style.transition = "";
@@ -3734,11 +3818,13 @@ function layoutFork() {
   const svg = wh.querySelector(".wh-lines");
   const lineBlocks = document.getElementById("slice-line-blocks");
   const lineFlows = document.getElementById("slice-line-flows");
-  if (!losses || !blocks || !flows || !fork || !svg || !lineBlocks || !lineFlows) return;
+  const writeoffs = document.getElementById("slice-writeoffs");
+  const lineWriteoffs = document.getElementById("slice-line-writeoffs");
+  if (!losses || !blocks || !flows || !fork || !svg || !lineBlocks || !lineFlows || !writeoffs || !lineWriteoffs) return;
   if (!fork.offsetWidth || !losses.offsetWidth) return;
 
   const anchorX = losses.offsetLeft + losses.offsetWidth / 2;
-  let forkLeft = anchorX - fork.offsetWidth / 2;
+  let forkLeft = anchorX - (blocks.offsetLeft + blocks.offsetWidth / 2 + flows.offsetLeft + flows.offsetWidth / 2) / 2;
   const hostLeft = wh.getBoundingClientRect().left;
   const pad = 8;
   const minLeft = pad - hostLeft;
@@ -3765,11 +3851,13 @@ function layoutFork() {
   const y1 = fork.offsetTop + blocks.offsetTop;
   const xBlocks = forkLeft + blocks.offsetLeft + blocks.offsetWidth / 2;
   const xFlows = forkLeft + flows.offsetLeft + flows.offsetWidth / 2;
+  const xWriteoffs = forkLeft + writeoffs.offsetLeft + writeoffs.offsetWidth / 2;
+  const yWriteoffs = fork.offsetTop + writeoffs.offsetTop;
   const bleed = 2;
-  const minX = Math.min(anchorX, xBlocks, xFlows) - bleed;
-  const minY = Math.min(y0, y1) - bleed;
-  const width = Math.max(anchorX, xBlocks, xFlows) + bleed - minX;
-  const height = Math.max(y0, y1) + bleed - minY;
+  const minX = Math.min(anchorX, xBlocks, xFlows, xWriteoffs) - bleed;
+  const minY = Math.min(y0, y1, yWriteoffs) - bleed;
+  const width = Math.max(anchorX, xBlocks, xFlows, xWriteoffs) + bleed - minX;
+  const height = Math.max(y0, y1, yWriteoffs) + bleed - minY;
   svg.style.left = `${minX}px`;
   svg.style.top = `${minY}px`;
   svg.style.width = `${width}px`;
@@ -3779,13 +3867,14 @@ function layoutFork() {
   svg.setAttribute("height", String(height));
   placeForkLine(lineBlocks, anchorX, y0, xBlocks, y1, minX, minY);
   placeForkLine(lineFlows, anchorX, y0, xFlows, y1, minX, minY);
+  placeForkLine(lineWriteoffs, anchorX, y0, xWriteoffs, yWriteoffs, minX, minY);
 }
 
 function playForkEnter() {
   const losses = document.getElementById("section-losses");
-  const buttons = ["slice-blocks", "slice-flows"].map((id) => document.getElementById(id)).filter(Boolean);
+  const buttons = ["slice-blocks", "slice-flows", "slice-writeoffs"].map((id) => document.getElementById(id)).filter(Boolean);
   const svg = document.querySelector("nav.sections .wh-lines");
-  if (!losses || buttons.length !== 2) return;
+  if (!losses || buttons.length !== 3) return;
   const origin = losses.getBoundingClientRect();
   if (!origin.width || !origin.height) return;
   const ox = origin.left + origin.width / 2;
@@ -3840,6 +3929,8 @@ function syncSections() {
   const open = !employees;
   const blocksBtn = document.getElementById("slice-blocks");
   const flowsBtn = document.getElementById("slice-flows");
+  const writeoffsBtn = document.getElementById("slice-writeoffs");
+  if (writeoffsBtn) writeoffsBtn.setAttribute("aria-pressed", open && state.slice === "writeoffs" ? "true" : "false");
   if (blocksBtn) blocksBtn.setAttribute("aria-pressed", open && state.slice === "blocks" ? "true" : "false");
   if (flowsBtn) flowsBtn.setAttribute("aria-pressed", open && state.slice === "flows" ? "true" : "false");
   const wh = document.querySelector("nav.sections .wh");
@@ -4478,6 +4569,9 @@ function wireChrome() {
   document.getElementById("slice-flows")?.addEventListener("click", () => {
     if (state.view === "dashboard" && state.slice === "flows" && !state.flow && !state.group && !state.block) return;
     go({ view: "dashboard", slice: "flows", flow: "", group: "", block: "" });
+  });
+  document.getElementById("slice-writeoffs")?.addEventListener("click", () => {
+    go({ view: "dashboard", slice: "writeoffs", flow: "", group: "", block: "" });
   });
   window.addEventListener("resize", () => {
     layoutFork();

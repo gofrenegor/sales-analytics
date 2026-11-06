@@ -508,7 +508,7 @@ def report(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("report-v4", period, _report_payload)
+    return _cached_json("report-v5", period, _report_payload)
 
 
 @app.get("/api/employees")

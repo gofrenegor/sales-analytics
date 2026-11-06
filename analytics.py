@@ -1,12 +1,14 @@
 """Правила списаний и сборка отчёта для сайта."""
 
 import calendar
+import csv
 import json
 import math
 import os
 import re
 from datetime import date, datetime, timedelta
 from html import escape
+from pathlib import Path
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -2893,6 +2895,58 @@ def build_block_pages(curr, prev, period, items, has_prev, grain, series=None):
     return pages
 
 
+# Независимый разрез по присланному справочнику; правила блоков/LR сохраняются.
+with (Path(__file__).parent / "data" / "warehouse_writeoffs.tsv").open(encoding="utf-8-sig", newline="") as mapping_file:
+    WRITEOFF_MAPPING = {
+        row["Статус"].strip(): {key: value.strip() for key, value in row.items()}
+        for row in csv.DictReader(mapping_file, delimiter="\t")
+    }
+
+
+def build_warehouse_writeoffs(frame):
+    """Поток → зона → тип потери → статус, по исходному статусу перед списанием."""
+    if frame.empty:
+        return {"total": None, "groups": []}
+    part = frame.copy()
+    statuses = part["status_before"].fillna("").astype(str)
+    mapped = statuses.map(WRITEOFF_MAPPING)
+    levels = (("writeoff_flow", "Наименование потока"), ("writeoff_zone", "Зона списания"),
+              ("writeoff_type", "Тип потери"))
+    for col, field in levels:
+        part[col] = mapped.map(lambda row: row[field] if isinstance(row, dict) else "Нет в маппинге")
+    part["writeoff_status"] = [
+        f"{status} · {row['Расшифровка']}" if isinstance(row, dict) else str(status)
+        for status, row in zip(statuses, mapped)
+    ]
+    flags = part["posted"].map(posted_flag) if "posted" in part else pd.Series("", index=part.index)
+    for label, flag in (("posted", "1"), ("unposted", "0"), ("unknown", "")):
+        part[f"{label}_qty"] = part["loss_qty"].where(flags == flag, 0)
+        part[f"{label}_sum"] = part["loss_sum"].where(flags == flag, 0)
+    denominator = _sum(part, "loss_sum")
+
+    def metrics(group, name):
+        result = {"name": name, "qty": _sum(group, "loss_qty"), "sum": _sum(group, "loss_sum")}
+        for label in ("posted", "unposted", "unknown"):
+            for kind in ("qty", "sum"):
+                result[f"{label}_{kind}"] = _sum(group, f"{label}_{kind}")
+        result["share"] = result["sum"] / denominator * 100 if denominator else None
+        result["posted_share"] = result["posted_sum"] / result["sum"] * 100 if result["sum"] else None
+        result["net_share"] = result["unposted_sum"] / denominator * 100 if denominator else None
+        return result
+
+    columns = [col for col, _ in levels] + ["writeoff_status"]
+
+    def tree(group, depth=0):
+        rows = []
+        for name, sub in group.groupby(columns[depth], sort=False):
+            item = metrics(sub, str(name))
+            item["children"] = tree(sub, depth + 1) if depth + 1 < len(columns) else []
+            rows.append(item)
+        return sorted(rows, key=lambda item: (-item["sum"], item["name"]))
+
+    return {"total": metrics(part, "Общий итог"), "groups": tree(part)}
+
+
 def empty_report(period):
     return {
         "empty": True,
@@ -2907,6 +2961,7 @@ def empty_report(period):
         "flows": None,
         "moves": {"up": None, "down": None},
         "block_pages": {},
+        "warehouse_writeoffs": {"total": None, "groups": []},
     }
 
 
@@ -3014,6 +3069,7 @@ def build_report(df_curr, df_prev, period):
                 "delta_text": get_delta_text(other_sum, other_qty, op_sum, op_qty) if not other_prev.empty else None,
             },
         },
+        "warehouse_writeoffs": build_warehouse_writeoffs(df_curr),
         "quality": build_quality(curr, other_curr, ignored_curr),
         "daily": daily,
         "show_daily": show_daily,
