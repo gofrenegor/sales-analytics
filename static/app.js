@@ -3823,6 +3823,10 @@ function layoutFork() {
   if (!losses || !blocks || !flows || !fork || !svg || !lineBlocks || !lineFlows || !writeoffs || !lineWriteoffs) return;
   if (!fork.offsetWidth || !losses.offsetWidth) return;
 
+  const writeoffsLeft = losses.offsetLeft + losses.offsetWidth + 8;
+  writeoffs.style.left = `${writeoffsLeft}px`;
+  wh.style.width = `${writeoffsLeft + writeoffs.offsetWidth}px`;
+
   const anchorX = losses.offsetLeft + losses.offsetWidth / 2;
   let forkLeft = anchorX - (blocks.offsetLeft + blocks.offsetWidth / 2 + flows.offsetLeft + flows.offsetWidth / 2) / 2;
   const hostLeft = wh.getBoundingClientRect().left;
@@ -3851,11 +3855,12 @@ function layoutFork() {
   const y1 = fork.offsetTop + blocks.offsetTop;
   const xBlocks = forkLeft + blocks.offsetLeft + blocks.offsetWidth / 2;
   const xFlows = forkLeft + flows.offsetLeft + flows.offsetWidth / 2;
-  const xWriteoffs = forkLeft + writeoffs.offsetLeft + writeoffs.offsetWidth / 2;
-  const yWriteoffs = fork.offsetTop + writeoffs.offsetTop;
+  const xWriteoffs = writeoffs.offsetLeft;
+  const yWriteoffs = writeoffs.offsetTop + writeoffs.offsetHeight / 2;
+  const writeoffsOriginY = losses.offsetTop + losses.offsetHeight / 2;
   const bleed = 2;
   const minX = Math.min(anchorX, xBlocks, xFlows, xWriteoffs) - bleed;
-  const minY = Math.min(y0, y1, yWriteoffs) - bleed;
+  const minY = Math.min(y0, y1, yWriteoffs, writeoffsOriginY) - bleed;
   const width = Math.max(anchorX, xBlocks, xFlows, xWriteoffs) + bleed - minX;
   const height = Math.max(y0, y1, yWriteoffs) + bleed - minY;
   svg.style.left = `${minX}px`;
@@ -3867,7 +3872,7 @@ function layoutFork() {
   svg.setAttribute("height", String(height));
   placeForkLine(lineBlocks, anchorX, y0, xBlocks, y1, minX, minY);
   placeForkLine(lineFlows, anchorX, y0, xFlows, y1, minX, minY);
-  placeForkLine(lineWriteoffs, anchorX, y0, xWriteoffs, yWriteoffs, minX, minY);
+  placeForkLine(lineWriteoffs, losses.offsetLeft + losses.offsetWidth, writeoffsOriginY, xWriteoffs, yWriteoffs, minX, minY);
 }
 
 function playForkEnter() {
@@ -3941,6 +3946,7 @@ function syncSections() {
     forkMotion += 1;
     clearForkMotion();
     wh.style.marginBottom = "";
+    wh.style.width = "";
     const fork = wh.querySelector(".wh-fork");
     if (fork) {
       fork.style.left = "";
