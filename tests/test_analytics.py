@@ -111,10 +111,10 @@ def row(**overrides):
         ({"status_before": "SMS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"status_before": "OSS", "office_id": "999"}, "Входящий поток", "Рязань Тюшевское 1"),
         ({"status_before": "OSS", "block_id": "50"}, "Входящий поток", "Рязань Тюшевское 1"),
-        ({"status_before": "SMS", "reason": "5"}, "Входящий поток", "Рязань Тюшевское 1"),
+        ({"status_before": "SMS", "reason": "5"}, "Исходящий поток", "Рязань Тюшевское 1"),
         (
             {"status_before": "mrd", "reason": "5", "block_id": "100", "office_id": "999", "status_block_id": "6800"},
-            "Входящий поток",
+            "Исходящий поток",
             "Рязань Тюшевское 1",
         ),
         ({"status_before": "SLT", "block_name": "Рязань КГТ 2"}, "Входящий поток", "Рязань Тюшевское 2"),
@@ -151,6 +151,28 @@ def test_operka_stage():
     frame = prepare_losses(pd.DataFrame([row(status_before="SMC", block_id="6800", status_block_id="6811")]))
     assert frame.loc[0, "process_stage"] == "Сортировка"
     assert frame.loc[0, "block_group"] == "Опер площадь"
+
+
+def test_source_lr5_survives_rnr_and_ring_contains_only_four_blocks():
+    period = compute_period("День", date(2026, 10, 10), date(2026, 10, 10))
+    frame = prepare_losses(pd.DataFrame([
+        row(block_name="Рязань Тюшевское", block_id="6800", status_before="RNR", reason="5.0", loss_sum=2018),
+        row(block_name="Рязань Тюшевское 1", reason="5", loss_sum=300),
+        row(block_name="Рязань Тюшевское 2", reason="27", loss_sum=100),
+        row(block_name="Склад Х", reason="5", loss_sum=900),
+    ]))
+    assert frame.loc[0, "reason"] == "5"
+    assert frame.loc[0, "process_stage"] == "Сборка"
+    assert frame.loc[0, "flow"] == "Исходящий поток"
+    report = build_report(frame, prepare_losses(pd.DataFrame()), period)
+    ring = report["dashboard"]["blocks"]
+    assert ring["total"] == 400
+    assert [(item["name"], item["pct"]) for item in ring["items"]] == [
+        ("Рязань Тюшевское 1", 75), ("Рязань Тюшевское 2", 25),
+    ]
+    source = report["block_pages"]["Исход"]
+    assert sum(point["sum"] for point in source["series"]["5"]) == 2018
+    assert sum(point["sum"] for point in source["series"]["27"]) == 0
 
 
 def test_periods():

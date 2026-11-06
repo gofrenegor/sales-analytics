@@ -47,7 +47,7 @@ ASSEMBLY_LR = ["5"]
 OUTBOUND_LRS = ("29",)
 # Кольцо блоков: в дырке и в процентах только сборка и раскладка.
 BLOCK_RING_LRS = ("5", "27")
-# Статус важнее цифры в лостризоне: ORS всегда сборка, RNR всегда неразложка.
+# LR 5 из выгрузки сохраняется всегда. Для остальных ORS — сборка, RNR — неразложка.
 STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
 # Эти статусы не уходят в оперку и брак. Группа — название места списания.
 # MRD и SLT — отставание входа: та же группа, без своей карточки.
@@ -81,6 +81,7 @@ PLATFORM_FOLD = {
 }
 
 ALL_BLOCKS = list(dict.fromkeys(BLOCK_MAPPING.values()))
+BLOCK_RING_BLOCKS = tuple(f"Рязань Тюшевское {number}" for number in range(1, 5))
 PLATFORMS = {b: [n for n, v in BLOCK_MAPPING.items() if v == b] for b in ALL_BLOCKS}
 
 COLS = [
@@ -870,12 +871,12 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction):
 
 
 def warehouse_block_items(curr):
-    """Группы block_group без брака, только LR 5 и LR 27. Процент — доля этой суммы."""
+    """Только блоки 1–4 и LR 5/27. Сумма и доли кольца считаются по ним."""
     columns = getattr(curr, "columns", [])
     if curr is None or len(curr) == 0 or "block_group" not in columns or "reason" not in columns:
         return []
     reason = curr["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
-    part = curr.loc[reason.isin(BLOCK_RING_LRS)]
+    part = curr.loc[reason.isin(BLOCK_RING_LRS) & curr["block_group"].isin(BLOCK_RING_BLOCKS)]
     if len(part) == 0:
         return []
     grouped = part.groupby("block_group", sort=False)["loss_sum"].sum()
@@ -886,11 +887,7 @@ def warehouse_block_items(curr):
         if not name or amount <= 0 or name == DEFECT_GROUP:
             continue
         sums[name] = sums.get(name, 0.0) + amount
-    known = set(ALL_BLOCKS)
-    ordered = [name for name in ALL_BLOCKS if sums.get(name, 0.0) > 0]
-    rest = [name for name in sums if name not in known]
-    rest.sort(key=lambda name: (-sums[name], name))
-    ordered.extend(rest)
+    ordered = [name for name in BLOCK_RING_BLOCKS if sums.get(name, 0.0) > 0]
     total = sum(sums[name] for name in ordered)
     if total <= 0:
         return []
@@ -1839,9 +1836,10 @@ def classify_losses(df):
     """flow, process_stage, block_group.
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
-    ORS всегда LR 5: исходящий поток, этап «Сборка». RNR всегда LR 27: вход.
+    Исходный LR 5 всегда сохраняется: исходящий поток, этап «Сборка».
+    Для остальных ORS задаёт LR 5, RNR — LR 27.
     LR 29 всегда исходящий поток: входной статус и брак поток не перебивают.
-    Группа блока при этом прежняя. SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
+    Группа блока при этом прежняя. Без LR 5 SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
     группа — название места списания, как у OSS. Оперка и брак их не забирают.
     Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
     статус из OPERKA_STATUSES и это не LR сборки. ID блока перед списанием не решает.
@@ -1852,15 +1850,14 @@ def classify_losses(df):
     """
     df = df.copy()
     forced_lr = df["status_before"].map(STATUS_FORCE_LR)
-    hit = forced_lr.notna()
+    hit = forced_lr.notna() & ~df["reason"].eq("5")
     df.loc[hit, "reason"] = forced_lr.loc[hit]
     by_block_id = df["status_before"].isin(PLACE_BY_BLOCK_ID)
 
     df["flow"] = "Другое"
     df.loc[df["status_before"].isin(INBOUND_STATUSES), "flow"] = "Входящий поток"
     df.loc[df["status_before"].isin(OUTBOUND_STATUSES), "flow"] = "Исходящий поток"
-    forced_in = df["status_before"].isin(("RNR", "SMS", "OSS", "MRD", "SLT"))
-    is_assembly = (df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")) & ~forced_in
+    is_assembly = df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")
     is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
@@ -3006,6 +3003,8 @@ def build_report(df_curr, df_prev, period):
         "chart_time_missing": chart_time_missing,
         "flows": flows,
         "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
-        "block_pages": build_block_pages(curr, prev, period, block_items, has_prev, chart_grain, block_series),
+        "block_pages": build_block_pages(
+            curr, prev, period, block_items + [{"name": OUTBOUND_BLOCK}], has_prev, chart_grain, block_series,
+        ),
     }
 
