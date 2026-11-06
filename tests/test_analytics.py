@@ -14,6 +14,7 @@ from analytics import (
     fmt_rub,
     get_delta_text,
     prepare_losses,
+    prepare_twin,
     prepare_upload,
 )
 
@@ -273,3 +274,45 @@ def test_prepare_upload_dedup():
     assert dups == 1
     assert len(out) == 1
     assert out.iloc[0]["loss_sum"] == 77
+
+
+def test_prepare_upload_keeps_each_assembler():
+    frame = pd.DataFrame([
+        {
+            "loss_date": pd.Timestamp("2026-10-01"),
+            "barcode": "1",
+            "assembly_employee_id": "111",
+            "status_employee_id": "9",
+            "loss_sum": 10,
+        },
+        {
+            "loss_date": pd.Timestamp("2026-10-01"),
+            "barcode": "1",
+            "assembly_employee_id": "222",
+            "status_employee_id": "9",
+            "loss_sum": 15,
+        },
+        {
+            "loss_date": pd.Timestamp("2026-10-02"),
+            "barcode": "1",
+            "assembly_employee_id": "111",
+            "status_employee_id": "9",
+            "loss_sum": 77,
+        },
+    ])
+    out, skipped, dups = prepare_upload([frame])
+    assert skipped == 0
+    assert dups == 1
+    assert set(out["assembly_employee_id"]) == {"111", "222"}
+    kept = out.loc[out["assembly_employee_id"] == "111", "loss_sum"]
+    assert int(kept.iloc[0]) == 77
+
+
+def test_prepare_twin_keeps_distinct_places():
+    frame = pd.DataFrame({
+        "barcode": ["1", "1", "1"],
+        "mx": ["A.1", "A.1", "B.2"],
+    })
+    out, stats = prepare_twin([frame])
+    assert stats["duplicates"] == 1
+    assert set(out["mx"]) == {"A.1", "B.2"}

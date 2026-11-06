@@ -189,6 +189,8 @@ def _ensure_loss_index(conn):
             "CREATE INDEX IF NOT EXISTS losses_assembly_date_idx "
             "ON losses (assembly_employee_id, loss_date)"
         ))
+    if "barcode" in names:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS losses_barcode_idx ON losses (barcode)"))
 
 
 def ensure_schema():
@@ -834,41 +836,97 @@ def plan_twin(frame):
     }
 
 
+def _mx_patch_rows(frame):
+    """Пары ШК → место из twin. Последняя строка файла побеждает, если места разные."""
+    if frame is None or len(frame) == 0 or "barcode" not in getattr(frame, "columns", []):
+        return []
+    if "mx" in frame.columns:
+        places = frame["mx"].map(analytics.sticker_text).tolist()
+    else:
+        places = [""] * len(frame)
+    chosen = {}
+    for barcode, place in zip(frame["barcode"].tolist(), places):
+        if not place:
+            continue
+        forms = list(analytics.barcode_forms(barcode))
+        text_form = analytics.sticker_text(barcode)
+        if text_form.isdigit():
+            dotted = text_form + ".0"
+            if dotted not in forms:
+                forms.append(dotted)
+        for form in forms:
+            if form:
+                chosen[form] = place
+    return [{"barcode": code, "mx": place} for code, place in chosen.items()]
+
+
+def _assembly_predicate(names, alias=""):
+    """Только пропуск сборки: лостризон 5 или статус ORS. Пусто — колонок нет, фильтр не ставим."""
+    prefix = f"{alias}." if alias else ""
+    pieces = []
+    if "reason" in names:
+        pieces.append(f"{prefix}reason IN ('5', '5.0')")
+    if "status_before" in names:
+        pieces.append(f"UPPER({prefix}status_before) = 'ORS'")
+    if not pieces:
+        return ""
+    return " AND (" + " OR ".join(pieces) + ")"
+
+
 def apply_twin(frame):
-    """Дописывает наименование МХ на строку сборки с тем же ШК. Период и остальные потери не трогает."""
-    plan = plan_twin(frame)
-    if not plan["updates"]:
+    """Пишет наименование МХ на каждую строку сборки с этим ШК.
+
+    Сборщики не схлопываются: один ШК обновляет все такие потери.
+    Индекс по ШК, без повторного чтения всей сборки в память.
+    """
+    d_min, d_max = _twin_window(frame)
+    rows = _mx_patch_rows(frame)
+    plan = {
+        "matched": 0,
+        "unmatched": 0,
+        "updates": rows,
+        "updated": 0,
+        "start": d_min.isoformat() if d_min else None,
+        "end": d_max.isoformat() if d_max else None,
+    }
+    if not rows:
         return plan
     period_sql = ""
     params = {}
-    if plan["start"]:
+    if d_min is not None:
         period_sql = " AND " + _period_where()
-        params = {"s": plan["start"], "e": plan["end"]}
+        params = {"s": d_min.isoformat(), "e": d_max.isoformat()}
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
-            conn.execute(text(
-                "CREATE TEMP TABLE IF NOT EXISTS mx_patch (barcode TEXT, mx TEXT)"
-            ))
-            conn.execute(text("DELETE FROM mx_patch"))
+            if not inspect(conn).has_table("losses"):
+                return plan
+            names = {col["name"] for col in inspect(conn).get_columns("losses")}
+            if "barcode" not in names or "mx" not in names:
+                return plan
+            _ensure_loss_index(conn)
             insert = text("INSERT INTO mx_patch (barcode, mx) VALUES (:barcode, :mx)")
-            rows = plan["updates"]
+            conn.execute(text("DROP TABLE IF EXISTS mx_patch"))
+            conn.execute(text("CREATE TEMP TABLE mx_patch (barcode TEXT PRIMARY KEY, mx TEXT)"))
             for offset in range(0, len(rows), 400):
                 conn.execute(insert, rows[offset:offset + 400])
-            if _dialect() == "postgresql":
+            if engine.dialect.name == "postgresql":
+                assembly_sql = _assembly_predicate(names, "l")
                 result = conn.execute(text(
                     "UPDATE losses AS l SET mx = p.mx FROM mx_patch AS p "
-                    "WHERE l.barcode = p.barcode" + period_sql
+                    "WHERE l.barcode = p.barcode" + assembly_sql + period_sql
                 ), params)
             else:
+                assembly_sql = _assembly_predicate(names, "")
                 result = conn.execute(text(
                     "UPDATE losses SET mx = ("
                     "SELECT p.mx FROM mx_patch AS p WHERE p.barcode = losses.barcode"
-                    ") WHERE EXISTS (SELECT 1 FROM mx_patch AS p WHERE p.barcode = losses.barcode)"
-                    + period_sql
+                    ") WHERE barcode IN (SELECT barcode FROM mx_patch)"
+                    + assembly_sql + period_sql
                 ), params)
-            plan["updated"] = int(result.rowcount or 0)
-            conn.execute(text("DELETE FROM mx_patch"))
+            count = result.rowcount
+            plan["updated"] = int(count) if count and count > 0 else 0
+            conn.execute(text("DROP TABLE IF EXISTS mx_patch"))
         clear_cache()
     return plan
 

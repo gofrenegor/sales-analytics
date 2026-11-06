@@ -317,6 +317,69 @@ def test_chunked_preview_over_proxy_limit(client):
     assert report.json()["empty"] is False
 
 
+def test_twin_mx_reaches_each_assembler(client):
+    import db
+    from datetime import datetime
+
+    from sqlalchemy import text
+
+    frame = pd.DataFrame([
+        {
+            "loss_date": datetime(2026, 10, 1, 8, 0),
+            "barcode": "555",
+            "reason": "5",
+            "status_before": "ORS",
+            "loss_sum": 10,
+            "assembly_employee_id": "111",
+            "status_employee_id": "999",
+            "mx": "",
+        },
+        {
+            "loss_date": datetime(2026, 10, 2, 8, 0),
+            "barcode": "555",
+            "reason": "5",
+            "status_before": "ANV",
+            "loss_sum": 12,
+            "assembly_employee_id": "222",
+            "status_employee_id": "999",
+            "mx": "",
+        },
+        {
+            "loss_date": datetime(2026, 10, 1, 9, 0),
+            "barcode": "555.0",
+            "reason": "5",
+            "status_before": "ANV",
+            "loss_sum": 7,
+            "assembly_employee_id": "444",
+            "status_employee_id": "999",
+            "mx": "",
+        },
+        {
+            "loss_date": datetime(2026, 10, 3, 8, 0),
+            "barcode": "555",
+            "reason": "27",
+            "status_before": "RNR",
+            "loss_sum": 8,
+            "assembly_employee_id": "333",
+            "status_employee_id": "333",
+            "mx": "",
+        },
+    ])
+    db.replace_period(frame, date(2026, 10, 1), date(2026, 10, 3))
+    twin = pd.DataFrame({"barcode": ["555", "555"], "mx": ["РЗТК2.2.1", "РЗТК2.2.1"]})
+    result = db.apply_twin(twin)
+    assert result["updated"] == 3
+    with db.get_engine().connect() as conn:
+        rows = conn.execute(text(
+            "SELECT assembly_employee_id, mx FROM losses ORDER BY assembly_employee_id"
+        )).fetchall()
+    found = {row[0]: row[1] for row in rows}
+    assert found["111"] == "РЗТК2.2.1"
+    assert found["222"] == "РЗТК2.2.1"
+    assert found["444"] == "РЗТК2.2.1"
+    assert not found["333"]
+
+
 def test_index_injects_asset_version(client):
     html = client.get("/").text
     assert "admin-toggle" in html
