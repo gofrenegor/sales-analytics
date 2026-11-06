@@ -2929,7 +2929,6 @@ button.back:active { transform: translateX(-3px); }
 .writeoff-table tfoot { position: sticky; bottom: 0; z-index: 3; background: color-mix(in srgb, var(--bg), var(--amber) 20%); color: var(--text); font-size: 0.9rem; }
 .writeoff-table tfoot th:first-child { background: color-mix(in srgb, var(--bg), var(--amber) 20%); }
 .writeoff-table tfoot th, .writeoff-table tfoot td { padding-block: 12px; border-top: 2px solid var(--amber); }
-.writeoff-card-note { padding: 14px 20px; margin: 0; border-top: 1px solid var(--line-strong); font-size: 0.76rem; }
 @media (max-width: 600px) {
   .writeoff-card-head { padding: 14px; }
   .writeoff-table th:first-child { min-width: 230px; max-width: 280px; }

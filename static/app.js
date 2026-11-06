@@ -3591,7 +3591,6 @@ function renderWarehouseWriteoffs(screen) {
   cells(total, foot);
   table.append(el("tfoot", null, foot));
   card.append(el("div", { class: "writeoff-scroll", tabindex: "0", role: "region", "aria-label": "Таблица списаний, прокрутка по горизонтали" }, table));
-  card.append(el("p", { class: "hint writeoff-card-note" }, "Количество — шт., суммы — ₽. Потоки раскрыты до зон списания; «+» открывает тип потери и статус. Для долей потерь от оборота нужны данные оборота за период — пока показан прочерк. Доля оприходования считается от суммы строки."));
   if (diagnostics) screen.append(diagnostics);
 }
 
