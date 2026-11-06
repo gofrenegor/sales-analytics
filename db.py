@@ -873,11 +873,75 @@ def _assembly_predicate(names, alias=""):
     return " AND (" + " OR ".join(pieces) + ")"
 
 
+# Пачка короче лимита параметров Postgres. Маленький список ШК планировщик
+# стыкует с losses по индексу, а не полным просмотром таблицы.
+TWIN_PATCH_CHUNK = 200
+
+
+def _barcode_index_state(conn, dialect):
+    if dialect == "postgresql":
+        row = conn.execute(text(
+            "SELECT i.indisvalid FROM pg_class c "
+            "JOIN pg_index i ON i.indexrelid = c.oid "
+            "JOIN pg_class t ON t.oid = i.indrelid "
+            "WHERE c.relname = 'losses_barcode_idx' AND t.relname = 'losses'"
+        )).first()
+        if row is None:
+            return "missing"
+        return "valid" if row[0] else "invalid"
+    row = conn.execute(text(
+        "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'losses_barcode_idx'"
+    )).first()
+    return "valid" if row else "missing"
+
+
+def _ensure_barcode_index(engine):
+    """Индекс по ШК до записи. На Postgres — CONCURRENTLY, не внутри транзакции сохранения.
+
+    Обычный CREATE INDEX в той же транзакции, что и UPDATE, ждёт каждое чтение отчёта
+    и кнопка «Загрузка...» не отпускается.
+    """
+    dialect = engine.dialect.name
+    with engine.connect() as conn:
+        if not inspect(conn).has_table("losses"):
+            return
+        names = {col["name"] for col in inspect(conn).get_columns("losses")}
+        if "barcode" not in names:
+            return
+        state = _barcode_index_state(conn, dialect)
+    if state == "valid":
+        return
+    if dialect == "postgresql":
+        with engine.connect() as conn:
+            conn.execution_options(isolation_level="AUTOCOMMIT")
+            if state == "invalid":
+                conn.execute(text("DROP INDEX CONCURRENTLY IF EXISTS losses_barcode_idx"))
+            conn.execute(text(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS losses_barcode_idx ON losses (barcode)"
+            ))
+        return
+    with engine.begin() as conn:
+        conn.execute(text("CREATE INDEX IF NOT EXISTS losses_barcode_idx ON losses (barcode)"))
+
+
+def _patch_update_sql(count, assembly_sql, period_sql):
+    parts = ["SELECT :b0 AS barcode, :m0 AS mx"]
+    for index in range(1, count):
+        parts.append(f"SELECT :b{index}, :m{index}")
+    return (
+        "UPDATE losses SET mx = p.mx FROM (" + " UNION ALL ".join(parts) + ") AS p "
+        "WHERE losses.barcode = p.barcode"
+        + assembly_sql
+        + period_sql
+        + " AND losses.mx IS DISTINCT FROM p.mx"
+    )
+
+
 def apply_twin(frame):
     """Пишет наименование МХ на каждую строку сборки с этим ШК.
 
     Сборщики не схлопываются: один ШК обновляет все такие потери.
-    Индекс по ШК, без повторного чтения всей сборки в память.
+    Пачки идут по индексу ШК. Повтор той же загрузки не переписывает уже стоящее место.
     """
     d_min, d_max = _twin_window(frame)
     rows = _mx_patch_rows(frame)
@@ -896,38 +960,40 @@ def apply_twin(frame):
     if d_min is not None:
         period_sql = " AND " + _period_where()
         params = {"s": d_min.isoformat(), "e": d_max.isoformat()}
+    engine = get_engine()
+    updated = 0
+    unknown = False
     with _write_lock:
-        engine = get_engine()
+        _ensure_barcode_index(engine)
         with engine.begin() as conn:
             if not inspect(conn).has_table("losses"):
                 return plan
             names = {col["name"] for col in inspect(conn).get_columns("losses")}
             if "barcode" not in names or "mx" not in names:
                 return plan
-            _ensure_loss_index(conn)
-            insert = text("INSERT INTO mx_patch (barcode, mx) VALUES (:barcode, :mx)")
-            conn.execute(text("DROP TABLE IF EXISTS mx_patch"))
-            conn.execute(text("CREATE TEMP TABLE mx_patch (barcode TEXT PRIMARY KEY, mx TEXT)"))
-            for offset in range(0, len(rows), 400):
-                conn.execute(insert, rows[offset:offset + 400])
+            assembly_sql = _assembly_predicate(names, "losses")
             if engine.dialect.name == "postgresql":
-                assembly_sql = _assembly_predicate(names, "l")
-                result = conn.execute(text(
-                    "UPDATE losses AS l SET mx = p.mx FROM mx_patch AS p "
-                    "WHERE l.barcode = p.barcode" + assembly_sql + period_sql
-                ), params)
-            else:
-                assembly_sql = _assembly_predicate(names, "")
-                result = conn.execute(text(
-                    "UPDATE losses SET mx = ("
-                    "SELECT p.mx FROM mx_patch AS p WHERE p.barcode = losses.barcode"
-                    ") WHERE barcode IN (SELECT barcode FROM mx_patch)"
-                    + assembly_sql + period_sql
-                ), params)
-            count = result.rowcount
-            plan["updated"] = int(count) if count and count > 0 else 0
-            conn.execute(text("DROP TABLE IF EXISTS mx_patch"))
-        clear_cache()
+                # Не ждать чужую блокировку бесконечно и не выбирать полный просмотр losses.
+                conn.execute(text("SET LOCAL lock_timeout = '30s'"))
+                conn.execute(text("SET LOCAL enable_seqscan = off"))
+            for offset in range(0, len(rows), TWIN_PATCH_CHUNK):
+                batch = rows[offset:offset + TWIN_PATCH_CHUNK]
+                bind = dict(params)
+                for index, row in enumerate(batch):
+                    bind[f"b{index}"] = row["barcode"]
+                    bind[f"m{index}"] = row["mx"]
+                result = conn.execute(
+                    text(_patch_update_sql(len(batch), assembly_sql, period_sql)),
+                    bind,
+                )
+                count = result.rowcount
+                if count is None or count < 0:
+                    unknown = True
+                else:
+                    updated += int(count)
+        plan["updated"] = updated
+        if updated or unknown:
+            clear_cache()
     return plan
 
 
