@@ -1218,8 +1218,21 @@ def process_excel(file):
     return df
 
 
+def _upload_identity(df):
+    """Один ШК у разных сборщиков — разные потери. Схлопывается только тот же сотрудник."""
+    keys = ["barcode"]
+    for col in ("assembly_employee_id", "status_employee_id"):
+        if col in df.columns:
+            keys.append(col)
+    return keys
+
+
 def prepare_upload(frames):
-    """Склеивает файлы, выкидывает строки без даты и повторы ШК (остаётся последняя)."""
+    """Склеивает файлы и выкидывает строки без даты.
+
+    Повтор одного ШК у того же сотрудника схлопывается, остаётся последняя строка.
+    Тот же ШК у другого сборщика остаётся своей потерей.
+    """
     if not frames:
         raise ValueError("Нет файлов")
     df_new = pd.concat(frames, ignore_index=True)
@@ -1231,7 +1244,7 @@ def prepare_upload(frames):
     n_dups = 0
     if "barcode" in df_new.columns and not df_new.empty:
         before = len(df_new)
-        df_new = df_new.drop_duplicates(subset=["barcode"], keep="last")
+        df_new = df_new.drop_duplicates(subset=_upload_identity(df_new), keep="last")
         n_dups = before - len(df_new)
     return df_new, n_no_date, n_dups
 
@@ -1364,6 +1377,8 @@ def prepare_twin(frames):
     """Строки twin: «Товар (ШК)» и наименование МХ. Новых потерь из них не будет.
 
     Стыковка со суперсетом только по ШК. Стикер в суперсете замаскирован и не сравнивается.
+    Один ШК пишется каждому сборщику, у кого есть этот пропуск. Схлопываются только
+    одинаковые строки файла: тот же ШК и то же место.
     Если в файле есть лостризон или статус, остаются только 5 ЛР и ORS.
     Файл без этих колонок уже является отчётом пропусков сборки.
     """
@@ -1399,7 +1414,7 @@ def prepare_twin(frames):
         df = df.loc[keep]
     if not df.empty:
         before = len(df)
-        df = df.drop_duplicates(subset=["barcode"], keep="last")
+        df = df.drop_duplicates(subset=["barcode", "mx"], keep="last")
         stats["duplicates"] = before - len(df)
     return df, stats
 

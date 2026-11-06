@@ -3932,12 +3932,17 @@ function wireAdmin() {
       if (data.skipped_no_barcode) preview.append(el("p", { class: "box warn" }, `Пропущено без ШК: ${data.skipped_no_barcode}`));
       if (data.skipped_no_mx) preview.append(el("p", { class: "box warn" }, `Пропущено без наименования МХ: ${data.skipped_no_mx}`));
       if (data.skipped_not_lr) preview.append(el("p", { class: "box warn" }, `Пропущено не 5 ЛР: ${data.skipped_not_lr}`));
-      if (data.duplicates) preview.append(el("p", { class: "box warn" }, `Удалено повторов: ${data.duplicates}`));
+      if (data.duplicates) {
+        const dupText = twin
+          ? `Одинаковых строк файла: ${fmtInt(data.duplicates)}. Сборщики с одним ШК остаются.`
+          : `Повтор одного сотрудника и ШК: ${fmtInt(data.duplicates)}`;
+        preview.append(el("p", { class: "box warn" }, dupText));
+      }
       const saveLabel = twin ? "Дописать МХ" : "💾 ВЫГРУЗИТЬ В БАЗУ";
       if (twin) {
         preview.append(el("p", { class: "box info" }, `Совпало по ШК: ${fmtInt(data.matched || 0)}`));
         if (data.unmatched) preview.append(el("p", { class: "box warn" }, `ШК не найден в суперсете: ${fmtInt(data.unmatched)}`));
-        preview.append(el("p", { class: "hint" }, "Наименование МХ встанет на строку сборщика с этим ШК, справа от стикера. Суммы не меняются."));
+        preview.append(el("p", { class: "hint" }, "Наименование МХ встанет каждому сборщику с этим ШК, справа от стикера. Потери не удаляются. Суммы не меняются."));
         if (!data.token) {
           preview.append(el("p", { class: "box warn" }, "В суперсете нет этих ШК. Сначала загрузите суперсет."));
           return;
