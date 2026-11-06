@@ -2416,13 +2416,13 @@ _FLOOR_WORD = re.compile(r"этаж\s*0*(\d+)", re.IGNORECASE)
 
 
 def aisle_name(value):
-    """Ряд из кода МХ. «РЗТК2.2.13.185.3.3» → «РЗТК2.2», первые два куска."""
+    """Ряд из кода МХ: блок.этаж.ряд. «Р3T1.04.41.144.01.02» → «Р3T1.04.41»."""
     text = sticker_text(value)
     if not text:
         return ""
     parts = [part for part in text.split(".") if part]
     if len(parts) >= 3:
-        return ".".join(parts[:2])
+        return ".".join(parts[:3])
     return text
 
 
