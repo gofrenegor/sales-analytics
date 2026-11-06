@@ -4053,6 +4053,7 @@ function uploadKind() {
 }
 
 async function sendPreview(files, hint) {
+  files = Array.from(files);
   if (files.length > 20 || files.reduce((sum, file) => sum + file.size, 0) > 80 * 1024 * 1024) {
     throw new Error("Не больше 20 файлов общим размером до 80 МБ");
   }
