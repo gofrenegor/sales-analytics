@@ -378,6 +378,50 @@ def test_twin_mx_reaches_each_assembler(client):
     assert found["222"] == "РЗТК2.2.1"
     assert found["444"] == "РЗТК2.2.1"
     assert not found["333"]
+    again = db.apply_twin(twin)
+    assert again["updated"] == 0
+
+
+def test_twin_mx_crosses_patch_chunks(client):
+    import db
+    from datetime import datetime
+
+    from sqlalchemy import text
+
+    count = db.TWIN_PATCH_CHUNK + 1
+    rows = [
+        {
+            "loss_date": datetime(2026, 10, 1, 8, 0),
+            "barcode": str(1000 + index),
+            "reason": "5",
+            "status_before": "ANV",
+            "loss_sum": 1,
+            "mx": "",
+        }
+        for index in range(count)
+    ]
+    rows.append({
+        "loss_date": datetime(2026, 10, 1, 8, 0),
+        "barcode": "1000",
+        "reason": "27",
+        "status_before": "RNR",
+        "loss_sum": 1,
+        "mx": "",
+    })
+    frame = pd.DataFrame(rows)
+    db.replace_period(frame, date(2026, 10, 1), date(2026, 10, 1))
+    twin = frame.loc[frame["reason"] == "5", ["barcode", "mx"]].assign(mx="РЗТК.1")
+    result = db.apply_twin(twin)
+    assert result["updated"] == count
+    with db.get_engine().connect() as conn:
+        missed = conn.execute(text(
+            "SELECT COUNT(*) FROM losses WHERE reason = '27' AND mx = 'РЗТК.1'"
+        )).scalar()
+        filled = conn.execute(text(
+            "SELECT COUNT(*) FROM losses WHERE reason = '5' AND mx = 'РЗТК.1'"
+        )).scalar()
+    assert missed == 0
+    assert filled == count
 
 
 def test_index_injects_asset_version(client):
