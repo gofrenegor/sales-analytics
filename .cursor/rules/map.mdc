@@ -182,3 +182,5 @@ systemctl restart sales-analytics
 - `static/app.js`: пояснение приоритета правил в карточке. `server.py`: кэш `report-v7`. Правила основного отчёта и блоков не меняются.
 
 - Статус перед списанием в детализации сотрудников: `static/app.js` — `empOperationNode` показывает только кликабельный код, `openStatusInfo` открывает боковую панель «Инфо → статусы», загружает справочник и фильтрует по коду. `static/styles.css` — `.emp-operation-code`.
+
+- Каталог страниц сотрудников: `static/app.js` — `empPageCatalog` / `bindEmpPageCatalogDismiss`, иконка над текущим номером открывает вверх выбор страниц пачками по 50, стрелки каталога меняют диапазон без загрузки сотрудников, выбор номера вызывает `showEmpPage`. Закрытие по Escape, клику или уходу фокуса наружу. `static/styles.css` — `.emp-page-picker`, `.emp-page-catalog*`, `.emp-page-choice`; 10 колонок на широком экране, 5 на телефоне.

@@ -2774,6 +2774,107 @@ function showEmpPage(index) {
   });
 }
 
+function bindEmpPageCatalogDismiss() {
+  if (bindEmpPageCatalogDismiss.ready) return;
+  bindEmpPageCatalogDismiss.ready = true;
+  const close = (restoreFocus) => {
+    const catalog = document.getElementById("emp-page-catalog");
+    if (!catalog || catalog.hidden) return;
+    catalog.hidden = true;
+    const trigger = document.getElementById("emp-page-catalog-toggle");
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  };
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest?.(".emp-page-picker")) close(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close(true);
+  });
+  document.addEventListener("focusin", (event) => {
+    if (!event.target.closest?.(".emp-page-picker")) close(false);
+  });
+}
+
+function empPageCatalog(pageIndex, totalPages) {
+  bindEmpPageCatalogDismiss();
+  let batch = Math.floor(pageIndex / 50);
+  const panel = el("div", {
+    id: "emp-page-catalog",
+    class: "emp-page-catalog",
+    hidden: true,
+    role: "region",
+    "aria-label": "Каталог страниц сотрудников",
+  });
+  const icon = svgEl("svg", { viewBox: "0 0 24 24", width: "20", height: "20", "aria-hidden": "true" });
+  icon.append(svgEl("path", {
+    fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linejoin": "round",
+    d: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+  }));
+  const trigger = el("button", {
+    id: "emp-page-catalog-toggle",
+    type: "button",
+    class: "emp-page-catalog-toggle",
+    title: "Каталог страниц",
+    "aria-label": "Каталог страниц",
+    "aria-expanded": "false",
+    "aria-controls": "emp-page-catalog",
+    onclick: () => {
+      panel.hidden = !panel.hidden;
+      trigger.setAttribute("aria-expanded", String(!panel.hidden));
+      if (!panel.hidden) {
+        batch = Math.floor(pageIndex / 50);
+        paint();
+        panel.querySelector('[aria-current="page"]')?.focus();
+      }
+    },
+  }, icon);
+  function paint(focusDirection) {
+    const start = batch * 50;
+    const end = Math.min(start + 50, totalPages);
+    const grid = el("div", { class: "emp-page-catalog-grid" });
+    for (let index = start; index < end; index += 1) {
+      grid.append(el("button", {
+        type: "button",
+        class: "emp-page-choice",
+        "aria-label": `Страница ${index + 1}`,
+        "aria-current": index === pageIndex ? "page" : null,
+        onclick: () => {
+          panel.hidden = true;
+          trigger.setAttribute("aria-expanded", "false");
+          trigger.focus();
+          showEmpPage(index);
+        },
+      }, String(index + 1)));
+    }
+    const move = (direction) => el("button", {
+      type: "button",
+      class: "emp-page-arrow",
+      "data-direction": direction,
+      "aria-label": direction < 0 ? "Предыдущие 50 страниц" : "Следующие 50 страниц",
+      disabled: direction < 0 ? batch === 0 : end === totalPages,
+      onclick: () => { batch += direction; paint(direction); },
+    }, direction < 0 ? "←" : "→");
+    panel.replaceChildren(
+      grid,
+      el("div", { class: "emp-page-catalog-nav" },
+        move(-1),
+        el("span", { "aria-live": "polite", "aria-atomic": "true" }, `${start + 1}–${end} из ${totalPages}`),
+        move(1),
+      ),
+    );
+    if (focusDirection) {
+      const next = panel.querySelector(`[data-direction="${focusDirection}"]`);
+      (next && !next.disabled ? next : grid.querySelector("button"))?.focus();
+    }
+  }
+  return el("div", { class: "emp-page-picker" },
+    panel,
+    trigger,
+    el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)),
+  );
+}
+
 function sortMark() {
   const svg = svgEl("svg", { viewBox: "0 0 24 24", width: "18", height: "18", "aria-hidden": "true" });
   svg.append(svgEl("path", {
@@ -3259,7 +3360,7 @@ function renderEmployees(screen) {
   }
   screen.append(list);
   if (pack.pages > 1) {
-    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы сотрудников" });
+    const nav = el("nav", { class: "emp-pages has-catalog", "aria-label": "Страницы сотрудников" });
     if (pageIndex > 0) {
       nav.append(el("button", {
         type: "button",
@@ -3268,7 +3369,7 @@ function renderEmployees(screen) {
         onclick: () => showEmpPage(pageIndex - 1),
       }, "←"));
     }
-    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)));
+    nav.append(empPageCatalog(pageIndex, pack.pages));
     if (pageIndex < pack.pages - 1) {
       nav.append(el("button", {
         type: "button",
