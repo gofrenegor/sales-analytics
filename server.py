@@ -345,7 +345,7 @@ def _problem_rows_payload(period):
 
 
 def _employee_items_payload(period, badge, lr):
-    frame, columns_ready = db.load_employee_slice(period["_start"], period["_end"], badge)
+    frame, columns_ready = db.load_employee_slice(period["_start"], period["_end"], badge, lr)
     items = analytics.build_employee_items(frame, badge, lr)
     filled = any(row["sticker"] or row["found"] is not None for row in items)
     return {
@@ -387,7 +387,7 @@ def employees(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employees", period, _employees_payload)
+    return _cached_json("employees-v2", period, _employees_payload)
 
 
 @app.get("/api/employees/rows")
@@ -430,7 +430,7 @@ def employee_items(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    key = db.ready_key("employee-items", period) + (badge, lr)
+    key = db.ready_key("employee-items-v2", period) + (badge, lr)
     cached = db.get_ready(key)
     if cached is not None:
         return _ready_response(cached)
