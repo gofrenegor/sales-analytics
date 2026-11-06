@@ -1161,8 +1161,8 @@ def process_excel(file):
     sticker = _pick_series(df, STICKER_HEADERS, STICKER_COL_INDEX, "стикер", _looks_sticker)
     posted = _pick_series(df, POSTED_HEADERS, POSTED_COL_INDEX, "оприход", _looks_posted)
     mx = _mx_raw(df)
+    barcode = _barcode_raw(df)
     cols_map = {
-        "ШК": "barcode",
         "Наименование блока": "block_name",
         "ID блока": "block_id",
         "ID блока перед списанием": "status_block_id",
@@ -1213,6 +1213,8 @@ def process_excel(file):
     df["last_sticker"] = sticker.map(sticker_text).to_numpy() if sticker is not None else ""
     df["posted"] = posted.map(posted_flag).to_numpy() if posted is not None else ""
     df["mx"] = mx.map(sticker_text).to_numpy() if mx is not None else ""
+    if barcode is not None:
+        df["barcode"] = barcode.map(sticker_text).reindex(df.index).to_numpy()
     return df
 
 
@@ -1232,6 +1234,73 @@ def prepare_upload(frames):
         df_new = df_new.drop_duplicates(subset=["barcode"], keep="last")
         n_dups = before - len(df_new)
     return df_new, n_no_date, n_dups
+
+
+def assembly_export_mask(df):
+    """Строки пропуска сборки: лостризон 5 или статус ORS."""
+    has_reason = "reason" in getattr(df, "columns", [])
+    has_status = "status_before" in getattr(df, "columns", [])
+    if not has_reason and not has_status:
+        return pd.Series(True, index=df.index)
+    if has_reason:
+        reason = df["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    else:
+        reason = pd.Series("", index=df.index)
+    if has_status:
+        status = (
+            df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+        )
+    else:
+        status = pd.Series("", index=df.index)
+    return (reason == "5") | (status == "ORS")
+
+
+def prepare_twin(frames):
+    """Строки twin: ШК и МХ пропуска сборки. Новых потерь из них не будет.
+
+    Если в файле есть лостризон или статус, остаются только 5 ЛР и ORS.
+    Файл без этих колонок считается уже обрезанным до пропусков.
+    """
+    if not frames:
+        raise ValueError("Нет файлов")
+    df = pd.concat(frames, ignore_index=True)
+    if "loss_date" not in df.columns:
+        raise ValueError("В twin нет колонки «Дата первого списания»")
+    if "barcode" not in df.columns:
+        raise ValueError("В twin нет колонки «ШК»")
+    stats = {
+        "skipped_no_date": 0,
+        "skipped_no_barcode": 0,
+        "skipped_no_mx": 0,
+        "skipped_not_lr": 0,
+        "duplicates": 0,
+    }
+    total = len(df)
+    df = df.dropna(subset=["loss_date"]).copy()
+    stats["skipped_no_date"] = total - len(df)
+    df["barcode"] = df["barcode"].map(sticker_text)
+    blank_barcode = df["barcode"] == ""
+    stats["skipped_no_barcode"] = int(blank_barcode.sum())
+    df = df.loc[~blank_barcode]
+    if df.empty:
+        return df, stats
+    if "mx" not in df.columns or not (df["mx"].map(sticker_text) != "").any():
+        raise ValueError(
+            "В twin нет колонки «МХ» или она пустая. Нужен заголовок «МХ» или «Место хранения»."
+        )
+    df["mx"] = df["mx"].map(sticker_text)
+    blank_mx = df["mx"] == ""
+    stats["skipped_no_mx"] = int(blank_mx.sum())
+    df = df.loc[~blank_mx]
+    if "reason" in df.columns or "status_before" in df.columns:
+        keep = assembly_export_mask(df)
+        stats["skipped_not_lr"] = int((~keep).sum())
+        df = df.loc[keep]
+    if not df.empty:
+        before = len(df)
+        df = df.drop_duplicates(subset=["barcode"], keep="last")
+        stats["duplicates"] = before - len(df)
+    return df, stats
 
 
 def prepare_losses(df):
@@ -1426,6 +1495,26 @@ def sticker_text(value):
     return text
 
 
+def barcode_forms(value):
+    """Как ШК мог лечь в базу: «12345» и хвост «.0» из Excel."""
+    forms = []
+    text = sticker_text(value)
+    if text:
+        forms.append(text)
+    if isinstance(value, str):
+        raw = value.strip()
+        if raw and raw not in forms and raw.lower() not in {"nan", "none", "nat", "<na>"}:
+            forms.append(raw)
+    elif isinstance(value, float) and not math.isnan(value) and not math.isinf(value) and value.is_integer():
+        whole = str(int(value))
+        dotted = whole + ".0"
+        if whole not in forms:
+            forms.append(whole)
+        if dotted not in forms:
+            forms.append(dotted)
+    return forms
+
+
 def posted_flag(value):
     """Флаг оприходования: «1» — ИСТИНА, «0» — ЛОЖЬ, «» — пусто или не разобрали."""
     if isinstance(value, bool):
@@ -1495,6 +1584,17 @@ def _looks_sticker(series):
 
 _MX_WORD = re.compile(r"(?<![0-9a-zа-яё])мх(?![0-9a-zа-яё])")
 _MX_ID = re.compile(r"(?<![0-9a-zа-яё])(?:id|ид)(?![0-9a-zа-яё])")
+
+
+def _barcode_raw(df):
+    """Серия ШК до обрезки колонок. Колонка «ШК» важнее «Штрихкод»."""
+    if "ШК" in df.columns:
+        return df["ШК"]
+    folded = {str(col).strip().lower().replace("ё", "е"): col for col in df.columns}
+    for name in ("штрихкод", "штрих-код", "штрих код"):
+        if name in folded:
+            return df[folded[name]]
+    return None
 
 
 def _mx_raw(df):

@@ -41,6 +41,7 @@ class TokenIn(BaseModel):
 class BatchIn(BaseModel):
     batch: str
     ids: list[str]
+    kind: str = "superset"
 
 
 class ConfirmIn(BaseModel):
@@ -129,9 +130,14 @@ def sweep_pending():
             uploads.pop(key, None)
 
 
-def _preview_from_blobs(blobs):
-    """Список (имя, байты xlsx) -> JSON превью. Ошибки разбора — 400, не страница прокси."""
-    sweep_pending()
+def _upload_kind(value):
+    kind = str(value or "superset").strip().lower()
+    if kind not in {"superset", "twin"}:
+        return None
+    return kind
+
+
+def _read_workbooks(blobs):
     frames = []
     for name, payload in blobs:
         name = name or "файл"
@@ -141,6 +147,34 @@ def _preview_from_blobs(blobs):
             frames.append(analytics.process_excel(BytesIO(payload)))
         except Exception as exc:
             return fail(400, f"Не удалось прочитать {name}: {exc}")
+    return frames
+
+
+def _date_span(frame):
+    dates = pd.to_datetime(frame["loss_date"], errors="coerce")
+    if getattr(dates, "ndim", 1) != 1:
+        raise ValueError("В файле две колонки «Дата первого списания»")
+    dates = dates.dropna()
+    if dates.empty:
+        raise ValueError("В файле нет дат списания")
+    return dates.min().date().isoformat(), dates.max().date().isoformat()
+
+
+def _preview_from_blobs(blobs, kind="superset"):
+    """Список (имя, байты xlsx) -> JSON превью. Ошибки разбора — 400, не страница прокси."""
+    sweep_pending()
+    kind = _upload_kind(kind)
+    if kind is None:
+        return fail(400, "Некорректный тип выгрузки")
+    frames = _read_workbooks(blobs)
+    if not isinstance(frames, list):
+        return frames
+    if kind == "twin":
+        return _preview_twin(blobs, frames)
+    return _preview_superset(blobs, frames)
+
+
+def _preview_superset(blobs, frames):
     try:
         frame, skipped, dups = analytics.prepare_upload(frames)
     except ValueError as exc:
@@ -149,29 +183,74 @@ def _preview_from_blobs(blobs):
         log.exception("preview")
         return fail(400, f"Не удалось разобрать файл: {exc}")
     token = None
-    if len(frame):
-        token = secrets.token_urlsafe(18)
-        with pending_lock:
-            pending[token] = {"df": frame, "ts": time.time()}
     start = end = None
+    mx_rows = 0
     if len(frame):
         try:
-            dates = pd.to_datetime(frame["loss_date"], errors="coerce")
-            if getattr(dates, "ndim", 1) != 1:
-                return fail(400, "В файле две колонки «Дата первого списания»")
-            dates = dates.dropna()
-            if dates.empty:
-                return fail(400, "В файле нет дат списания")
-            start = dates.min().date().isoformat()
-            end = dates.max().date().isoformat()
+            start, end = _date_span(frame)
+        except ValueError as exc:
+            return fail(400, str(exc))
         except Exception as exc:
             log.exception("preview dates")
             return fail(400, f"Не удалось разобрать даты: {exc}")
+        if "mx" in frame.columns:
+            mx_rows = int((frame["mx"].map(analytics.sticker_text) != "").sum())
+        token = secrets.token_urlsafe(18)
+        with pending_lock:
+            pending[token] = {"df": frame, "ts": time.time(), "kind": "superset"}
     return {
+        "kind": "superset",
         "files": len(blobs),
         "rows": int(len(frame)),
         "skipped_no_date": int(skipped),
         "duplicates": int(dups),
+        "mx_rows": mx_rows,
+        "start": start,
+        "end": end,
+        "token": token,
+    }
+
+
+def _preview_twin(blobs, frames):
+    try:
+        frame, stats = analytics.prepare_twin(frames)
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except Exception as exc:
+        log.exception("preview twin")
+        return fail(400, f"Не удалось разобрать файл: {exc}")
+    token = None
+    start = end = None
+    matched = unmatched = 0
+    if len(frame):
+        try:
+            start, end = _date_span(frame)
+            plan = db.plan_twin(frame)
+        except ValueError as exc:
+            return fail(400, str(exc))
+        except (db.DataError, db.ConfigError) as exc:
+            return fail(503, str(exc))
+        except Exception as exc:
+            log.exception("preview twin match")
+            return fail(400, f"Не удалось сверить twin с базой: {exc}")
+        matched = int(plan["matched"])
+        unmatched = int(plan["unmatched"])
+        start, end = plan["start"], plan["end"]
+        if matched:
+            token = secrets.token_urlsafe(18)
+            with pending_lock:
+                pending[token] = {"df": frame, "ts": time.time(), "kind": "twin"}
+    return {
+        "kind": "twin",
+        "files": len(blobs),
+        "rows": int(len(frame)),
+        "skipped_no_date": int(stats["skipped_no_date"]),
+        "skipped_no_barcode": int(stats["skipped_no_barcode"]),
+        "skipped_no_mx": int(stats["skipped_no_mx"]),
+        "skipped_not_lr": int(stats["skipped_not_lr"]),
+        "duplicates": int(stats["duplicates"]),
+        "matched": matched,
+        "unmatched": unmatched,
         "start": start,
         "end": end,
         "token": token,
@@ -524,14 +603,18 @@ def admin_summary(user=Depends(actor)):
 
 
 @app.post("/api/admin/preview")
-async def preview(files: list[UploadFile] = File(...), user=Depends(actor)):
+async def preview(
+    files: list[UploadFile] = File(...),
+    kind: str = Form("superset"),
+    user=Depends(actor),
+):
     blocked = denied(user, admin=True)
     if blocked:
         return blocked
     blobs = []
     for upload in files:
         blobs.append((upload.filename or "файл", await upload.read()))
-    return _preview_from_blobs(blobs)
+    return _preview_from_blobs(blobs, kind)
 
 
 @app.post("/api/admin/preview/chunk")
@@ -601,7 +684,7 @@ def preview_finish(body: BatchIn, user=Depends(actor)):
         if any(i not in slot["parts"] for i in range(slot["total"])):
             return fail(400, "Не все куски файла дошли")
         blobs.append((slot["name"], b"".join(slot["parts"][i] for i in range(slot["total"]))))
-    result = _preview_from_blobs(blobs)
+    result = _preview_from_blobs(blobs, body.kind)
     if isinstance(result, dict):
         with uploads_lock:
             uploads.pop(body.batch, None)
@@ -618,10 +701,16 @@ def commit(body: TokenIn, user=Depends(actor)):
     if item is None:
         return fail(404, "Загрузка устарела. Выберите файлы ещё раз.")
     frame = item["df"]
+    kind = item.get("kind") or "superset"
     try:
-        d_min = pd.to_datetime(frame["loss_date"]).min().date()
-        d_max = pd.to_datetime(frame["loss_date"]).max().date()
-        db.replace_period(frame, d_min, d_max)
+        if kind == "twin":
+            result = db.apply_twin(frame)
+            message = f"МХ дописано: {int(result['updated'])}"
+        else:
+            d_min = pd.to_datetime(frame["loss_date"]).min().date()
+            d_max = pd.to_datetime(frame["loss_date"]).max().date()
+            db.replace_period(frame, d_min, d_max)
+            message = "Данные сохранены!"
         summary = db.get_summary()
     except (db.DataError, db.ConfigError) as exc:
         with pending_lock:
@@ -632,7 +721,7 @@ def commit(body: TokenIn, user=Depends(actor)):
         with pending_lock:
             pending[body.token] = item
         return fail(400, db.public_error(exc))
-    return {"ok": True, "message": "Данные сохранены!", "summary": summary}
+    return {"ok": True, "message": message, "summary": summary}
 
 
 @app.post("/api/admin/truncate")

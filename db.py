@@ -719,18 +719,145 @@ def get_summary():
     }
 
 
-def _delete_sql():
+def _period_where():
     if _dialect() == "postgresql":
-        return "DELETE FROM losses WHERE loss_date::date >= :s AND loss_date::date <= :e"
-    return "DELETE FROM losses WHERE date(loss_date) >= :s AND date(loss_date) <= :e"
+        return "loss_date::date >= :s AND loss_date::date <= :e"
+    return "date(loss_date) >= :s AND date(loss_date) <= :e"
+
+
+def _delete_sql():
+    return "DELETE FROM losses WHERE " + _period_where()
+
+
+def _carry_mx(conn, df, d_min, d_max):
+    """Пустое МХ суперсета не затирает место, которое twin уже записал по тому же ШК."""
+    if df is None or len(df) == 0 or "barcode" not in df.columns:
+        return df
+    if not inspect(conn).has_table("losses"):
+        return df
+    names = {col["name"] for col in inspect(conn).get_columns("losses")}
+    if "barcode" not in names or "mx" not in names:
+        return df
+    old = pd.read_sql(
+        text("SELECT barcode, mx FROM losses WHERE " + _period_where()),
+        conn,
+        params={"s": d_min.isoformat(), "e": d_max.isoformat()},
+    )
+    if old.empty:
+        return df
+    old["key"] = old["barcode"].map(analytics.sticker_text)
+    old["place"] = old["mx"].map(analytics.sticker_text)
+    old = old.loc[(old["key"] != "") & (old["place"] != "")]
+    if old.empty:
+        return df
+    lookup = dict(zip(old["key"].tolist(), old["place"].tolist()))
+    df = df.copy()
+    if "mx" not in df.columns:
+        df["mx"] = ""
+    current = df["mx"].map(analytics.sticker_text)
+    filled = df["barcode"].map(analytics.sticker_text).map(lookup).fillna("")
+    df["mx"] = [cur or prev for cur, prev in zip(current.tolist(), filled.tolist())]
+    return df
+
+
+def _period_barcodes(conn, d_min, d_max):
+    if not inspect(conn).has_table("losses"):
+        return pd.DataFrame(columns=["barcode", "reason", "status_before"])
+    names = {col["name"] for col in inspect(conn).get_columns("losses")}
+    if "barcode" not in names:
+        return pd.DataFrame(columns=["barcode", "reason", "status_before"])
+    cols = ["barcode"]
+    for col in ("reason", "status_before"):
+        if col in names:
+            cols.append(col)
+    return pd.read_sql(
+        text("SELECT " + ", ".join(cols) + " FROM losses WHERE " + _period_where()),
+        conn,
+        params={"s": d_min.isoformat(), "e": d_max.isoformat()},
+    )
+
+
+def plan_twin(frame):
+    """Сколько строк twin находят пропуск сборки в базе. Ничего не пишет."""
+    dates = pd.to_datetime(frame["loss_date"], errors="coerce").dropna()
+    d_min = dates.min().date()
+    d_max = dates.max().date()
+    engine = get_engine()
+    with engine.connect() as conn:
+        existing = _period_barcodes(conn, d_min, d_max)
+    grouped = {}
+    if len(existing):
+        part = existing.loc[analytics.assembly_export_mask(existing)]
+        for raw in part["barcode"].tolist():
+            forms = analytics.barcode_forms(raw)
+            if not forms:
+                continue
+            for form in forms:
+                grouped.setdefault(form, set()).update(forms)
+    by_code = {}
+    matched = 0
+    for key, place in zip(frame["barcode"].tolist(), frame["mx"].map(analytics.sticker_text).tolist()):
+        forms = grouped.get(analytics.sticker_text(key))
+        if not forms:
+            continue
+        matched += 1
+        for form in forms:
+            by_code[form] = place
+    return {
+        "matched": matched,
+        "unmatched": int(len(frame) - matched),
+        "updates": [{"barcode": code, "mx": place} for code, place in by_code.items()],
+        "updated": 0,
+        "start": d_min.isoformat(),
+        "end": d_max.isoformat(),
+    }
+
+
+def apply_twin(frame):
+    """Дописывает МХ к пропускам сборки по ШК. Период и остальные потери не трогает."""
+    plan = plan_twin(frame)
+    if not plan["updates"]:
+        return plan
+    params = {"s": plan["start"], "e": plan["end"]}
+    with _write_lock:
+        engine = get_engine()
+        with engine.begin() as conn:
+            conn.execute(text(
+                "CREATE TEMP TABLE IF NOT EXISTS mx_patch (barcode TEXT, mx TEXT)"
+            ))
+            conn.execute(text("DELETE FROM mx_patch"))
+            insert = text("INSERT INTO mx_patch (barcode, mx) VALUES (:barcode, :mx)")
+            rows = plan["updates"]
+            for offset in range(0, len(rows), 400):
+                conn.execute(insert, rows[offset:offset + 400])
+            if _dialect() == "postgresql":
+                result = conn.execute(text(
+                    "UPDATE losses AS l SET mx = p.mx FROM mx_patch AS p "
+                    "WHERE l.barcode = p.barcode AND " + _period_where()
+                ), params)
+            else:
+                result = conn.execute(text(
+                    "UPDATE losses SET mx = ("
+                    "SELECT p.mx FROM mx_patch AS p WHERE p.barcode = losses.barcode"
+                    ") WHERE " + _period_where() + " "
+                    "AND EXISTS (SELECT 1 FROM mx_patch AS p WHERE p.barcode = losses.barcode)"
+                ), params)
+            plan["updated"] = int(result.rowcount or 0)
+            conn.execute(text("DELETE FROM mx_patch"))
+        clear_cache()
+    return plan
 
 
 def replace_period(df, d_min, d_max):
-    """Удаляет строки периода и записывает файл вместо них."""
+    """Удаляет строки периода и записывает файл вместо них.
+
+    Пустое МХ в новой выгрузке не стирает место, которое twin уже записал по тому же ШК.
+    """
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
             if inspect(conn).has_table("losses"):
+                df = _carry_mx(conn, df, d_min, d_max)
                 existing = _add_missing_columns(conn, df, engine.dialect.name)
                 use = [col for col in df.columns if col in existing]
                 conn.execute(text(_delete_sql()), {"s": d_min.isoformat(), "e": d_max.isoformat()})
