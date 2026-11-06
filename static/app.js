@@ -3386,21 +3386,31 @@ function renderEmpDetail(detail, lr) {
 }
 
 const WRITEOFF_COLUMNS = [
-  ["qty", "Всего, шт"], ["unposted_qty", "Без оприход., шт"], ["posted_qty", "Оприходовано, шт"],
-  ["sum", "Все списания, ₽"], ["unposted_sum", "Без оприход., ₽"], ["posted_sum", "Оприходовано, ₽"],
-  ["share", "Доля списаний, %"], ["posted_share", "Оприходовано, %"], ["net_share", "Доля без оприход., %"],
+  ["qty", "К-во все"], ["unposted_qty", "К-во без оприхода"],
+  ["posted_qty", "Количество оприходованного товара в отчётном периоде"],
+  ["sum", "Все списания"], ["unposted_sum", "Сумма без оприхода"],
+  ["posted_sum", "Сумма оприходованного товара в отчётном периоде"],
+  ["turnover_share", "Доля всех потерь (период), %"],
+  ["posted_share", "Доля оприходованного товара в отчётном периоде, %"],
+  ["net_turnover_share", "Доля за вычетом оприходованного товара в отчётном периоде, %"],
 ];
 
 function renderWarehouseWriteoffs(screen) {
   const report = state.report.warehouse_writeoffs;
-  screen.append(el("h2", null, "Списания склад"));
   if (!report?.total) {
     screen.append(el("p", { class: "hint" }, "Нет списаний за выбранный период."));
     return;
   }
   const total = report.total;
-  const percent = (value) => value == null ? "—" : new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 5 }).format(value) + "%";
-  const headings = ["Поток / зона / тип потери / статус", ...WRITEOFF_COLUMNS.map(([, title]) => title)];
+  const percent = (value) => value == null ? "—" : new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 5, maximumFractionDigits: 5 }).format(value) + "%";
+  const period = state.report.period;
+  const periodName = state.mode === "Месяц"
+    ? new Intl.DateTimeFormat("ru-RU", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${period.start}T12:00:00Z`))
+    : `${period.start} — ${period.end}`;
+  const headings = ["Названия строк", ...WRITEOFF_COLUMNS.map(([, title]) => state.mode === "Месяц" ? title.replace("(период)", "(месяц)") : title)];
+  const card = el("section", { class: "writeoff-card", "aria-label": "Списания склад" });
+  let diagnostics = null;
+  screen.append(card);
   const csv = [];
   const collect = (items, path = []) => {
     for (const item of items) {
@@ -3411,11 +3421,10 @@ function renderWarehouseWriteoffs(screen) {
   };
   collect(report.groups);
   csv.push([total.name, ...WRITEOFF_COLUMNS.map(([key]) => total[key])]);
-  screen.append(el("div", { class: "writeoff-head" },
-    el("div", null, el("div", { class: "big-sum" }, fmtRub(total.sum)), el("p", { class: "hint" }, `${fmtInt(total.qty)} шт за выбранный период`)),
+  card.append(el("div", { class: "writeoff-card-head" },
+    el("div", null, el("h2", null, "Списания склад"), el("p", { class: "hint" }, periodName)),
     downloadButton(exportName("spisaniya-sklad"), headings, csv),
   ));
-  screen.append(el("p", { class: "hint" }, "Раскройте поток → зону → тип потери → статус. Доли списаний считаются от общей суммы этого отчёта; процент оприходования — от суммы строки. Оборот в данных отсутствует."));
   if (total.unknown_qty || total.unknown_sum) {
     screen.append(el("p", { class: "box warn" }, `Флаг оприходования не указан: ${fmtInt(total.unknown_qty)} шт · ${fmtRub(total.unknown_sum)}. Эти строки входят в общий итог, но не в показатели «Оприходовано» и «Без оприходования».`));
   }
@@ -3436,16 +3445,20 @@ function renderWarehouseWriteoffs(screen) {
       el("p", { class: "hint" }, "Здесь показаны исходный статус из базы, LR до правил классификации, МХ и площадка. Пустое поле отмечено явно. МХ доступно, если оно было загружено для этой потери."),
       table,
     );
-    screen.append(panel);
+    diagnostics = panel;
   }
   const table = el("table", { class: "writeoff-table" });
   table.append(el("caption", { class: "sr" }, "Детализация складских списаний по новому маппингу"));
   table.append(el("thead", null, el("tr", null, headings.map((title) => el("th", { scope: "col" }, title)))));
   const body = el("tbody");
+  const periodRow = el("tr", { class: "writeoff-period-row" }, el("th", { scope: "row" }, state.mode === "Месяц" ? "Месяц" : "Период"),
+    el("th", { colspan: String(WRITEOFF_COLUMNS.length), scope: "colgroup" }, periodName));
+  table.querySelector("thead").prepend(periodRow);
   const cells = (item, row) => {
     for (const [key] of WRITEOFF_COLUMNS) {
-      const text = key.includes("share") ? percent(item[key]) : fmtInt(item[key]);
-      row.append(el("td", null, text));
+      const text = key.includes("share") ? percent(item[key]) : Number(item[key]) === 0 ? "—" : fmtInt(item[key]);
+      const props = key.includes("turnover") ? { title: "Для расчёта нужен оборот за выбранный период" } : {};
+      row.append(el("td", props, text));
     }
   };
   let sequence = 0;
@@ -3454,21 +3467,23 @@ function renderWarehouseWriteoffs(screen) {
       const id = `writeoff-${++sequence}`;
       const children = item.children || [];
       const row = el("tr", { class: `writeoff-level-${depth}` });
-      row.hidden = depth > 0;
+      row.hidden = depth > 1;
       const cell = el("th", { scope: "row" });
       cell.style.setProperty("--depth", depth);
       if (children.length) {
-        const button = el("button", { type: "button", "aria-expanded": "false" },
-          el("span", { class: "writeoff-chevron", "aria-hidden": "true" }, "›"), item.name);
+        const button = el("button", { type: "button", "aria-expanded": depth === 0 ? "true" : "false" },
+          el("span", { class: "writeoff-chevron", "aria-hidden": "true" }, "+"), item.name);
         button.addEventListener("click", () => {
           const open = button.getAttribute("aria-expanded") !== "true";
           button.setAttribute("aria-expanded", String(open));
+          button.querySelector(".writeoff-chevron").textContent = open ? "−" : "+";
           body.querySelectorAll("tr").forEach((child) => {
             if (child._ancestors?.includes(id)) {
               child.hidden = !open || child._ancestors.some((key) => body.querySelector(`[data-writeoff="${key}"] button`)?.getAttribute("aria-expanded") !== "true");
             }
           });
         });
+        button.querySelector(".writeoff-chevron").textContent = depth === 0 ? "−" : "+";
         cell.append(button);
       } else cell.append(el("span", { class: "writeoff-leaf" }, item.name));
       row.dataset.writeoff = id;
@@ -3479,12 +3494,16 @@ function renderWarehouseWriteoffs(screen) {
       appendRows(children, depth + 1, [...ancestors, id]);
     }
   };
-  appendRows(report.groups);
+  const order = ["Исходящий поток", "Входящий поток", "Дефектация", "Внескладское списание", "Релиз продаж"];
+  const rank = (item) => { const index = order.indexOf(item.name); return index < 0 ? order.length : index; };
+  appendRows([...report.groups].sort((a, b) => rank(a) - rank(b)));
   table.append(body);
   const foot = el("tr", null, el("th", { scope: "row" }, "Общий итог"));
   cells(total, foot);
   table.append(el("tfoot", null, foot));
-  screen.append(el("div", { class: "writeoff-scroll", tabindex: "0", role: "region", "aria-label": "Таблица списаний, прокрутка по горизонтали" }, table));
+  card.append(el("div", { class: "writeoff-scroll", tabindex: "0", role: "region", "aria-label": "Таблица списаний, прокрутка по горизонтали" }, table));
+  card.append(el("p", { class: "hint writeoff-card-note" }, "Количество — шт., суммы — ₽. Потоки раскрыты до зон списания; «+» открывает тип потери и статус. Для долей потерь от оборота нужны данные оборота за период — пока показан прочерк. Доля оприходования считается от суммы строки."));
+  if (diagnostics) screen.append(diagnostics);
 }
 
 function renderDashboard(screen) {

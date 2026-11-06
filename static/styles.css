@@ -2819,3 +2819,37 @@ button.back:active { transform: translateX(-3px); }
 .writeoff-issues { margin-block: 24px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 16px; }
 .writeoff-issues h3 { margin: 0; }
 .writeoff-diagnostics td:nth-child(-n+6), .writeoff-diagnostics th:nth-child(-n+6) { text-align: left; white-space: normal; min-width: 130px; overflow-wrap: anywhere; }
+
+/* Сводная карточка списаний: структура исходного отчёта в теме сайта. */
+.writeoff-card { border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); overflow: hidden; }
+.writeoff-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; }
+.writeoff-card-head h2 { margin: 0; font-size: 1.2rem; }
+.writeoff-card-head .hint { margin: 4px 0 0; text-transform: capitalize; }
+.writeoff-card .writeoff-scroll { margin: 0; border: 0; border-radius: 0; max-height: 74vh; }
+.writeoff-table { font-size: 0.8rem; }
+.writeoff-table th, .writeoff-table td { padding: 7px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line-strong); }
+.writeoff-table tr > :last-child { border-right: 0; }
+.writeoff-table thead { position: sticky; top: 0; z-index: 4; background: var(--sidebar); }
+.writeoff-table thead th { background: var(--sidebar); text-align: center; vertical-align: middle; min-width: 108px; max-width: 150px; font-size: 0.72rem; line-height: 1.4; padding-block: 12px; color: var(--text); }
+.writeoff-table th:first-child { min-width: 440px; width: 35%; max-width: 620px; background: var(--writeoff-row-bg, var(--bg)); }
+.writeoff-table thead th:first-child { background: var(--sidebar); }
+.writeoff-table .writeoff-period-row th { padding-block: 6px; color: var(--muted); font-size: 0.74rem; text-transform: capitalize; }
+.writeoff-table .writeoff-period-row th:last-child { text-align: left; }
+.writeoff-table tbody th { padding-left: calc(10px + var(--depth, 0) * 16px); }
+.writeoff-table tbody tr { background: var(--writeoff-row-bg, transparent); }
+.writeoff-table .writeoff-level-0 { --writeoff-row-bg: color-mix(in srgb, var(--bg), var(--blue) 17%); color: var(--blue-ink); font-weight: 800; }
+.writeoff-table .writeoff-level-0 th, .writeoff-table .writeoff-level-0 td { padding-block: 9px; }
+.writeoff-table .writeoff-level-1 { font-weight: 650; }
+.writeoff-table .writeoff-level-2 { color: var(--muted); font-weight: 500; }
+.writeoff-table .writeoff-chevron { flex: 0 0 14px; width: 14px; line-height: 14px; border: 1px solid var(--line-strong); border-radius: 3px; text-align: center; font-size: 12px; font-weight: 700; transform: none; }
+.writeoff-table button[aria-expanded="true"] .writeoff-chevron { transform: none; }
+.writeoff-table tfoot { position: sticky; bottom: 0; z-index: 3; background: color-mix(in srgb, var(--bg), var(--amber) 20%); color: var(--text); font-size: 0.9rem; }
+.writeoff-table tfoot th:first-child { background: color-mix(in srgb, var(--bg), var(--amber) 20%); }
+.writeoff-table tfoot th, .writeoff-table tfoot td { padding-block: 12px; border-top: 2px solid var(--amber); }
+.writeoff-card-note { padding: 14px 20px; margin: 0; border-top: 1px solid var(--line-strong); font-size: 0.76rem; }
+@media (max-width: 600px) {
+  .writeoff-card-head { padding: 14px; }
+  .writeoff-table th:first-child { min-width: 230px; max-width: 280px; }
+  .writeoff-table th, .writeoff-table td { padding-inline: 8px; }
+  .writeoff-card-note { padding: 12px 14px; }
+}
