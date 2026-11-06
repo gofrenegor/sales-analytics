@@ -3294,11 +3294,13 @@ function empMxNode(mx) {
 function empOperationNode(status) {
   const code = String(status || "").trim().toUpperCase();
   return el("div", { class: "emp-operation" },
-    el("span", { class: "emp-operation-label" }, "Статус перед списанием"),
-    el("b", { class: "emp-operation-code" }, code || "—"),
-    el("span", { class: "emp-operation-name" },
-      code ? (statusDescription(code) || "Нет описания в справочнике") : "Нет данных в выгрузке",
-    ),
+    code ? el("button", {
+      type: "button",
+      class: "emp-operation-code",
+      "aria-label": `Расшифровка статуса ${code}`,
+      "aria-controls": "info-statuses",
+      onclick: () => openStatusInfo(code),
+    }, code) : el("span", { title: "Нет данных в выгрузке" }, "—"),
   );
 }
 
@@ -4368,6 +4370,27 @@ function setAdminOpen(open) {
 }
 
 let infoScriptLoading = null;
+
+async function openStatusInfo(code) {
+  const info = document.getElementById("admin-info");
+  const statuses = document.getElementById("info-statuses");
+  const search = document.getElementById("status-search");
+  if (!info || !statuses || !search) return;
+  info.open = true;
+  statuses.open = true;
+  search.value = code;
+  setAdminOpen(true);
+  search.focus({ preventScroll: true });
+  statuses.scrollIntoView({ block: "nearest" });
+  const list = document.getElementById("info-status-list");
+  list?.replaceChildren(el("p", { class: "st-empty" }, "Загрузка…"));
+  try {
+    await ensureInfoCatalog();
+    renderStatuses();
+  } catch (error) {
+    list?.replaceChildren(el("p", { class: "box bad", role: "alert" }, error.message));
+  }
+}
 
 function ensureInfoCatalog() {
   if (infoScriptLoading) return infoScriptLoading;

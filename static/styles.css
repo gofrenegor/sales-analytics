@@ -882,9 +882,21 @@ button.prob-line:active { transform: scale(0.97); }
   font-size: 0.8125rem;
   line-height: 1.45;
 }
-.emp-operation-label { color: var(--muted); }
-.emp-operation-code { letter-spacing: 0.03em; }
-.emp-operation-name { overflow-wrap: anywhere; }
+.emp-operation-code {
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--blue-ink);
+  font: inherit;
+  font-weight: 750;
+  letter-spacing: 0.03em;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .emp-operation-code:hover { color: var(--blue); }
+}
 .emp-item > .emp-sum {
   min-width: 0;
   overflow: hidden;
