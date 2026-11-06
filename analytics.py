@@ -2367,6 +2367,7 @@ def build_employee_items(df, badge, lr):
     found: True — оприходование ИСТИНА (вещь нашли, было движение),
     False — ЛОЖЬ, None — флага нет.
     mx — место хранения, с которого был пропуск. Пусто, если колонки не было.
+    status_before — статус перед списанием из Superset, только у сборки.
     """
     code = str(lr)
     if code not in EMPLOYEE_LRS:
@@ -2386,13 +2387,14 @@ def build_employee_items(df, badge, lr):
     stickers = part["last_sticker"] if "last_sticker" in part.columns else pd.Series("", index=part.index)
     flags = part["posted"] if "posted" in part.columns else pd.Series("", index=part.index)
     places = part["mx"] if "mx" in part.columns else pd.Series("", index=part.index)
+    statuses = part["status_before"] if "status_before" in part.columns else pd.Series("", index=part.index)
     if "loss_sum" in part.columns:
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
     items = []
-    for sticker, flag, amount, place in zip(
-        stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(),
+    for sticker, flag, amount, place, status in zip(
+        stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(), statuses.tolist(),
     ):
         parsed = posted_flag(flag)
         if parsed == "1":
@@ -2401,12 +2403,16 @@ def build_employee_items(df, badge, lr):
             found = False
         else:
             found = None
-        items.append({
+        item = {
             "sticker": sticker_text(sticker),
             "found": found,
             "sum": _f(amount),
             "mx": sticker_text(place),
-        })
+        }
+        if code == "5":
+            value = sticker_text(status).upper()
+            item["status_before"] = "" if value == "НЕ УКАЗАНО" else value
+        items.append(item)
     items.sort(key=lambda row: (-row["sum"], row["sticker"]))
     return items
 

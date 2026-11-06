@@ -871,6 +871,20 @@ button.prob-line:active { transform: scale(0.97); }
   font-variant-numeric: tabular-nums;
 }
 .emp-mx-hint { margin: 6px 0 2px; }
+.emp-operation {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  min-width: 0;
+  padding-bottom: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+.emp-operation-label { color: var(--muted); }
+.emp-operation-code { letter-spacing: 0.03em; }
+.emp-operation-name { overflow-wrap: anywhere; }
 .emp-item > .emp-sum {
   min-width: 0;
   overflow: hidden;

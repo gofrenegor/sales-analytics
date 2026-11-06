@@ -1009,6 +1009,12 @@ const STATUSES = [
   ["WWE", "Обнаружено НВ на переупаковке"],
 ];
 
+const STATUS_NAMES = new Map(STATUSES);
+
+function statusDescription(code) {
+  return STATUS_NAMES.get(String(code || "").trim().toUpperCase()) || "";
+}
+
 function renderStatuses() {
   const host = document.getElementById("info-status-list");
   if (!host || typeof el !== "function") return;

@@ -569,7 +569,7 @@ def employee_items(
     if error is not None:
         return error
     return _cached_json(
-        "employee-items-v2", period,
+        "employee-items-v3", period,
         lambda value: _employee_items_payload(value, badge, lr), (badge, lr),
     )
 

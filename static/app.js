@@ -1293,6 +1293,8 @@ async function loadEmpDetail(lr, badge) {
       return;
     }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    if (String(lr) === "5") await ensureInfoCatalog();
+    if (seq !== empDetailSeq) return;
     const pack = { items: data.items || [], ready: data.ready !== false };
     state.empCache[key] = pack;
     state.empDetail = { key, loading: false, error: "", items: pack.items, ready: pack.ready };
@@ -3274,6 +3276,17 @@ function empMxNode(mx) {
   );
 }
 
+function empOperationNode(status) {
+  const code = String(status || "").trim().toUpperCase();
+  return el("div", { class: "emp-operation" },
+    el("span", { class: "emp-operation-label" }, "Статус перед списанием"),
+    el("b", { class: "emp-operation-code" }, code || "—"),
+    el("span", { class: "emp-operation-name" },
+      code ? (statusDescription(code) || "Нет описания в справочнике") : "Нет данных в выгрузке",
+    ),
+  );
+}
+
 function empFoundNode(found) {
   if (found === true) {
     return el(
@@ -3322,6 +3335,7 @@ function renderEmpDetail(detail, lr) {
     );
     if (showMx) row.append(empMxNode(item.mx));
     row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
+    if (showMx) row.append(empOperationNode(item.status_before));
     box.append(row);
   }
   if (detail.items.length > state.empDetailLimit) {
