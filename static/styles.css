@@ -2824,7 +2824,6 @@ button.back:active { transform: translateX(-3px); }
 .writeoff-card { border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--card); overflow: hidden; }
 .writeoff-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 20px; }
 .writeoff-card-head h2 { margin: 0; font-size: 1.2rem; }
-.writeoff-card-head .hint { margin: 4px 0 0; text-transform: capitalize; }
 .writeoff-card .writeoff-scroll { margin: 0; border: 0; border-radius: 0; max-height: 74vh; }
 .writeoff-table { font-size: 0.8rem; }
 .writeoff-table th, .writeoff-table td { padding: 7px 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line-strong); }
