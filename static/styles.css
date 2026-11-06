@@ -909,12 +909,14 @@ button.prob-line:active { transform: scale(0.97); }
   grid-template-columns: minmax(0, 1fr) var(--emp-found) var(--emp-sum);
   align-items: center;
   gap: 8px 12px;
-  min-height: 1.9rem;
+  min-height: 2.3rem;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
   font-size: 1rem;
   line-height: 1.45;
 }
 .emp-detail.has-mx .emp-item {
-  grid-template-columns: minmax(0, 1.15fr) minmax(5.5rem, 0.9fr) var(--emp-found) var(--emp-sum);
+  grid-template-columns: minmax(0, 1.15fr) minmax(5.5rem, 0.3fr) minmax(3rem, 0.6fr) var(--emp-found) var(--emp-sum);
 }
 .emp-sticker {
   min-width: 0;
@@ -946,13 +948,9 @@ button.prob-line:active { transform: scale(0.97); }
 }
 .emp-mx-hint { margin: 6px 0 2px; }
 .emp-operation {
-  grid-column: 1 / -1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 2px 8px;
+  align-items: center;
   min-width: 0;
-  padding-bottom: 8px;
   font-size: 0.8125rem;
   line-height: 1.45;
 }

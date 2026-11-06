@@ -3451,9 +3451,8 @@ function renderEmpDetail(detail, lr) {
       { class: "emp-item" },
       el("span", { class: "emp-sticker" }, item.sticker || "—"),
     );
-    if (showMx) row.append(empMxNode(item.mx));
+    if (showMx) row.append(empMxNode(item.mx), empOperationNode(item.status_before));
     row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
-    if (showMx) row.append(empOperationNode(item.status_before));
     box.append(row);
   }
   if (detail.items.length > state.empDetailLimit) {
