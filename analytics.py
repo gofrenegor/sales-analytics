@@ -1196,6 +1196,7 @@ def process_excel(file):
         "Лостризон первого списания": "reason",
         "Дата статуса перед списанием": "status_before_date",
         "Статус перед списанием": "status_before",
+        "Статус после списания": "status_after",
     }
     existing_cols = [c for c in cols_map if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
@@ -1205,7 +1206,7 @@ def process_excel(file):
     for col in ["loss_date", "status_before_date"]:
         if col in df.columns:
             df[col] = _strip_tz(clean_date_col(df[col]))
-    for col in ["block_name", "reason", "status_before"]:
+    for col in ["block_name", "reason", "status_before", "status_after"]:
         if col in df.columns:
             df[col] = df[col].fillna("Не указано").astype(str).str.replace(r"\*", "", regex=True).str.strip()
             if col == "reason":
@@ -2344,18 +2345,39 @@ def _found_count(group):
 
 
 def _employee_badges(part):
-    rows = []
-    for badge, group in part.groupby("badge", sort=False):
-        flags = group["wmi"].tolist()
-        rows.append({
-            "badge": str(badge or ""),
-            "losses": int(len(group)),
-            "sum": _f(group["loss_sum"].sum()),
-            "wmi": bool(any(flags)),
-            "found": _found_count(group),
-        })
+    part = part.copy()
+    flags = part["posted"].map(posted_flag) if "posted" in part.columns else pd.Series("", index=part.index)
+    part["found_count"] = flags.eq("1")
+    part["has_posted"] = flags.isin(["1", "0"])
+    grouped = part.groupby("badge", sort=False).agg(
+        losses=("badge", "size"), amount=("loss_sum", "sum"),
+        wmi=("wmi", "any"), found=("found_count", "sum"),
+        has_posted=("has_posted", "any"),
+    )
+    rows = [{
+        "badge": str(badge or ""), "losses": int(row.losses),
+        "sum": _f(row.amount), "wmi": bool(row.wmi),
+        "found": int(row.found) if row.has_posted else None,
+    } for badge, row in grouped.iterrows()]
     rows.sort(key=lambda row: (-row["losses"], -row["sum"], row["badge"]))
     return rows
+
+
+def prepare_employee_losses(df):
+    """Только поля списка сотрудников, без классификации склада и графиков."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    part = df.copy()
+    if "assembly_employee_id" in part.columns:
+        part["assembly_employee_id"] = part["assembly_employee_id"].map(_optional_badge)
+    reason = part["reason"] if "reason" in part else pd.Series("", index=part.index)
+    part["reason"] = reason.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    status = part["status_before"] if "status_before" in part else pd.Series("", index=part.index)
+    part["status_before"] = status.fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+    forced = part["status_before"].map(STATUS_FORCE_LR)
+    hit = forced.notna() & ~part["reason"].eq("5")
+    part.loc[hit, "reason"] = forced.loc[hit]
+    return part.loc[part["reason"].isin(EMPLOYEE_LRS)]
 
 
 def build_employees(df):
@@ -2414,6 +2436,7 @@ def build_employee_items(df, badge, lr):
     False — ЛОЖЬ, None — флага нет.
     mx — место хранения, с которого был пропуск. Пусто, если колонки не было.
     status_before — статус перед списанием из Superset, только у сборки.
+    status_after — статус после списания из Superset, для отображения находов.
     """
     df = _visible_losses(df)
     code = str(lr)
@@ -2435,13 +2458,15 @@ def build_employee_items(df, badge, lr):
     flags = part["posted"] if "posted" in part.columns else pd.Series("", index=part.index)
     places = part["mx"] if "mx" in part.columns else pd.Series("", index=part.index)
     statuses = part["status_before"] if "status_before" in part.columns else pd.Series("", index=part.index)
+    after_statuses = part["status_after"] if "status_after" in part.columns else pd.Series("", index=part.index)
     if "loss_sum" in part.columns:
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
     items = []
-    for sticker, flag, amount, place, status in zip(
+    for sticker, flag, amount, place, status, after_status in zip(
         stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(), statuses.tolist(),
+        after_statuses.tolist(),
     ):
         parsed = posted_flag(flag)
         if parsed == "1":
@@ -2456,6 +2481,8 @@ def build_employee_items(df, badge, lr):
             "sum": _f(amount),
             "mx": sticker_text(place),
         }
+        value = sticker_text(after_status).upper()
+        item["status_after"] = "" if value == "НЕ УКАЗАНО" else value
         if code == "5":
             value = sticker_text(status).upper()
             item["status_before"] = "" if value == "НЕ УКАЗАНО" else value
@@ -2897,29 +2924,63 @@ def build_block_pages(curr, prev, period, items, has_prev, grain, series=None):
     return pages
 
 
-# Независимый разрез по присланному справочнику; правила блоков/LR сохраняются.
-with (Path(__file__).parent / "data" / "warehouse_writeoffs.tsv").open(encoding="utf-8-sig", newline="") as mapping_file:
-    WRITEOFF_MAPPING = {
-        row["Статус"].strip(): {key: value.strip() for key, value in row.items()}
-        for row in csv.DictReader(mapping_file, delimiter="\t")
-    }
+def _writeoff_reference(filename, key):
+    with (Path(__file__).parent / "data" / filename).open(encoding="utf-8-sig", newline="") as mapping_file:
+        return {
+            row[key].strip(): {field: value.strip() for field, value in row.items()}
+            for row in csv.DictReader(mapping_file, delimiter="\t")
+        }
+
+
+# Пользовательский справочник имеет приоритет над дополнениями из панели «Инфо».
+WRITEOFF_MAPPING = _writeoff_reference("warehouse_writeoffs_extra.tsv", "Статус")
+WRITEOFF_MAPPING.update(_writeoff_reference("warehouse_writeoffs.tsv", "Статус"))
+WRITEOFF_REASONS = _writeoff_reference("warehouse_writeoff_reasons.tsv", "LR")
+
+
+def _writeoff_status(value):
+    text = sticker_text(value).strip().upper()
+    if text in WRITEOFF_MAPPING:
+        return text
+    # В выгрузке может находиться «LSS · Сортировка…». Не угадываем код
+    # по произвольной подстроке и не выбираем между несколькими статусами.
+    codes = {code for code in re.findall(r"(?<![A-ZА-ЯЁ0-9])[A-Z0-9]{3}(?![A-ZА-ЯЁ0-9])", text)
+             if code in WRITEOFF_MAPPING}
+    return next(iter(codes)) if len(codes) == 1 else text
 
 
 def build_warehouse_writeoffs(frame):
-    """Поток → зона → тип потери → статус, по исходному статусу перед списанием."""
+    """Поток → зона → тип → статус. LR 5 важнее статуса, прочие LR — резерв."""
     if frame.empty:
         return {"total": None, "groups": [], "unmapped": []}
     part = frame.copy()
-    statuses = part["status_before"].fillna("").astype(str)
+    statuses = part["status_before"].fillna("").map(_writeoff_status)
+    # prepare_losses меняет reason по ORS/RNR. Для этого разреза нужен
+    # исходный LR: ORS с другим LR остаётся релизом из справочника.
+    reasons = part.get("source_reason", part.get("reason", pd.Series("", index=part.index)))
+    reasons = reasons.fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     mapped = statuses.map(WRITEOFF_MAPPING)
+    raw_statuses = part.get("status_before_raw", part["status_before"]).map(_writeoff_status)
+    mapped = mapped.where(mapped.notna(), raw_statuses.map(WRITEOFF_MAPPING))
+    by_reason = reasons.map(WRITEOFF_REASONS)
+    use_reason = reasons.eq("5") | (mapped.isna() & by_reason.notna())
+    mapped = mapped.where(~use_reason, by_reason)
     levels = (("writeoff_flow", "Наименование потока"), ("writeoff_zone", "Зона списания"),
               ("writeoff_type", "Тип потери"))
     for col, field in levels:
         part[col] = mapped.map(lambda row: row[field] if isinstance(row, dict) else "Нет в маппинге")
-    part["writeoff_status"] = [
-        f"{status} · {row['Расшифровка']}" if isinstance(row, dict) else str(status)
-        for status, row in zip(statuses, mapped)
-    ]
+    labels = []
+    for status, raw_status, row, reason, from_reason in zip(statuses, raw_statuses, mapped, reasons, use_reason):
+        code = raw_status if raw_status in WRITEOFF_MAPPING else status
+        if not isinstance(row, dict):
+            labels.append(str(code))
+            continue
+        description = WRITEOFF_MAPPING.get(code, row)["Расшифровка"]
+        label = f"{code} · {description}"
+        if from_reason:
+            label += f" (ЛР {reason})"
+        labels.append(label)
+    part["writeoff_status"] = labels
     flags = part["posted"].map(posted_flag) if "posted" in part else pd.Series("", index=part.index)
     for label, flag in (("posted", "1"), ("unposted", "0"), ("unknown", "")):
         part[f"{label}_qty"] = part["loss_qty"].where(flags == flag, 0)
@@ -2946,8 +3007,8 @@ def build_warehouse_writeoffs(frame):
             rows.append(item)
         return sorted(rows, key=lambda item: (-item["sum"], item["name"]))
 
-    # Показываем исходные поля только для проблемных сочетаний, без догадок по LR/МХ.
-    missing = part.loc[~statuses.isin(WRITEOFF_MAPPING)].copy()
+    # Диагностика содержит только строки без сопоставления и по статусу, и по LR.
+    missing = part.loc[mapped.isna()].copy()
     fields = (("status_raw", "status_before_raw"), ("status", "status_before"),
               ("reason", "source_reason"), ("mx", "mx"), ("platform", "block_name"))
     for target, source in fields:

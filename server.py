@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from fastapi import Cookie, Depends, FastAPI, File, Form, Request, UploadFile
+from fastapi import Cookie, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -469,8 +469,40 @@ def _report_payload(period):
 
 
 def _employees_payload(period):
-    current = db.load_cached(period["_start"], period["_end"], "employees")
-    return {"employees": analytics.build_employees(current)}
+    return {"employees": db.load_employee_summary(period["_start"], period["_end"])}
+
+
+def _employees_page_payload(period, lr, page, sort, query):
+    all_rows = db.load_employee_summary(period["_start"], period["_end"])[lr]
+    rows = [row for row in all_rows if query in row["badge"]] if query else list(all_rows)
+
+    def sort_key(row):
+        # Числовые бейджики сравниваются естественно, как в браузере.
+        badge = row["badge"]
+        tie = (int(badge or "0"), badge)
+        if sort == "sum":
+            return (-row["sum"], -row["losses"], tie)
+        if sort == "found":
+            return (row["found"] is None, -(row["found"] or 0), -row["losses"], -row["sum"], tie)
+        if sort == "found_share":
+            known = row["found"] is not None and row["losses"] > 0
+            share = row["found"] / row["losses"] if known else 0
+            return (not known, -share, -(row["found"] or 0), -row["losses"], -row["sum"], tie)
+        return (-row["losses"], -row["sum"], tie)
+
+    rows.sort(key=sort_key)
+    total = len(rows)
+    pages = 1 if total <= 25 else 2 if total <= 75 else 2 + (total - 75 + 99) // 100
+    page = min(page, pages - 1)
+    offset = 0 if page == 0 else 25 if page == 1 else 75 + (page - 2) * 100
+    limit = 25 if page == 0 else 50 if page == 1 else 100
+    return {
+        "rows": rows[offset:offset + limit], "page": page, "pages": pages,
+        "total": total, "operation_total": len(all_rows),
+        "losses": sum(row["losses"] for row in rows),
+        "sum": analytics._f(sum(row["sum"] for row in rows)),
+        "badges_missing": bool(all_rows) and all(not row["badge"] for row in all_rows),
+    }
 
 
 def _problem_rows_payload(period):
@@ -508,7 +540,7 @@ def report(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("report-v6", period, _report_payload)
+    return _cached_json("report-v7", period, _report_payload)
 
 
 @app.get("/api/employees")
@@ -517,6 +549,10 @@ def employees(
     anchor: str | None = None,
     start: str | None = None,
     end: str | None = None,
+    lr: str | None = Query(default=None, pattern="^(5|27)$"),
+    page: int = Query(default=0, ge=0, le=1000000),
+    sort: str = Query(default="qty", pattern="^(qty|sum|found|found_share)$"),
+    q: str = Query(default="", max_length=64, pattern=r"^[0-9]*$"),
     user=Depends(actor),
 ):
     blocked = denied(user)
@@ -525,7 +561,13 @@ def employees(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employees-v2", period, _employees_payload)
+    if lr is None:
+        return _cached_json("employees-v3", period, _employees_payload)
+    return _cached_json(
+        "employee-page-v1", period,
+        lambda window: _employees_page_payload(window, lr, page, sort, q),
+        extra=(lr, page, sort, q),
+    )
 
 
 @app.get("/api/employees/rows")
@@ -779,9 +821,7 @@ def commit(body: TokenIn, user=Depends(actor)):
             result = db.apply_twin(frame)
             message = f"МХ дописано: {int(result['updated'])}"
         else:
-            d_min = pd.to_datetime(frame["loss_date"]).min().date()
-            d_max = pd.to_datetime(frame["loss_date"]).max().date()
-            db.replace_period(frame, d_min, d_max)
+            db.merge_losses(frame)
             message = "Данные сохранены!"
         summary = db.get_summary()
     except (db.DataError, db.ConfigError) as exc:

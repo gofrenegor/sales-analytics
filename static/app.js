@@ -1307,7 +1307,13 @@ async function loadEmpDetail(lr, badge) {
 
 async function loadEmployees() {
   if (freeRangePending()) return;
-  const key = periodKey();
+  if (state.empLr === "5" && state.empRows) return;
+  const params = periodParams();
+  params.set("lr", state.empLr === "27" ? "27" : "5");
+  params.set("page", String(state.empPage));
+  params.set("sort", state.empSort);
+  params.set("q", state.badgeQuery || "");
+  const key = params.toString();
   if (state.employees && state.employeesKey === key) return;
   if (state.employeesLoading && state.employeesKey === key) return;
   const seq = ++employeesSeq;
@@ -1317,7 +1323,7 @@ async function loadEmployees() {
   state.employeesKey = key;
   if (state.view === "employees") render();
   try {
-    const response = await fetchLatest("employees", `/api/employees?${periodParams().toString()}`);
+    const response = await fetchLatest("employees", `/api/employees?${key}`);
     const data = await parseJson(response);
     if (seq !== employeesSeq) return;
     if (response.status === 401) {
@@ -1326,8 +1332,10 @@ async function loadEmployees() {
       return;
     }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
-    const pack = data.employees;
-    state.employees = pack && !Array.isArray(pack) ? pack : { "5": pack || [], "27": [] };
+    state.employees = data;
+    state.empPage = data.page;
+    params.set("page", String(data.page));
+    state.employeesKey = params.toString();
     state.employeesLoading = false;
   } catch (error) {
     if (seq !== employeesSeq) return;
@@ -2743,36 +2751,6 @@ function renderBlockChart(lines, grain) {
   return box;
 }
 
-function empPack() {
-  const data = state.employees;
-  if (!data) return null;
-  if (Array.isArray(data)) return { "5": data, "27": [] };
-  return data;
-}
-
-function sortEmployees(rows, mode) {
-  const list = rows.slice();
-  const byQty = mode !== "sum";
-  list.sort((a, b) => {
-    if (mode === "found") {
-      if (a.found == null && b.found != null) return 1;
-      if (a.found != null && b.found == null) return -1;
-      const foundDiff = (Number(b.found) || 0) - (Number(a.found) || 0);
-      if (foundDiff) return foundDiff;
-    }
-    const lossA = Number(a.losses) || 0;
-    const lossB = Number(b.losses) || 0;
-    const sumA = Number(a.sum) || 0;
-    const sumB = Number(b.sum) || 0;
-    const primary = byQty ? lossB - lossA : sumB - sumA;
-    if (primary) return primary;
-    const secondary = byQty ? sumB - sumA : lossB - lossA;
-    if (secondary) return secondary;
-    return String(a.badge || "").localeCompare(String(b.badge || ""), "ru", { numeric: true });
-  });
-  return list;
-}
-
 function empPages(total) {
   const pages = [];
   let start = 0;
@@ -2790,9 +2768,111 @@ function empPages(total) {
 function showEmpPage(index) {
   if (state.empPage === index) return;
   state.empPage = index;
-  render();
-  const list = document.querySelector(".emp-list");
-  if (list) list.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+  loadEmployees().then(() => {
+    const list = document.querySelector(".emp-list");
+    if (list) list.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
+  });
+}
+
+function bindEmpPageCatalogDismiss() {
+  if (bindEmpPageCatalogDismiss.ready) return;
+  bindEmpPageCatalogDismiss.ready = true;
+  const close = (restoreFocus) => {
+    const catalog = document.getElementById("emp-page-catalog");
+    if (!catalog || catalog.hidden) return;
+    catalog.hidden = true;
+    const trigger = document.getElementById("emp-page-catalog-toggle");
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  };
+  document.addEventListener("pointerdown", (event) => {
+    if (!event.target.closest?.(".emp-page-picker")) close(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") close(true);
+  });
+  document.addEventListener("focusin", (event) => {
+    if (!event.target.closest?.(".emp-page-picker")) close(false);
+  });
+}
+
+function empPageCatalog(pageIndex, totalPages) {
+  bindEmpPageCatalogDismiss();
+  let batch = Math.floor(pageIndex / 50);
+  const panel = el("div", {
+    id: "emp-page-catalog",
+    class: "emp-page-catalog",
+    hidden: true,
+    role: "region",
+    "aria-label": "Каталог страниц сотрудников",
+  });
+  const icon = svgEl("svg", { viewBox: "0 0 24 24", width: "20", height: "20", "aria-hidden": "true" });
+  icon.append(svgEl("path", {
+    fill: "none", stroke: "currentColor", "stroke-width": "1.7", "stroke-linejoin": "round",
+    d: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
+  }));
+  const trigger = el("button", {
+    id: "emp-page-catalog-toggle",
+    type: "button",
+    class: "emp-page-catalog-toggle",
+    title: "Каталог страниц",
+    "aria-label": "Каталог страниц",
+    "aria-expanded": "false",
+    "aria-controls": "emp-page-catalog",
+    onclick: () => {
+      panel.hidden = !panel.hidden;
+      trigger.setAttribute("aria-expanded", String(!panel.hidden));
+      if (!panel.hidden) {
+        batch = Math.floor(pageIndex / 50);
+        paint();
+        panel.querySelector('[aria-current="page"]')?.focus();
+      }
+    },
+  }, icon);
+  function paint(focusDirection) {
+    const start = batch * 50;
+    const end = Math.min(start + 50, totalPages);
+    const grid = el("div", { class: "emp-page-catalog-grid" });
+    for (let index = start; index < end; index += 1) {
+      grid.append(el("button", {
+        type: "button",
+        class: "emp-page-choice",
+        "aria-label": `Страница ${index + 1}`,
+        "aria-current": index === pageIndex ? "page" : null,
+        onclick: () => {
+          panel.hidden = true;
+          trigger.setAttribute("aria-expanded", "false");
+          trigger.focus();
+          showEmpPage(index);
+        },
+      }, String(index + 1)));
+    }
+    const move = (direction) => el("button", {
+      type: "button",
+      class: "emp-page-arrow",
+      "data-direction": direction,
+      "aria-label": direction < 0 ? "Предыдущие 50 страниц" : "Следующие 50 страниц",
+      disabled: direction < 0 ? batch === 0 : end === totalPages,
+      onclick: () => { batch += direction; paint(direction); },
+    }, direction < 0 ? "←" : "→");
+    panel.replaceChildren(
+      grid,
+      el("div", { class: "emp-page-catalog-nav" },
+        move(-1),
+        el("span", { "aria-live": "polite", "aria-atomic": "true" }, `${start + 1}–${end} из ${totalPages}`),
+        move(1),
+      ),
+    );
+    if (focusDirection) {
+      const next = panel.querySelector(`[data-direction="${focusDirection}"]`);
+      (next && !next.disabled ? next : grid.querySelector("button"))?.focus();
+    }
+  }
+  return el("div", { class: "emp-page-picker" },
+    panel,
+    trigger,
+    el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)),
+  );
 }
 
 function sortMark() {
@@ -2822,13 +2902,13 @@ function bindEmpSortDismiss() {
 
 function empSortControl() {
   bindEmpSortDismiss();
-  const sortMode = ["sum", "found"].includes(state.empSort) ? state.empSort : "qty";
+  const sortMode = ["sum", "found", "found_share"].includes(state.empSort) ? state.empSort : "qty";
   const menu = el("div", {
     class: "emp-sort-menu",
     role: "menu",
     hidden: state.empSortOpen ? null : true,
   });
-  for (const item of [["qty", "штуки"], ["sum", "рубли"], ["found", "найденные товары"]]) {
+  for (const item of [["qty", "штуки"], ["sum", "рубли"], ["found", "найденные товары"], ["found_share", "процент находов"]]) {
     const code = item[0];
     menu.append(el("button", {
       type: "button",
@@ -2841,7 +2921,8 @@ function empSortControl() {
           state.empSort = code;
           state.empPage = 0;
         }
-        render();
+        if (same) render();
+        else loadEmployees();
       },
     }, item[1]));
   }
@@ -2892,6 +2973,7 @@ function pickEmpLr(code) {
     state.rowFloor = "";
     state.rowOpen = "";
     render();
+    loadEmployees();
     return;
   }
   if (code === "27" && state.empLr === "27") return;
@@ -2904,7 +2986,7 @@ function pickEmpLr(code) {
   state.empSortOpen = false;
   state.empOpen = "";
   state.empLrMotion = code === "5" ? "to-assembly" : "to-layout";
-  render();
+  loadEmployees();
 }
 
 function openProblemRows() {
@@ -3152,19 +3234,18 @@ function showRowPage(index) {
 }
 
 function renderEmployees(screen) {
-  const pack = empPack();
+  const pack = state.employees;
   const lr = state.empLr === "27" ? "27" : "5";
   const rowsMode = lr === "5" && state.empRows;
-  const all = pack ? (pack[lr] || []) : [];
+  const rows = pack ? (pack.rows || []) : [];
   const lrs = renderEmpOps(lr);
   const query = String(state.badgeQuery || "").replace(/\D/g, "");
-  const matched = query ? all.filter((row) => String(row.badge || "").includes(query)) : all;
-  const rows = sortEmployees(matched, state.empSort);
-  const shownLosses = rows.reduce((sum, row) => sum + (Number(row.losses) || 0), 0);
-  const shownSum = rows.reduce((sum, row) => sum + (Number(row.sum) || 0), 0);
+  const shownLosses = pack ? pack.losses : 0;
+  const shownSum = pack ? pack.sum : 0;
   const input = el("input", {
     id: "badge-search",
     type: "search",
+    maxlength: "64",
     inputmode: "numeric",
     placeholder: "Бейджик",
     autocomplete: "off",
@@ -3180,7 +3261,7 @@ function renderEmployees(screen) {
       state.badgeQuery = String(state.badgeDraft || "").replace(/\D/g, "");
       state.badgeDraft = state.badgeQuery;
       state.empPage = 0;
-      render();
+      loadEmployees();
     },
   }, input, el("button", { type: "submit", class: "primary" }, "Найти"));
   if (state.badgeQuery) {
@@ -3191,7 +3272,7 @@ function renderEmployees(screen) {
         state.badgeQuery = "";
         state.badgeDraft = "";
         state.empPage = 0;
-        render();
+        loadEmployees();
       },
     }, "Сброс"));
   }
@@ -3219,31 +3300,27 @@ function renderEmployees(screen) {
     return;
   }
   screen.append(
-    el("div", { class: "sub" }, query ? `Найдено сотрудников: ${fmtInt(rows.length)}` : `Сотрудников: ${fmtInt(rows.length)}`),
+    el("div", { class: "sub" }, query ? `Найдено сотрудников: ${fmtInt(pack.total)}` : `Сотрудников: ${fmtInt(pack.total)}`),
     el("div", { class: "big-sum" }, fmtRub(shownSum)),
     el("div", { class: "emp-toolbar" },
       el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
       empSortControl(),
     ),
   );
-  if (!all.length) {
+  if (!pack.operation_total) {
     screen.append(el("p", { class: "box warn" }, `Нет потерь LR ${lr} за этот период.`));
     return;
   }
-  if (all.length && all.every((row) => !row.badge)) {
+  if (pack.badges_missing) {
     screen.append(el("p", { class: "hint" }, "Бейджики пустые. ID сотрудника берётся из колонки AC выгрузки. Если файл заливали без этой колонки — загрузите период ещё раз."));
   }
   if (!rows.length) {
     screen.append(el("p", { class: "box warn" }, "Такой бейджик не найден."));
     return;
   }
-  const pages = empPages(rows.length);
-  let pageIndex = state.empPage;
-  if (pageIndex >= pages.length) pageIndex = 0;
-  if (pageIndex !== state.empPage) state.empPage = pageIndex;
-  const page = pages[pageIndex];
+  const pageIndex = pack.page;
   const list = el("div", { class: "emp-list" });
-  for (const row of rows.slice(page.start, page.end)) {
+  for (const row of rows) {
     const badge = String(row.badge || "");
     const label = badge || "не указан";
     const key = empKey(lr, badge);
@@ -3282,8 +3359,8 @@ function renderEmployees(screen) {
     list.append(card);
   }
   screen.append(list);
-  if (pages.length > 1) {
-    const nav = el("nav", { class: "emp-pages", "aria-label": "Страницы сотрудников" });
+  if (pack.pages > 1) {
+    const nav = el("nav", { class: "emp-pages has-catalog", "aria-label": "Страницы сотрудников" });
     if (pageIndex > 0) {
       nav.append(el("button", {
         type: "button",
@@ -3292,8 +3369,8 @@ function renderEmployees(screen) {
         onclick: () => showEmpPage(pageIndex - 1),
       }, "←"));
     }
-    nav.append(el("span", { class: "emp-page-tab", "aria-current": "page" }, String(pageIndex + 1)));
-    if (pageIndex < pages.length - 1) {
+    nav.append(empPageCatalog(pageIndex, pack.pages));
+    if (pageIndex < pack.pages - 1) {
       nav.append(el("button", {
         type: "button",
         class: "emp-page-arrow",
@@ -3315,14 +3392,16 @@ function empMxNode(mx) {
   );
 }
 
-function empOperationNode(status) {
+function empOperationNode(status, label = "Статус перед списанием") {
   const code = String(status || "").trim().toUpperCase();
-  return el("div", { class: "emp-operation" },
-    el("span", { class: "emp-operation-label" }, "Статус перед списанием"),
-    el("b", { class: "emp-operation-code" }, code || "—"),
-    el("span", { class: "emp-operation-name" },
-      code ? (statusDescription(code) || "Нет описания в справочнике") : "Нет данных в выгрузке",
-    ),
+  return el("div", { class: "emp-operation", title: label },
+    code ? el("button", {
+      type: "button",
+      class: "emp-operation-code",
+      "aria-label": `${label}: ${code}. Открыть расшифровку`,
+      "aria-controls": "info-statuses",
+      onclick: () => openStatusInfo(code),
+    }, code) : el("span", { title: "Нет данных в выгрузке" }, "—"),
   );
 }
 
@@ -3373,8 +3452,10 @@ function renderEmpDetail(detail, lr) {
       el("span", { class: "emp-sticker" }, item.sticker || "—"),
     );
     if (showMx) row.append(empMxNode(item.mx));
+    row.append(item.found === true
+      ? empOperationNode(item.status_after, "Статус после списания")
+      : empOperationNode(showMx ? item.status_before : ""));
     row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
-    if (showMx) row.append(empOperationNode(item.status_before));
     box.append(row);
   }
   if (detail.items.length > state.empDetailLimit) {
@@ -4313,7 +4394,7 @@ function wireAdmin() {
         if (!data.mx_rows) {
           preview.append(el("p", { class: "hint" }, "В суперсете нет МХ пропуска. После сохранения загрузите Twin."));
         }
-        preview.append(el("p", { class: "hint" }, "⚠️ Загрузка заменит ВСЕ данные в этом периоде. Файл должен покрывать период полностью. Уже дописанное МХ по тому же ШК сохранится."));
+        preview.append(el("p", { class: "hint" }, "Совпавшие ШК у тех же сотрудников обновятся, включая флаг оприходования и статус после списания. Новые потери добавятся, остальные сохранятся. Уже дописанное МХ по тому же ШК сохранится. Для обновления старых потерь включите их даты в выгрузку."));
       }
       const button = el("button", { type: "button", class: "wide primary" }, saveLabel);
       button.addEventListener("click", async () => {
@@ -4391,6 +4472,27 @@ function setAdminOpen(open) {
 }
 
 let infoScriptLoading = null;
+
+async function openStatusInfo(code) {
+  const info = document.getElementById("admin-info");
+  const statuses = document.getElementById("info-statuses");
+  const search = document.getElementById("status-search");
+  if (!info || !statuses || !search) return;
+  info.open = true;
+  statuses.open = true;
+  search.value = code;
+  setAdminOpen(true);
+  search.focus({ preventScroll: true });
+  statuses.scrollIntoView({ block: "nearest" });
+  const list = document.getElementById("info-status-list");
+  list?.replaceChildren(el("p", { class: "st-empty" }, "Загрузка…"));
+  try {
+    await ensureInfoCatalog();
+    renderStatuses();
+  } catch (error) {
+    list?.replaceChildren(el("p", { class: "box bad", role: "alert" }, error.message));
+  }
+}
 
 function ensureInfoCatalog() {
   if (infoScriptLoading) return infoScriptLoading;
