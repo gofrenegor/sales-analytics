@@ -3856,9 +3856,15 @@ function newUploadId() {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+function uploadKind() {
+  const picked = document.querySelector('input[name="upload-kind"]:checked');
+  return picked && picked.value === "twin" ? "twin" : "superset";
+}
+
 async function sendPreview(files, hint) {
   const batch = newUploadId();
   const ids = [];
+  const kind = uploadKind();
   let step = 0;
   let pieces = 0;
   for (const file of files) pieces += Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
@@ -3882,7 +3888,7 @@ async function sendPreview(files, hint) {
   return readJson(await fetch("/api/admin/preview/finish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ batch, ids }),
+    body: JSON.stringify({ batch, ids, kind }),
   }));
 }
 
@@ -3909,17 +3915,40 @@ function wireAdmin() {
     try {
       const data = await sendPreview(files, hint);
       preview.replaceChildren();
+      const twin = data.kind === "twin";
       if (!data.rows) {
-        preview.append(el("p", { class: "box warn" }, "Нет строк с датой — нечего загружать."));
+        const empty = twin && data.skipped_not_lr
+          ? "В twin нет пропусков 5 ЛР с МХ."
+          : "Нет строк с датой — нечего загружать.";
+        preview.append(el("p", { class: "box warn" }, empty));
         if (data.skipped_no_date) preview.append(el("p", { class: "box warn" }, `Пропущено строк без даты: ${data.skipped_no_date}`));
+        if (data.skipped_not_lr) preview.append(el("p", { class: "box warn" }, `Пропущено не 5 ЛР: ${data.skipped_not_lr}`));
+        if (data.skipped_no_mx) preview.append(el("p", { class: "box warn" }, `Пропущено без МХ: ${data.skipped_no_mx}`));
         return;
       }
       preview.append(el("p", { class: "box ok" }, `Прочитано файлов: ${data.files}, строк к загрузке: ${data.rows}`));
-      preview.append(el("p", { class: "box info" }, `Период: ${fmtDate(data.start)} — ${fmtDate(data.end)}`));
+      if (data.start) preview.append(el("p", { class: "box info" }, `Период: ${fmtDate(data.start)} — ${fmtDate(data.end)}`));
       if (data.skipped_no_date) preview.append(el("p", { class: "box warn" }, `Пропущено строк без даты: ${data.skipped_no_date}`));
+      if (data.skipped_no_barcode) preview.append(el("p", { class: "box warn" }, `Пропущено без ШК: ${data.skipped_no_barcode}`));
+      if (data.skipped_no_mx) preview.append(el("p", { class: "box warn" }, `Пропущено без МХ: ${data.skipped_no_mx}`));
+      if (data.skipped_not_lr) preview.append(el("p", { class: "box warn" }, `Пропущено не 5 ЛР: ${data.skipped_not_lr}`));
       if (data.duplicates) preview.append(el("p", { class: "box warn" }, `Удалено дублей по ШК: ${data.duplicates}`));
-      preview.append(el("p", { class: "hint" }, "⚠️ Загрузка заменит ВСЕ данные в этом периоде. Файл должен покрывать период полностью."));
-      const button = el("button", { type: "button", class: "wide primary" }, "💾 ВЫГРУЗИТЬ В БАЗУ");
+      const saveLabel = twin ? "Дописать МХ" : "💾 ВЫГРУЗИТЬ В БАЗУ";
+      if (twin) {
+        preview.append(el("p", { class: "box info" }, `Совпало с суперсетом: ${fmtInt(data.matched || 0)}`));
+        if (data.unmatched) preview.append(el("p", { class: "box warn" }, `Без пары в суперсете: ${fmtInt(data.unmatched)}`));
+        preview.append(el("p", { class: "hint" }, "МХ допишется только к совпавшим пропускам сборки. Суммы и остальные потери не меняются."));
+        if (!data.token) {
+          preview.append(el("p", { class: "box warn" }, "В базе нет этих ШК за период. Сначала загрузите суперсет."));
+          return;
+        }
+      } else {
+        if (!data.mx_rows) {
+          preview.append(el("p", { class: "hint" }, "В суперсете нет МХ пропуска. После сохранения загрузите Twin."));
+        }
+        preview.append(el("p", { class: "hint" }, "⚠️ Загрузка заменит ВСЕ данные в этом периоде. Файл должен покрывать период полностью. Уже дописанное МХ по тому же ШК сохранится."));
+      }
+      const button = el("button", { type: "button", class: "wide primary" }, saveLabel);
       button.addEventListener("click", async () => {
         button.disabled = true;
         button.textContent = "Загрузка...";
@@ -3939,7 +3968,7 @@ function wireAdmin() {
           loadReport();
         } catch (error) {
           button.disabled = false;
-          button.textContent = "💾 ВЫГРУЗИТЬ В БАЗУ";
+          button.textContent = saveLabel;
           preview.append(el("p", { class: "box bad" }, error.message));
         }
       });

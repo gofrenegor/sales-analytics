@@ -130,6 +130,18 @@
       <p id="admin-status" class="hint" hidden></p>
       <details class="panel" open>
         <summary>📥 Загрузка данных</summary>
+        <div class="upload-kind" role="radiogroup" aria-label="Тип выгрузки">
+          <label class="grant-role">
+            <input id="upload-kind-superset" type="radio" name="upload-kind" value="superset" checked>
+            <b>Суперсет</b>
+            <span>все потери. Заменяет период</span>
+          </label>
+          <label class="grant-role">
+            <input id="upload-kind-twin" type="radio" name="upload-kind" value="twin">
+            <b>Twin</b>
+            <span>только МХ пропуска 5 ЛР. Дописывает место по ШК</span>
+          </label>
+        </div>
         <label class="file">
           <span>Excel файлы (.xlsx)</span>
           <input id="files" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple>

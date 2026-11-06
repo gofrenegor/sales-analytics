@@ -419,6 +419,7 @@ p { margin: 0.5rem 0; }
   background: var(--blue-dim);
 }
 .grant-role:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
+.upload-kind { display: grid; gap: 8px; margin: 0.35rem 0 0.75rem; }
 
 .layout {
   min-height: 100vh;
