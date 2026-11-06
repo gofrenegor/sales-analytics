@@ -50,7 +50,7 @@ WRITE_COLUMNS = READ_COLUMNS
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
-        "reason", "status_before", "block_id", "office_id", "posted",
+        "reason", "status_before", "block_id", "office_id", "posted", "mx",
     ),
     "employees": (
         "loss_date", "block_name", "loss_sum",

@@ -2815,3 +2815,7 @@ button.back:active { transform: translateX(-3px); }
 }
 .writeoff-table tbody th, .writeoff-table tfoot th { color: inherit; font-size: inherit; font-weight: inherit; letter-spacing: normal; }
 .writeoff-table tr[hidden] { display: none; }
+
+.writeoff-issues { margin-block: 24px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 16px; }
+.writeoff-issues h3 { margin: 0; }
+.writeoff-diagnostics td:nth-child(-n+6), .writeoff-diagnostics th:nth-child(-n+6) { text-align: left; white-space: normal; min-width: 130px; overflow-wrap: anywhere; }

@@ -3419,6 +3419,25 @@ function renderWarehouseWriteoffs(screen) {
   if (total.unknown_qty || total.unknown_sum) {
     screen.append(el("p", { class: "box warn" }, `Флаг оприходования не указан: ${fmtInt(total.unknown_qty)} шт · ${fmtRub(total.unknown_sum)}. Эти строки входят в общий итог, но не в показатели «Оприходовано» и «Без оприходования».`));
   }
+  if (report.unmapped?.length) {
+    const headers = ["Причина", "Исходный статус", "Код статуса", "LR", "МХ", "Площадка", "Количество, шт", "Сумма, ₽"];
+    const rows = report.unmapped.map((item) => {
+      const raw = String(item.status_raw || "").trim();
+      const statusMissing = !raw || /^(не указано|none|null|nan)$/i.test(raw);
+      const reason = statusMissing ? "Не указан статус" : item.status === "НЕ УКАЗАНО" ? "Не распознан код статуса" : "Статуса нет в маппинге";
+      const value = (text) => !text || /^(не указано|none|null|nan)$/i.test(String(text)) ? "Не указано" : text;
+      return [reason, raw || "Пусто в базе", item.status === "НЕ УКАЗАНО" ? "Нет кода" : item.status,
+        value(item.reason), value(item.mx), value(item.platform), item.qty, item.sum];
+    });
+    const table = moneyTable(headers, rows.map((row) => row.map((value, index) => index >= 6 ? fmtInt(value) : value)));
+    table.classList.add("writeoff-diagnostics");
+    const panel = el("section", { class: "writeoff-issues", "aria-label": "Строки вне маппинга" },
+      el("div", { class: "writeoff-head" }, el("h3", null, "Что не попало в маппинг"), downloadButton(exportName("bez-mappinga"), headers, rows)),
+      el("p", { class: "hint" }, "Здесь показаны исходный статус из базы, LR до правил классификации, МХ и площадка. Пустое поле отмечено явно. МХ доступно, если оно было загружено для этой потери."),
+      table,
+    );
+    screen.append(panel);
+  }
   const table = el("table", { class: "writeoff-table" });
   table.append(el("caption", { class: "sr" }, "Детализация складских списаний по новому маппингу"));
   table.append(el("thead", null, el("tr", null, headings.map((title) => el("th", { scope: "col" }, title)))));

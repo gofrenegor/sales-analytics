@@ -1462,10 +1462,12 @@ def prepare_losses(df):
     if "loss_date" in df.columns:
         df["loss_date"] = _strip_tz(pd.to_datetime(df["loss_date"], errors="coerce"))
     df["reason"] = df["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    df["source_reason"] = df["reason"]
     df["block_name"] = df["block_name"].astype(str).str.replace(r"\*", "", regex=True).str.strip()
     names = {name.casefold(): name for name in (*BLOCK_MAPPING, *PLATFORM_FOLD, *IGNORED_PLATFORMS)}
     df["block_name"] = df["block_name"].map(lambda name: names.get(name.casefold(), name))
     df["block_name"] = df["block_name"].replace(PLATFORM_FOLD)
+    df["status_before_raw"] = df["status_before"].map(sticker_text)
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
     return classify_losses(df)
@@ -2906,7 +2908,7 @@ with (Path(__file__).parent / "data" / "warehouse_writeoffs.tsv").open(encoding=
 def build_warehouse_writeoffs(frame):
     """Поток → зона → тип потери → статус, по исходному статусу перед списанием."""
     if frame.empty:
-        return {"total": None, "groups": []}
+        return {"total": None, "groups": [], "unmapped": []}
     part = frame.copy()
     statuses = part["status_before"].fillna("").astype(str)
     mapped = statuses.map(WRITEOFF_MAPPING)
@@ -2944,7 +2946,22 @@ def build_warehouse_writeoffs(frame):
             rows.append(item)
         return sorted(rows, key=lambda item: (-item["sum"], item["name"]))
 
-    return {"total": metrics(part, "Общий итог"), "groups": tree(part)}
+    # Показываем исходные поля только для проблемных сочетаний, без догадок по LR/МХ.
+    missing = part.loc[~statuses.isin(WRITEOFF_MAPPING)].copy()
+    fields = (("status_raw", "status_before_raw"), ("status", "status_before"),
+              ("reason", "source_reason"), ("mx", "mx"), ("platform", "block_name"))
+    for target, source in fields:
+        fallback = "reason" if source == "source_reason" else "status_before" if source == "status_before_raw" else source
+        values = missing[source] if source in missing else missing.get(fallback, pd.Series("", index=missing.index))
+        missing[target] = values.map(sticker_text)
+    issues = []
+    keys = [target for target, _ in fields]
+    for values, group in missing.groupby(keys, sort=False, dropna=False):
+        item = dict(zip(keys, values))
+        item.update(qty=_sum(group, "loss_qty"), sum=_sum(group, "loss_sum"), rows=len(group))
+        issues.append(item)
+    issues.sort(key=lambda item: (-item["sum"], item["status"], item["reason"], item["mx"]))
+    return {"total": metrics(part, "Общий итог"), "groups": tree(part), "unmapped": issues}
 
 
 def empty_report(period):
@@ -2961,7 +2978,7 @@ def empty_report(period):
         "flows": None,
         "moves": {"up": None, "down": None},
         "block_pages": {},
-        "warehouse_writeoffs": {"total": None, "groups": []},
+        "warehouse_writeoffs": {"total": None, "groups": [], "unmapped": []},
     }
 
 
