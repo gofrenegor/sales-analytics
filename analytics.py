@@ -53,6 +53,8 @@ STATUS_FORCE_LR = {"ORS": "5", "RNR": "27"}
 # MRD и SLT — отставание входа: та же группа, без своей карточки.
 PLACE_BY_BLOCK_ID = frozenset({"ORS", "RNR", "OSS", "MRD", "SLT"})
 OPERKA_BLOCK_ID = "6800"
+OUTBOUND_BLOCK = "Исход"
+IGNORED_PLATFORMS = frozenset({"Рязань Тюшевское 5"})
 PICKMISS_GROUP = "Пропуск сборки товара на блоке"
 UNMAPPED_GROUP = "Блоки вне маппинга"
 OWN_OFFICE_ID = "301760"
@@ -60,6 +62,7 @@ OWN_OFFICE_ID = "301760"
 BLOCK_MAPPING = {
     "Рязань Тюшевское 1": "Рязань Тюшевское 1",
     "Рязань КГТ Левый": "Рязань Тюшевское 1",
+    "Рязань Тюшевское 2": "Рязань Тюшевское 2",
     "Рязань Дорогостой 2": "Рязань Тюшевское 2",
     "Рязань Красота 2": "Рязань Тюшевское 2",
     "Рязань Продукты 2": "Рязань Тюшевское 2",
@@ -67,7 +70,9 @@ BLOCK_MAPPING = {
     "Рязань Тюшевское 3": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 КГТ": "Рязань Тюшевское 3",
     "Рязань Тюшевское 3 тест": "Рязань Тюшевское 3",
+    "Рязань 3 тест": "Рязань Тюшевское 3",
     "Рязань Тюшевское 4": "Рязань Тюшевское 4",
+    "Рязань Тюшевское": OUTBOUND_BLOCK,
 }
 
 # Одно КГТ блока 3 приходит двумя именами. Второе стирается до маппинга.
@@ -1441,6 +1446,8 @@ def prepare_losses(df):
         df["loss_date"] = _strip_tz(pd.to_datetime(df["loss_date"], errors="coerce"))
     df["reason"] = df["reason"].astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     df["block_name"] = df["block_name"].astype(str).str.replace(r"\*", "", regex=True).str.strip()
+    names = {name.casefold(): name for name in (*BLOCK_MAPPING, *PLATFORM_FOLD, *IGNORED_PLATFORMS)}
+    df["block_name"] = df["block_name"].map(lambda name: names.get(name.casefold(), name))
     df["block_name"] = df["block_name"].replace(PLATFORM_FOLD)
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
@@ -1866,6 +1873,8 @@ def classify_losses(df):
     own = df["block_name"].map(BLOCK_MAPPING)
     loss_id = _leading_id(df["block_id"])
     off = _office_key(df["office_id"])
+    # Неизвестное имя своего блока 6800 тоже относится к отдельному «Исходу».
+    own = own.mask(own.isna() & loss_id.eq(OPERKA_BLOCK_ID) & _own_office_mask(off), OUTBOUND_BLOCK)
     is_operka = (
         df["status_before"].isin(OPERKA_STATUSES)
         & (loss_id == OPERKA_BLOCK_ID)
@@ -1879,6 +1888,17 @@ def classify_losses(df):
         .mask(is_defect, DEFECT_GROUP)
     )
     return df
+
+
+def _ignored_platform_mask(df):
+    if "block_name" not in df.columns:
+        return pd.Series(False, index=df.index)
+    names = df["block_name"].fillna("").astype(str).str.replace("*", "", regex=False).str.strip().str.casefold()
+    return names.isin({name.casefold() for name in IGNORED_PLATFORMS})
+
+
+def _visible_losses(df):
+    return df.loc[~_ignored_platform_mask(df)] if df is not None else df
 
 
 def _sum(df, col):
@@ -2223,7 +2243,7 @@ def flow_cards(dc, dp, flow_title, has_prev, other_curr):
     return cards
 
 
-def build_quality(curr, other_curr):
+def build_quality(curr, other_curr, ignored_curr=None):
     if len(curr) and "block_group" in curr.columns:
         operka = curr[curr["block_group"] == "Опер площадь"]
     else:
@@ -2266,6 +2286,7 @@ def build_quality(curr, other_curr):
             _leading_id(curr["block_id"]).eq(OPERKA_BLOCK_ID)
             & _own_office_mask(off)
             & (curr["block_group"] != "Опер площадь")
+            & (curr["block_group"] != OUTBOUND_BLOCK)
             & (curr["block_group"] != DEFECT_GROUP)
             & ~curr["status_before"].isin(PLACE_BY_BLOCK_ID)
             & ~curr["reason"].isin(ASSEMBLY_LR)
@@ -2276,12 +2297,17 @@ def build_quality(curr, other_curr):
                 "statuses": sorted({str(x) for x in chk["status_before"].unique()})[:10],
                 "sum": _f(chk["loss_sum"].sum()),
             }
+    ignored = []
+    if ignored_curr is not None and not ignored_curr.empty:
+        series = ignored_curr.groupby("block_name")["loss_sum"].sum().sort_values(ascending=False)
+        ignored = [{"name": str(name), "sum": _f(amount)} for name, amount in series.items()]
     return {
-        "all_clear": not other_rows and not unmapped and block_6800 is None,
+        "all_clear": not other_rows and not unmapped and not ignored and block_6800 is None,
         "operka_lrs": operka_lrs,
         "other_rows": other_rows,
         "unmapped": unmapped,
         "block_6800": block_6800,
+        "ignored": ignored,
     }
 
 
@@ -2318,6 +2344,7 @@ def build_employees(df):
 
     Раскладка — сотрудник перед списанием. Сборка — сборщик из контрагентов.
     """
+    df = _visible_losses(df)
     empty = {lr: [] for lr in EMPLOYEE_LRS}
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return empty
@@ -2369,6 +2396,7 @@ def build_employee_items(df, badge, lr):
     mx — место хранения, с которого был пропуск. Пусто, если колонки не было.
     status_before — статус перед списанием из Superset, только у сборки.
     """
+    df = _visible_losses(df)
     code = str(lr)
     if code not in EMPLOYEE_LRS:
         return []
@@ -2504,11 +2532,12 @@ def _problem_floors(group):
 
 
 def build_problem_blocks(df):
-    """Пропуски сборки (LR 5): 4 блока, в каждом 7 этажей, внутри ряды МХ.
+    """Пропуски сборки (LR 5): блоки склада, в каждом 7 этажей, внутри ряды МХ.
 
-    Пустой период — пустой список. Если пропуски есть, блоки 1–4 на месте,
+    Пустой период — пустой список. Если пропуски есть, все блоки на месте,
     даже с нулём. Чужой блок — строка «не указан» в конце.
     """
+    df = _visible_losses(df)
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return []
     part = df.loc[df["reason"].astype(str) == "5"]
@@ -2778,7 +2807,7 @@ class _BlockSeries:
 
 
 def build_block_chart(curr, prev, period, has_prev, grain, series=None):
-    """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
+    """Линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
 
     У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, графики площадок
     ложатся на поле этого графика.
@@ -2875,6 +2904,9 @@ def build_report(df_curr, df_prev, period):
     if df_curr.empty and df_prev.empty:
         return empty_report(period)
 
+    ignored_curr = df_curr.loc[_ignored_platform_mask(df_curr)]
+    df_curr = _visible_losses(df_curr)
+    df_prev = _visible_losses(df_prev)
     other_curr = df_curr[df_curr["flow"] == "Другое"]
     other_prev = df_prev[df_prev["flow"] == "Другое"]
     curr = df_curr[df_curr["flow"] != "Другое"]
@@ -2967,7 +2999,7 @@ def build_report(df_curr, df_prev, period):
                 "delta_text": get_delta_text(other_sum, other_qty, op_sum, op_qty) if not other_prev.empty else None,
             },
         },
-        "quality": build_quality(curr, other_curr),
+        "quality": build_quality(curr, other_curr, ignored_curr),
         "daily": daily,
         "show_daily": show_daily,
         "chart_grain": chart_grain,

@@ -1485,6 +1485,10 @@ function renderQuality() {
     body.append(el("p", { class: "box warn" }, "Блоки нашего ЛО без маппинга (учтены в группе «Блоки вне маппинга»; топ-15). Добавьте их в BLOCK_MAPPING (analytics.py):"));
     body.append(moneyTable(["Блок", "Сумма (₽)"], quality.unmapped.map((row) => [row.name, fmtRub(row.sum)])));
   }
+  if (quality.ignored?.length) {
+    body.append(el("p", { class: "box info" }, "Площадки, исключённые из расчётов и отчётов:"));
+    body.append(moneyTable(["Площадка", "Сумма (₽)"], quality.ignored.map((row) => [row.name, fmtRub(row.sum)])));
+  }
   if (quality.block_6800) {
     const item = quality.block_6800;
     body.append(el(
