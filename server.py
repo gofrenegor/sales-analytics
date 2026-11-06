@@ -821,9 +821,7 @@ def commit(body: TokenIn, user=Depends(actor)):
             result = db.apply_twin(frame)
             message = f"МХ дописано: {int(result['updated'])}"
         else:
-            d_min = pd.to_datetime(frame["loss_date"]).min().date()
-            d_max = pd.to_datetime(frame["loss_date"]).max().date()
-            db.replace_period(frame, d_min, d_max)
+            db.merge_losses(frame)
             message = "Данные сохранены!"
         summary = db.get_summary()
     except (db.DataError, db.ConfigError) as exc:

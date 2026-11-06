@@ -1103,25 +1103,67 @@ def apply_twin(frame):
     return plan
 
 
-def replace_period(df, d_min, d_max):
-    """Удаляет строки периода и записывает файл вместо них.
+def merge_losses(df):
+    """Новая строка заменяет тот же ШК у тех же сотрудников, остальные остаются.
 
-    Пустое МХ в новой выгрузке не стирает место, которое twin уже записал по тому же ШК.
+    Замена и добавление атомарны. Пустое МХ сохраняется из прежней строки по ШК.
     """
+    if df is None or df.empty:
+        return
+    if "barcode" not in df.columns or df["barcode"].map(analytics.sticker_text).eq("").any():
+        raise DataError("Для обновления потерь нужна заполненная колонка «ШК» в каждой строке Superset.")
+    frame = df.loc[:, [col for col in df.columns if col in WRITE_COLUMNS]].copy()
+    frame["barcode"] = frame["barcode"].map(analytics.sticker_text)
+    keys = ("barcode", "assembly_employee_id", "status_employee_id")
+    for col in keys[1:]:
+        if col not in frame:
+            frame[col] = None
+    normalized_keys = frame.loc[:, list(keys)].fillna("").astype(str)
+    frame = frame.loc[~normalized_keys.duplicated(keep="last")]
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
-            if inspect(conn).has_table("losses"):
-                df = _carry_mx(conn, df, d_min, d_max)
-                existing = _add_missing_columns(conn, df, engine.dialect.name)
-                use = [col for col in df.columns if col in existing]
-                conn.execute(text(_delete_sql()), _period_params(d_min, d_max))
-                if use and len(df):
-                    df.loc[:, use].to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
-            elif len(df):
-                df.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
+            if not inspect(conn).has_table("losses"):
+                frame.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
+            else:
+                existing = _add_missing_columns(conn, frame, engine.dialect.name)
+                cols = list(frame.columns)
+                if "mx" in existing and "mx" not in cols:
+                    frame["mx"] = ""
+                    cols.append("mx")
+                columns_sql = ", ".join(cols)
+                stage = "loss_import_" + secrets.token_hex(8)
+                conn.execute(text(
+                    f"CREATE TEMP TABLE {stage} AS SELECT {columns_sql} FROM losses WHERE 1=0"
+                ))
+                frame.to_sql(stage, conn, if_exists="append", index=False, chunksize=1000)
+                conn.execute(text(f"CREATE INDEX {stage}_barcode_idx ON {stage} (barcode)"))
+                if "mx" in cols:
+                    conn.execute(text(
+                        f"UPDATE {stage} SET mx = COALESCE(("
+                        f"SELECT losses.mx FROM losses WHERE losses.barcode = {stage}.barcode "
+                        "AND COALESCE(losses.mx, '') <> '' ORDER BY loss_date DESC LIMIT 1), '') "
+                        "WHERE COALESCE(mx, '') = ''"
+                    ))
+                matches = f"losses.barcode = {stage}.barcode AND " + " AND ".join(
+                    f"COALESCE(CAST(losses.{col} AS TEXT), '') = "
+                    f"COALESCE(CAST({stage}.{col} AS TEXT), '')" for col in keys[1:]
+                )
+                conn.execute(text(
+                    f"DELETE FROM losses WHERE barcode IN (SELECT barcode FROM {stage}) "
+                    f"AND EXISTS (SELECT 1 FROM {stage} WHERE {matches})"
+                ))
+                conn.execute(text(
+                    f"INSERT INTO losses ({columns_sql}) SELECT {columns_sql} FROM {stage}"
+                ))
+                conn.execute(text(f"DROP TABLE {stage}"))
             _ensure_loss_index(conn)
         clear_cache()
+
+
+def replace_period(df, d_min, d_max):
+    """Совместимый вход для старых вызовов: обновление по ключу, без удаления периода."""
+    merge_losses(df)
 
 
 def truncate_losses():
