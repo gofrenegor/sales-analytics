@@ -760,65 +760,102 @@ def _carry_mx(conn, df, d_min, d_max):
     return df
 
 
-def _period_barcodes(conn, d_min, d_max):
+def _twin_window(frame):
+    """Окно дат только если в twin есть «Дата первого списания». Иначе стикер ищется по всей базе."""
+    if frame is None or "loss_date" not in getattr(frame, "columns", []):
+        return None, None
+    dates = pd.to_datetime(frame["loss_date"], errors="coerce").dropna()
+    if dates.empty:
+        return None, None
+    return dates.min().date(), dates.max().date()
+
+
+def _assembly_rows(conn, d_min, d_max):
     if not inspect(conn).has_table("losses"):
-        return pd.DataFrame(columns=["barcode", "reason", "status_before"])
+        return pd.DataFrame(columns=["barcode", "last_sticker", "reason", "status_before"])
     names = {col["name"] for col in inspect(conn).get_columns("losses")}
     if "barcode" not in names:
-        return pd.DataFrame(columns=["barcode", "reason", "status_before"])
+        return pd.DataFrame(columns=["barcode", "last_sticker", "reason", "status_before"])
     cols = ["barcode"]
-    for col in ("reason", "status_before"):
+    for col in ("last_sticker", "reason", "status_before"):
         if col in names:
             cols.append(col)
-    return pd.read_sql(
-        text("SELECT " + ", ".join(cols) + " FROM losses WHERE " + _period_where()),
-        conn,
-        params={"s": d_min.isoformat(), "e": d_max.isoformat()},
-    )
+    where = []
+    params = {}
+    if d_min is not None:
+        where.append(_period_where())
+        params = {"s": d_min.isoformat(), "e": d_max.isoformat()}
+    pieces = []
+    if "reason" in names:
+        pieces.append("reason = '5'")
+    if "status_before" in names:
+        pieces.append("UPPER(status_before) = 'ORS'")
+    if pieces:
+        where.append("(" + " OR ".join(pieces) + ")")
+    sql = "SELECT " + ", ".join(cols) + " FROM losses"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    return pd.read_sql(text(sql), conn, params=params)
 
 
 def plan_twin(frame):
-    """Сколько строк twin находят пропуск сборки в базе. Ничего не пишет."""
-    dates = pd.to_datetime(frame["loss_date"], errors="coerce").dropna()
-    d_min = dates.min().date()
-    d_max = dates.max().date()
+    """Сколько строк twin находят пропуск сборки. Сначала стикер, затем ШК. Ничего не пишет."""
+    d_min, d_max = _twin_window(frame)
     engine = get_engine()
     with engine.connect() as conn:
-        existing = _period_barcodes(conn, d_min, d_max)
-    grouped = {}
+        existing = _assembly_rows(conn, d_min, d_max)
+    by_sticker = {}
+    by_barcode = {}
     if len(existing):
-        part = existing.loc[analytics.assembly_export_mask(existing)]
-        for raw in part["barcode"].tolist():
-            forms = analytics.barcode_forms(raw)
-            if not forms:
+        stickers = (
+            existing["last_sticker"].tolist()
+            if "last_sticker" in existing.columns
+            else [""] * len(existing)
+        )
+        for raw_bar, raw_sticker in zip(existing["barcode"].tolist(), stickers):
+            codes = analytics.barcode_forms(raw_bar)
+            if not codes:
                 continue
-            for form in forms:
-                grouped.setdefault(form, set()).update(forms)
+            code_set = set(codes)
+            for form in codes:
+                by_barcode.setdefault(form, set()).update(code_set)
+            key = analytics.sticker_key(raw_sticker)
+            if key:
+                by_sticker.setdefault(key, set()).update(code_set)
+    stickers = frame["sticker"].tolist() if "sticker" in frame.columns else [""] * len(frame)
+    barcodes = frame["barcode"].tolist() if "barcode" in frame.columns else [""] * len(frame)
+    places = frame["mx"].map(analytics.sticker_text).tolist()
     by_code = {}
     matched = 0
-    for key, place in zip(frame["barcode"].tolist(), frame["mx"].map(analytics.sticker_text).tolist()):
-        forms = grouped.get(analytics.sticker_text(key))
-        if not forms:
+    for sticker, barcode, place in zip(stickers, barcodes, places):
+        found = by_sticker.get(analytics.sticker_key(sticker), set())
+        if not found and barcode:
+            found = by_barcode.get(analytics.sticker_text(barcode), set())
+        if not found:
             continue
         matched += 1
-        for form in forms:
-            by_code[form] = place
+        for code in found:
+            by_code[code] = place
     return {
         "matched": matched,
         "unmatched": int(len(frame) - matched),
         "updates": [{"barcode": code, "mx": place} for code, place in by_code.items()],
         "updated": 0,
-        "start": d_min.isoformat(),
-        "end": d_max.isoformat(),
+        "start": d_min.isoformat() if d_min else None,
+        "end": d_max.isoformat() if d_max else None,
     }
 
 
 def apply_twin(frame):
-    """Дописывает МХ к пропускам сборки по ШК. Период и остальные потери не трогает."""
+    """Дописывает наименование МХ к стикеру пропуска. Период и остальные потери не трогает."""
     plan = plan_twin(frame)
     if not plan["updates"]:
         return plan
-    params = {"s": plan["start"], "e": plan["end"]}
+    period_sql = ""
+    params = {}
+    if plan["start"]:
+        period_sql = " AND " + _period_where()
+        params = {"s": plan["start"], "e": plan["end"]}
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
@@ -833,14 +870,14 @@ def apply_twin(frame):
             if _dialect() == "postgresql":
                 result = conn.execute(text(
                     "UPDATE losses AS l SET mx = p.mx FROM mx_patch AS p "
-                    "WHERE l.barcode = p.barcode AND " + _period_where()
+                    "WHERE l.barcode = p.barcode" + period_sql
                 ), params)
             else:
                 result = conn.execute(text(
                     "UPDATE losses SET mx = ("
                     "SELECT p.mx FROM mx_patch AS p WHERE p.barcode = losses.barcode"
-                    ") WHERE " + _period_where() + " "
-                    "AND EXISTS (SELECT 1 FROM mx_patch AS p WHERE p.barcode = losses.barcode)"
+                    ") WHERE EXISTS (SELECT 1 FROM mx_patch AS p WHERE p.barcode = losses.barcode)"
+                    + period_sql
                 ), params)
             plan["updated"] = int(result.rowcount or 0)
             conn.execute(text("DELETE FROM mx_patch"))

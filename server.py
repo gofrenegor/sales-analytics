@@ -137,14 +137,14 @@ def _upload_kind(value):
     return kind
 
 
-def _read_workbooks(blobs):
+def _read_workbooks(blobs, reader):
     frames = []
     for name, payload in blobs:
         name = name or "файл"
         if not str(name).lower().endswith(".xlsx"):
             return fail(400, f"Нужен файл .xlsx: {name}")
         try:
-            frames.append(analytics.process_excel(BytesIO(payload)))
+            frames.append(reader(BytesIO(payload)))
         except Exception as exc:
             return fail(400, f"Не удалось прочитать {name}: {exc}")
     return frames
@@ -166,7 +166,8 @@ def _preview_from_blobs(blobs, kind="superset"):
     kind = _upload_kind(kind)
     if kind is None:
         return fail(400, "Некорректный тип выгрузки")
-    frames = _read_workbooks(blobs)
+    reader = analytics.read_twin_frame if kind == "twin" else analytics.process_excel
+    frames = _read_workbooks(blobs, reader)
     if not isinstance(frames, list):
         return frames
     if kind == "twin":
@@ -224,7 +225,6 @@ def _preview_twin(blobs, frames):
     matched = unmatched = 0
     if len(frame):
         try:
-            start, end = _date_span(frame)
             plan = db.plan_twin(frame)
         except ValueError as exc:
             return fail(400, str(exc))
@@ -246,6 +246,7 @@ def _preview_twin(blobs, frames):
         "rows": int(len(frame)),
         "skipped_no_date": int(stats["skipped_no_date"]),
         "skipped_no_barcode": int(stats["skipped_no_barcode"]),
+        "skipped_no_sticker": int(stats.get("skipped_no_sticker") or 0),
         "skipped_no_mx": int(stats["skipped_no_mx"]),
         "skipped_not_lr": int(stats["skipped_not_lr"]),
         "duplicates": int(stats["duplicates"]),

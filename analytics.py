@@ -1255,38 +1255,145 @@ def assembly_export_mask(df):
     return (reason == "5") | (status == "ORS")
 
 
-def prepare_twin(frames):
-    """Строки twin: ШК и МХ пропуска сборки. Новых потерь из них не будет.
+def _fold_name(value):
+    try:
+        missing = value is None or pd.isna(value)
+    except (TypeError, ValueError):
+        missing = value is None
+    if missing:
+        return ""
+    return str(value).strip().lower().replace("ё", "е")
 
+
+def _header_row(raw):
+    """Строка заголовков. У отчёта пропусков она ниже названия и периода."""
+    limit = min(len(raw), 40)
+    marks = set(MX_HEADERS) | {"вб стикер", "дата первого списания", "шк", "товар (шк)"}
+    for index in range(limit):
+        cells = [_fold_name(value) for value in raw.iloc[index].tolist()]
+        if any(cell in marks for cell in cells):
+            return index
+    return None
+
+
+def _series_by_names(df, names):
+    folded = {_fold_name(col): col for col in df.columns}
+    for name in names:
+        if name in folded:
+            return df[folded[name]]
+    return None
+
+
+def _sticker_series(df):
+    named = _series_by_names(df, (
+        "вб стикер",
+        "стикер вб",
+        "последний стикер до списания",
+        "стикер",
+    ))
+    if named is not None:
+        return named
+    for key, col in ((_fold_name(col), col) for col in df.columns):
+        if "стикер" in key and "шк" not in key:
+            return df[col]
+    return None
+
+
+def _product_barcode_series(df):
+    named = _series_by_names(df, ("шк", "товар (шк)", "товар(шк)", "штрихкод", "штрих-код"))
+    if named is not None:
+        return named
+    for key, col in ((_fold_name(col), col) for col in df.columns):
+        if "шк" in key and "стикер" not in key and "id" not in key:
+            return df[col]
+    return None
+
+
+def read_twin_frame(file):
+    """Отчёт пропусков: «ВБ Стикер» и «Наименование МХ».
+
+    Первые строки — название и период, не заголовок. Даты списания в файле нет.
+    """
+    raw = pd.read_excel(file, header=None, engine="openpyxl")
+    at = _header_row(raw)
+    if at is None:
+        raise ValueError("В twin не нашёл заголовки. Нужны «ВБ Стикер» и «Наименование МХ».")
+    names = []
+    seen = {}
+    for index, value in enumerate(raw.iloc[at].tolist()):
+        label = str(value).strip() if _fold_name(value) else ""
+        if not label:
+            label = f"__empty_{index}"
+        if label in seen:
+            seen[label] += 1
+            label = f"{label}.{seen[label]}"
+        else:
+            seen[label] = 0
+        names.append(label)
+    data = raw.iloc[at + 1:].copy()
+    data.columns = names
+    data = data.dropna(how="all")
+    keep = [col for col in data.columns if not str(col).startswith("__empty_")]
+    data = data.loc[:, keep]
+    sticker = _sticker_series(data)
+    barcode = _product_barcode_series(data)
+    mx = _mx_raw(data)
+    out = pd.DataFrame(index=data.index)
+    out["sticker"] = sticker.map(sticker_key).to_numpy() if sticker is not None else ""
+    out["barcode"] = barcode.map(sticker_text).to_numpy() if barcode is not None else ""
+    out["mx"] = mx.map(sticker_text).to_numpy() if mx is not None else ""
+    loss_date = _series_by_names(data, ("дата первого списания",))
+    if loss_date is not None:
+        out["loss_date"] = _strip_tz(clean_date_col(loss_date)).to_numpy()
+    reason = _series_by_names(data, ("лостризон первого списания",))
+    if reason is not None:
+        out["reason"] = (
+            reason.fillna("Не указано").astype(str).str.replace(r"\*", "", regex=True).str.strip()
+            .str.replace(r"\.0$", "", regex=True).str.strip()
+            .to_numpy()
+        )
+    status = _series_by_names(data, ("статус перед списанием",))
+    if status is not None:
+        out["status_before"] = (
+            status.fillna("").astype(str).str.replace(r"\*", "", regex=True).str.strip().to_numpy()
+        )
+    return out.reset_index(drop=True)
+
+
+def prepare_twin(frames):
+    """Строки twin: стикер и наименование МХ. Новых потерь из них не будет.
+
+    Стыковка со суперсетом — по «ВБ Стикер». «Товар (ШК)» остаётся запасным ключом.
     Если в файле есть лостризон или статус, остаются только 5 ЛР и ORS.
-    Файл без этих колонок считается уже обрезанным до пропусков.
+    Файл без этих колонок уже является отчётом пропусков сборки.
     """
     if not frames:
         raise ValueError("Нет файлов")
     df = pd.concat(frames, ignore_index=True)
-    if "loss_date" not in df.columns:
-        raise ValueError("В twin нет колонки «Дата первого списания»")
+    if "sticker" not in df.columns:
+        df["sticker"] = ""
     if "barcode" not in df.columns:
-        raise ValueError("В twin нет колонки «ШК»")
+        df["barcode"] = ""
+    df = df.copy()
+    df["sticker"] = df["sticker"].map(sticker_key)
+    df["barcode"] = df["barcode"].map(sticker_text)
     stats = {
         "skipped_no_date": 0,
         "skipped_no_barcode": 0,
+        "skipped_no_sticker": 0,
         "skipped_no_mx": 0,
         "skipped_not_lr": 0,
         "duplicates": 0,
     }
-    total = len(df)
-    df = df.dropna(subset=["loss_date"]).copy()
-    stats["skipped_no_date"] = total - len(df)
-    df["barcode"] = df["barcode"].map(sticker_text)
-    blank_barcode = df["barcode"] == ""
-    stats["skipped_no_barcode"] = int(blank_barcode.sum())
-    df = df.loc[~blank_barcode]
+    no_key = (df["sticker"] == "") & (df["barcode"] == "")
+    stats["skipped_no_barcode"] = int(no_key.sum())
+    stats["skipped_no_sticker"] = int((df["sticker"] == "").sum()) if (df["sticker"] != "").any() else 0
+    df = df.loc[~no_key]
     if df.empty:
         return df, stats
     if "mx" not in df.columns or not (df["mx"].map(sticker_text) != "").any():
         raise ValueError(
-            "В twin нет колонки «МХ» или она пустая. Нужен заголовок «МХ» или «Место хранения»."
+            "В twin нет колонки «Наименование МХ» или она пустая."
         )
     df["mx"] = df["mx"].map(sticker_text)
     blank_mx = df["mx"] == ""
@@ -1298,7 +1405,8 @@ def prepare_twin(frames):
         df = df.loc[keep]
     if not df.empty:
         before = len(df)
-        df = df.drop_duplicates(subset=["barcode"], keep="last")
+        df["twin_key"] = df["sticker"].where(df["sticker"] != "", df["barcode"])
+        df = df.drop_duplicates(subset=["twin_key"], keep="last")
         stats["duplicates"] = before - len(df)
     return df, stats
 
@@ -1493,6 +1601,11 @@ def sticker_text(value):
     if re.fullmatch(r"-?\d+\.0+", text):
         text = text.split(".")[0]
     return text
+
+
+def sticker_key(value):
+    """Стикер для стыковки twin и суперсета. Звёзды вокруг номера не мешают."""
+    return sticker_text(value).replace("*", "").strip()
 
 
 def barcode_forms(value):
