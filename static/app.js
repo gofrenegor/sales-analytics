@@ -3560,18 +3560,9 @@ function renderWarehouseWriteoffs(screen) {
       const cell = el("th", { scope: "row" });
       cell.style.setProperty("--depth", depth);
       if (children.length) {
-        const button = el("button", { type: "button", "aria-expanded": depth === 0 ? "true" : "false" },
+        // Временно отключено раскрытие детализации складских списаний.
+        const button = el("button", { type: "button", "aria-disabled": "true", "aria-expanded": depth === 0 ? "true" : "false" },
           el("span", { class: "writeoff-chevron", "aria-hidden": "true" }, "+"), item.name);
-        button.addEventListener("click", () => {
-          const open = button.getAttribute("aria-expanded") !== "true";
-          button.setAttribute("aria-expanded", String(open));
-          button.querySelector(".writeoff-chevron").textContent = open ? "−" : "+";
-          body.querySelectorAll("tr").forEach((child) => {
-            if (child._ancestors?.includes(id)) {
-              child.hidden = !open || child._ancestors.some((key) => body.querySelector(`[data-writeoff="${key}"] button`)?.getAttribute("aria-expanded") !== "true");
-            }
-          });
-        });
         button.querySelector(".writeoff-chevron").textContent = depth === 0 ? "−" : "+";
         cell.append(button);
       } else cell.append(el("span", { class: "writeoff-leaf" }, item.name));
