@@ -3392,13 +3392,13 @@ function empMxNode(mx) {
   );
 }
 
-function empOperationNode(status) {
+function empOperationNode(status, label = "Статус перед списанием") {
   const code = String(status || "").trim().toUpperCase();
-  return el("div", { class: "emp-operation" },
+  return el("div", { class: "emp-operation", title: label },
     code ? el("button", {
       type: "button",
       class: "emp-operation-code",
-      "aria-label": `Расшифровка статуса ${code}`,
+      "aria-label": `${label}: ${code}. Открыть расшифровку`,
       "aria-controls": "info-statuses",
       onclick: () => openStatusInfo(code),
     }, code) : el("span", { title: "Нет данных в выгрузке" }, "—"),
@@ -3451,7 +3451,10 @@ function renderEmpDetail(detail, lr) {
       { class: "emp-item" },
       el("span", { class: "emp-sticker" }, item.sticker || "—"),
     );
-    if (showMx) row.append(empMxNode(item.mx), empOperationNode(item.status_before));
+    if (showMx) row.append(empMxNode(item.mx));
+    row.append(item.found === true
+      ? empOperationNode(item.status_after, "Статус после списания")
+      : empOperationNode(showMx ? item.status_before : ""));
     row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
     box.append(row);
   }

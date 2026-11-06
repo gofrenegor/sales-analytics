@@ -1196,6 +1196,7 @@ def process_excel(file):
         "Лостризон первого списания": "reason",
         "Дата статуса перед списанием": "status_before_date",
         "Статус перед списанием": "status_before",
+        "Статус после списания": "status_after",
     }
     existing_cols = [c for c in cols_map if c in df.columns]
     df = df[existing_cols].rename(columns=cols_map)
@@ -1205,7 +1206,7 @@ def process_excel(file):
     for col in ["loss_date", "status_before_date"]:
         if col in df.columns:
             df[col] = _strip_tz(clean_date_col(df[col]))
-    for col in ["block_name", "reason", "status_before"]:
+    for col in ["block_name", "reason", "status_before", "status_after"]:
         if col in df.columns:
             df[col] = df[col].fillna("Не указано").astype(str).str.replace(r"\*", "", regex=True).str.strip()
             if col == "reason":
@@ -2435,6 +2436,7 @@ def build_employee_items(df, badge, lr):
     False — ЛОЖЬ, None — флага нет.
     mx — место хранения, с которого был пропуск. Пусто, если колонки не было.
     status_before — статус перед списанием из Superset, только у сборки.
+    status_after — статус после списания из Superset, для отображения находов.
     """
     df = _visible_losses(df)
     code = str(lr)
@@ -2456,13 +2458,15 @@ def build_employee_items(df, badge, lr):
     flags = part["posted"] if "posted" in part.columns else pd.Series("", index=part.index)
     places = part["mx"] if "mx" in part.columns else pd.Series("", index=part.index)
     statuses = part["status_before"] if "status_before" in part.columns else pd.Series("", index=part.index)
+    after_statuses = part["status_after"] if "status_after" in part.columns else pd.Series("", index=part.index)
     if "loss_sum" in part.columns:
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
     items = []
-    for sticker, flag, amount, place, status in zip(
+    for sticker, flag, amount, place, status, after_status in zip(
         stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(), statuses.tolist(),
+        after_statuses.tolist(),
     ):
         parsed = posted_flag(flag)
         if parsed == "1":
@@ -2477,6 +2481,8 @@ def build_employee_items(df, badge, lr):
             "sum": _f(amount),
             "mx": sticker_text(place),
         }
+        value = sticker_text(after_status).upper()
+        item["status_after"] = "" if value == "НЕ УКАЗАНО" else value
         if code == "5":
             value = sticker_text(status).upper()
             item["status_before"] = "" if value == "НЕ УКАЗАНО" else value

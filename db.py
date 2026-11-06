@@ -41,6 +41,7 @@ READ_COLUMNS = (
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
     "status_employee_id", "assembly_employee_id", "last_sticker", "posted", "mx",
+    "status_after",
 )
 WRITE_COLUMNS = READ_COLUMNS
 # Главный экран не читает ШК и бейджик. Список сотрудников — бейджик и флаг
@@ -67,6 +68,7 @@ DETAIL_COLUMNS = (
     "loss_date", "block_name", "loss_sum", "loss_qty",
     "reason", "status_before", "block_id", "office_id",
     "status_employee_id", "assembly_employee_id", "last_sticker", "posted", "mx",
+    "status_after",
 )
 
 
@@ -249,7 +251,7 @@ def ensure_schema():
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
         for col in (
             "office_id", "block_id", "status_employee_id", "assembly_employee_id",
-            "last_sticker", "posted", "mx",
+            "last_sticker", "posted", "mx", "status_after",
         ):
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE losses ADD COLUMN {col} TEXT"))
