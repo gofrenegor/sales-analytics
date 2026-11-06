@@ -2754,6 +2754,12 @@ function sortEmployees(rows, mode) {
   const list = rows.slice();
   const byQty = mode !== "sum";
   list.sort((a, b) => {
+    if (mode === "found") {
+      if (a.found == null && b.found != null) return 1;
+      if (a.found != null && b.found == null) return -1;
+      const foundDiff = (Number(b.found) || 0) - (Number(a.found) || 0);
+      if (foundDiff) return foundDiff;
+    }
     const lossA = Number(a.losses) || 0;
     const lossB = Number(b.losses) || 0;
     const sumA = Number(a.sum) || 0;
@@ -2816,13 +2822,13 @@ function bindEmpSortDismiss() {
 
 function empSortControl() {
   bindEmpSortDismiss();
-  const sortMode = state.empSort === "sum" ? "sum" : "qty";
+  const sortMode = ["sum", "found"].includes(state.empSort) ? state.empSort : "qty";
   const menu = el("div", {
     class: "emp-sort-menu",
     role: "menu",
     hidden: state.empSortOpen ? null : true,
   });
-  for (const item of [["qty", "штуки"], ["sum", "рубли"]]) {
+  for (const item of [["qty", "штуки"], ["sum", "рубли"], ["found", "найденные товары"]]) {
     const code = item[0];
     menu.append(el("button", {
       type: "button",
@@ -3258,7 +3264,9 @@ function renderEmployees(screen) {
         el("span", {
           class: foundShareClass(row),
           title: foundShareTitle(row),
-        }, foundShareText(foundShare(row))),
+        }, row.found == null
+          ? foundShareText(foundShare(row))
+          : `${foundShareText(foundShare(row))} · ${fmtInt(row.found)} шт.`),
       ),
       el("span", { class: "emp-sum" }, fmtRub(row.sum)),
       row.wmi

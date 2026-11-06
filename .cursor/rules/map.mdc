@@ -116,6 +116,8 @@ systemctl restart sales-analytics
 
 ## Статус в деталке пропусков
 
+- `static/app.js`: `sortEmployees` / `empSortControl` поддерживают сортировку `found` («найденные товары») по количеству найденного по убыванию; строки без флага идут в конце, равные значения — по потерям, сумме и бейджику. `renderEmployees` показывает рядом с процентом найденного количество (`40% · 12 шт.`); если флага нет — прочерк.
+
 - analytics.py: build_employee_items возвращает status_before у LR 5 из уже сохранённой колонки Superset «Статус перед списанием». Схема БД и повторный импорт не нужны, если статус был в загруженном файле. Это статус перед списанием; отдельной истории операций выгрузка в коде не содержит.
 - static/app.js: loadEmpDetail загружает общий справочник ensureInfoCatalog перед показом сборки; empOperationNode показывает код и расшифровку под стикером и МХ. static/info-copy.js: statusDescription и STATUS_NAMES используют существующий STATUSES. static/styles.css: .emp-operation переносит описание на узком экране. server.py: кэш employee-items-v3.
 
