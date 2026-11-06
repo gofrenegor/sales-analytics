@@ -3406,7 +3406,8 @@ function renderWarehouseWriteoffs(screen) {
   collect(report.groups);
   csv.push([total.name, ...WRITEOFF_COLUMNS.map(([key]) => total[key])]);
   card.append(el("div", { class: "writeoff-card-head" },
-    el("div", null, el("h2", null, "Списания склад"), el("p", { class: "hint" }, periodName)),
+    el("div", null, el("h2", null, "Списания склад"), el("p", { class: "hint" }, periodName),
+      el("p", { class: "hint" }, "ЛР5 — всегда сборка. Остальное — по статусу; если его нет в справочнике, по исходному ЛР. Такие строки помечены номером ЛР. Неоднозначная причина не определяет поток.")),
     downloadButton(exportName("spisaniya-sklad"), headings, csv),
   ));
   if (total.unknown_qty || total.unknown_sum) {

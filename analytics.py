@@ -2918,29 +2918,63 @@ def build_block_pages(curr, prev, period, items, has_prev, grain, series=None):
     return pages
 
 
-# Независимый разрез по присланному справочнику; правила блоков/LR сохраняются.
-with (Path(__file__).parent / "data" / "warehouse_writeoffs.tsv").open(encoding="utf-8-sig", newline="") as mapping_file:
-    WRITEOFF_MAPPING = {
-        row["Статус"].strip(): {key: value.strip() for key, value in row.items()}
-        for row in csv.DictReader(mapping_file, delimiter="\t")
-    }
+def _writeoff_reference(filename, key):
+    with (Path(__file__).parent / "data" / filename).open(encoding="utf-8-sig", newline="") as mapping_file:
+        return {
+            row[key].strip(): {field: value.strip() for field, value in row.items()}
+            for row in csv.DictReader(mapping_file, delimiter="\t")
+        }
+
+
+# Пользовательский справочник имеет приоритет над дополнениями из панели «Инфо».
+WRITEOFF_MAPPING = _writeoff_reference("warehouse_writeoffs_extra.tsv", "Статус")
+WRITEOFF_MAPPING.update(_writeoff_reference("warehouse_writeoffs.tsv", "Статус"))
+WRITEOFF_REASONS = _writeoff_reference("warehouse_writeoff_reasons.tsv", "LR")
+
+
+def _writeoff_status(value):
+    text = sticker_text(value).strip().upper()
+    if text in WRITEOFF_MAPPING:
+        return text
+    # В выгрузке может находиться «LSS · Сортировка…». Не угадываем код
+    # по произвольной подстроке и не выбираем между несколькими статусами.
+    codes = {code for code in re.findall(r"(?<![A-ZА-ЯЁ0-9])[A-Z0-9]{3}(?![A-ZА-ЯЁ0-9])", text)
+             if code in WRITEOFF_MAPPING}
+    return next(iter(codes)) if len(codes) == 1 else text
 
 
 def build_warehouse_writeoffs(frame):
-    """Поток → зона → тип потери → статус, по исходному статусу перед списанием."""
+    """Поток → зона → тип → статус. LR 5 важнее статуса, прочие LR — резерв."""
     if frame.empty:
         return {"total": None, "groups": [], "unmapped": []}
     part = frame.copy()
-    statuses = part["status_before"].fillna("").astype(str)
+    statuses = part["status_before"].fillna("").map(_writeoff_status)
+    # prepare_losses меняет reason по ORS/RNR. Для этого разреза нужен
+    # исходный LR: ORS с другим LR остаётся релизом из справочника.
+    reasons = part.get("source_reason", part.get("reason", pd.Series("", index=part.index)))
+    reasons = reasons.fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
     mapped = statuses.map(WRITEOFF_MAPPING)
+    raw_statuses = part.get("status_before_raw", part["status_before"]).map(_writeoff_status)
+    mapped = mapped.where(mapped.notna(), raw_statuses.map(WRITEOFF_MAPPING))
+    by_reason = reasons.map(WRITEOFF_REASONS)
+    use_reason = reasons.eq("5") | (mapped.isna() & by_reason.notna())
+    mapped = mapped.where(~use_reason, by_reason)
     levels = (("writeoff_flow", "Наименование потока"), ("writeoff_zone", "Зона списания"),
               ("writeoff_type", "Тип потери"))
     for col, field in levels:
         part[col] = mapped.map(lambda row: row[field] if isinstance(row, dict) else "Нет в маппинге")
-    part["writeoff_status"] = [
-        f"{status} · {row['Расшифровка']}" if isinstance(row, dict) else str(status)
-        for status, row in zip(statuses, mapped)
-    ]
+    labels = []
+    for status, raw_status, row, reason, from_reason in zip(statuses, raw_statuses, mapped, reasons, use_reason):
+        code = raw_status if raw_status in WRITEOFF_MAPPING else status
+        if not isinstance(row, dict):
+            labels.append(str(code))
+            continue
+        description = WRITEOFF_MAPPING.get(code, row)["Расшифровка"]
+        label = f"{code} · {description}"
+        if from_reason:
+            label += f" (ЛР {reason})"
+        labels.append(label)
+    part["writeoff_status"] = labels
     flags = part["posted"].map(posted_flag) if "posted" in part else pd.Series("", index=part.index)
     for label, flag in (("posted", "1"), ("unposted", "0"), ("unknown", "")):
         part[f"{label}_qty"] = part["loss_qty"].where(flags == flag, 0)
@@ -2967,8 +3001,8 @@ def build_warehouse_writeoffs(frame):
             rows.append(item)
         return sorted(rows, key=lambda item: (-item["sum"], item["name"]))
 
-    # Показываем исходные поля только для проблемных сочетаний, без догадок по LR/МХ.
-    missing = part.loc[~statuses.isin(WRITEOFF_MAPPING)].copy()
+    # Диагностика содержит только строки без сопоставления и по статусу, и по LR.
+    missing = part.loc[mapped.isna()].copy()
     fields = (("status_raw", "status_before_raw"), ("status", "status_before"),
               ("reason", "source_reason"), ("mx", "mx"), ("platform", "block_name"))
     for target, source in fields:
