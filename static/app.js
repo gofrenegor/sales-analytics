@@ -13,6 +13,7 @@ const state = {
   blockChartOff: {},
   slice: "flows",
   report: null,
+  reportKey: "",
   employees: null,
   employeesKey: "",
   employeesLoading: false,
@@ -27,6 +28,7 @@ const state = {
   empPage: 0,
   empOpen: "",
   empDetail: null,
+  empDetailLimit: 100,
   empCache: {},
   blocks: null,
   rowsKey: "",
@@ -521,6 +523,7 @@ function go(patch, push = true) {
   writeUrl(push);
   render();
   if (state.view === "employees") loadEmployees();
+  else if (state.reportKey !== periodKey()) loadReport();
 }
 
 function goBack(view) {
@@ -1158,6 +1161,9 @@ function onControlsChange() {
   const swapped = ordered[0] !== rangeStart || ordered[1] !== rangeEnd;
   [rangeStart, rangeEnd] = ordered;
   if (!rangeStart || !rangeEnd) {
+    loadSeq += 1;
+    cancelLoad("report");
+    resetEmployees();
     const changed = mode !== state.mode || rangeStart !== state.rangeStart || rangeEnd !== state.rangeEnd;
     state.mode = mode;
     state.rangeStart = rangeStart;
@@ -1187,19 +1193,29 @@ function beginLoadSpin() {
   node.classList.add("spin-loading");
 }
 
-async function waitAnimating() {
-  const start = performance.now();
-  while (animating > 0 && performance.now() - start < 1400) {
-    await new Promise((resolve) => window.setTimeout(resolve, 32));
-  }
-}
 
 let loadSeq = 0;
 let employeesSeq = 0;
 let empDetailSeq = 0;
 let rowsSeq = 0;
 
+const activeLoads = new Map();
+
+function cancelLoad(name) {
+  activeLoads.get(name)?.abort();
+  activeLoads.delete(name);
+}
+
+function fetchLatest(name, url) {
+  cancelLoad(name);
+  const controller = new AbortController();
+  activeLoads.set(name, controller);
+  return fetch(url, { signal: controller.signal });
+}
+
 function resetEmployees() {
+  rowsSeq += 1;
+  for (const name of ["employees", "items", "rows"]) cancelLoad(name);
   employeesSeq += 1;
   empDetailSeq += 1;
   state.employees = null;
@@ -1242,6 +1258,7 @@ function toggleEmp(lr, badge) {
   const key = empKey(lr, badge);
   if (state.empOpen === key) {
     empDetailSeq += 1;
+    cancelLoad("items");
     state.empOpen = "";
     render();
     return;
@@ -1251,6 +1268,7 @@ function toggleEmp(lr, badge) {
 
 async function loadEmpDetail(lr, badge) {
   const key = empKey(lr, badge);
+  state.empDetailLimit = 100;
   const seq = ++empDetailSeq;
   state.empOpen = key;
   const hit = state.empCache[key];
@@ -1265,7 +1283,7 @@ async function loadEmpDetail(lr, badge) {
     const params = periodParams();
     params.set("lr", lr);
     params.set("badge", badge || "");
-    const response = await fetch(`/api/employees/items?${params.toString()}`);
+    const response = await fetchLatest("items", `/api/employees/items?${params.toString()}`);
     const data = await parseJson(response);
     if (seq !== empDetailSeq) return;
     if (response.status === 401) {
@@ -1286,7 +1304,7 @@ async function loadEmpDetail(lr, badge) {
 }
 
 async function loadEmployees() {
-  if (freeRangePending() || !state.report || state.report.empty) return;
+  if (freeRangePending()) return;
   const key = periodKey();
   if (state.employees && state.employeesKey === key) return;
   if (state.employeesLoading && state.employeesKey === key) return;
@@ -1297,7 +1315,7 @@ async function loadEmployees() {
   state.employeesKey = key;
   if (state.view === "employees") render();
   try {
-    const response = await fetch(`/api/employees?${periodParams().toString()}`);
+    const response = await fetchLatest("employees", `/api/employees?${periodParams().toString()}`);
     const data = await parseJson(response);
     if (seq !== employeesSeq) return;
     if (response.status === 401) {
@@ -1318,10 +1336,11 @@ async function loadEmployees() {
 }
 
 async function loadProblemRows() {
-  if (freeRangePending() || !state.report || state.report.empty) return;
+  if (freeRangePending()) return;
   const key = periodKey();
   if (state.blocks && state.rowsKey === key) return;
   if (state.rowsLoading && state.rowsKey === key) return;
+  if (state.rowsError && state.rowsKey === key) return;
   const seq = ++rowsSeq;
   state.rowsLoading = true;
   state.rowsError = "";
@@ -1329,7 +1348,7 @@ async function loadProblemRows() {
   state.rowsKey = key;
   if (state.view === "employees") render();
   try {
-    const response = await fetch(`/api/employees/rows?${periodParams().toString()}`);
+    const response = await fetchLatest("rows", `/api/employees/rows?${periodParams().toString()}`);
     const data = await parseJson(response);
     if (seq !== rowsSeq) return;
     if (response.status === 401) {
@@ -1351,14 +1370,26 @@ async function loadProblemRows() {
 
 async function loadReport(options = {}) {
   const seq = ++loadSeq;
+  const key = periodKey();
+  cancelLoad("report");
   resetEmployees();
+  if (state.reportKey !== key) {
+    state.report = null;
+    state.reportKey = "";
+  }
+  if (state.view === "employees") {
+    setStatus("");
+    setBanner("");
+    loadEmployees();
+    return;
+  }
   if (options.spin) beginLoadSpin();
   const screen = document.getElementById("screen");
   if (screen) screen.setAttribute("aria-busy", "true");
   setStatus("Обновление…");
   setBanner("");
   try {
-    const response = await fetch(`/api/report?${periodParams().toString()}`);
+    const response = await fetchLatest("report", `/api/report?${periodParams().toString()}`);
     const data = await parseJson(response);
     if (seq !== loadSeq) return;
     if (response.status === 401) {
@@ -1366,9 +1397,8 @@ async function loadReport(options = {}) {
       return;
     }
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
-    await waitAnimating();
-    if (seq !== loadSeq) return;
     state.report = data;
+    state.reportKey = key;
     render();
     setStatus("");
     if (state.view === "employees") loadEmployees();
@@ -1756,6 +1786,7 @@ function watchPairOutline(svg) {
   if (!svg.dataset.pairWatch && typeof ResizeObserver === "function") {
     svg.dataset.pairWatch = "1";
     const observer = new ResizeObserver(() => layoutPairOutlines(svg));
+    svg._pairObserver = observer;
     observer.observe(svg);
   }
   layoutPairOutlines(svg);
@@ -1958,6 +1989,9 @@ function renderChart(rows, grain) {
   const wrap = el("div", { class: "chart-wrap" });
   wrap.append(svg, tip);
 
+  let tipDay = null;
+  let tipFrame = 0;
+  let pointer = null;
   function showTip(event) {
     const point = svg.createSVGPoint();
     point.x = event.clientX;
@@ -1978,9 +2012,12 @@ function renderChart(rows, grain) {
     guide.setAttribute("visibility", "visible");
     placeFocus(focusCur, currentPts, best);
     if (focusPrev) placeFocus(focusPrev, previousPts, best);
-    tip.replaceChildren();
-    const body = dayTip(rows, best);
-    if (body) tip.append(body);
+    if (tipDay !== best) {
+      tipDay = best;
+      tip.replaceChildren();
+      const body = dayTip(rows, best);
+      if (body) tip.append(body);
+    }
     const wasHidden = tip.hidden;
     tip.hidden = false;
     if (wasHidden && !reducedMotion()) {
@@ -2003,8 +2040,16 @@ function renderChart(rows, grain) {
     tip.style.left = `${left}px`;
     tip.style.top = `${top}px`;
   }
-  hit.addEventListener("pointermove", showTip);
+  hit.addEventListener("pointermove", (event) => {
+    pointer = { clientX: event.clientX, clientY: event.clientY };
+    if (!tipFrame) tipFrame = requestAnimationFrame(() => {
+      tipFrame = 0;
+      if (svg.isConnected) showTip(pointer);
+    });
+  });
   hit.addEventListener("pointerleave", () => {
+    cancelAnimationFrame(tipFrame);
+    tipFrame = 0;
     tip.hidden = true;
     hideGuide();
   });
@@ -2930,16 +2975,12 @@ function renderProblemRows(screen) {
     screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
     return;
   }
-  if (!state.report) {
-    screen.append(el("p", { class: "hint" }, "Загрузка…"));
-    return;
-  }
-  if (state.report.empty) {
-    screen.append(el("p", { class: "box warn" }, "⚠️ Нет данных за этот период."));
-    return;
-  }
   if (state.rowsError) {
     screen.append(el("p", { class: "box bad" }, state.rowsError));
+    screen.append(el("button", {
+      type: "button", class: "ghost",
+      onclick: () => { state.rowsError = ""; loadProblemRows(); },
+    }, "Повторить загрузку"));
     return;
   }
   if (state.rowsLoading || state.blocks == null) {
@@ -3070,7 +3111,6 @@ function showRowPage(index) {
 }
 
 function renderEmployees(screen) {
-  const report = state.report;
   const pack = empPack();
   const lr = state.empLr === "27" ? "27" : "5";
   const rowsMode = lr === "5" && state.empRows;
@@ -3127,14 +3167,6 @@ function renderEmployees(screen) {
   }
   if (freeRangePending()) {
     screen.append(el("p", { class: "hint" }, "Выберите дату «По». Пока она пустая, данные не грузим."));
-    return;
-  }
-  if (!report) {
-    screen.append(el("p", { class: "hint" }, "Загрузка…"));
-    return;
-  }
-  if (report.empty) {
-    screen.append(el("p", { class: "box warn" }, "⚠️ Нет данных за этот период."));
     return;
   }
   if (state.employeesError) {
@@ -3280,7 +3312,7 @@ function renderEmpDetail(detail, lr) {
     return box;
   }
   const missingMx = showMx && detail.items.every((item) => !String(item.mx || "").trim());
-  for (const item of detail.items) {
+  for (const item of detail.items.slice(0, state.empDetailLimit)) {
     const row = el(
       "div",
       { class: "emp-item" },
@@ -3289,6 +3321,12 @@ function renderEmpDetail(detail, lr) {
     if (showMx) row.append(empMxNode(item.mx));
     row.append(empFoundNode(item.found), el("span", { class: "emp-sum" }, fmtRub(item.sum)));
     box.append(row);
+  }
+  if (detail.items.length > state.empDetailLimit) {
+    box.append(el("button", {
+      type: "button", class: "ghost",
+      onclick: () => { state.empDetailLimit += 100; render(); },
+    }, `Показать ещё · осталось ${detail.items.length - state.empDetailLimit}`));
   }
   if (missingMx) {
     box.append(el(
@@ -3535,7 +3573,11 @@ function renderScreen() {
 }
 
 function fillScreen(screen) {
+  setPlatWatch(null);
   setPlatKey(null);
+  document.querySelectorAll("#screen .loss-donut").forEach((svg) => {
+    svg._pairObserver?.disconnect();
+  });
   const report = state.report;
   if (state.view === "employees") {
     renderEmployees(screen);
@@ -3964,29 +4006,56 @@ function uploadKind() {
 }
 
 async function sendPreview(files, hint) {
+  if (files.length > 20 || files.reduce((sum, file) => sum + file.size, 0) > 80 * 1024 * 1024) {
+    throw new Error("Не больше 20 файлов общим размером до 80 МБ");
+  }
   const batch = newUploadId();
   const ids = [];
   const kind = uploadKind();
-  let step = 0;
-  let pieces = 0;
-  for (const file of files) pieces += Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
+  const pieces = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK)), 0);
+  let completed = 0;
   for (const file of files) {
     const uploadId = newUploadId();
     ids.push(uploadId);
     const total = Math.max(1, Math.ceil(file.size / UPLOAD_CHUNK));
-    for (let index = 0; index < total; index += 1) {
-      step += 1;
-      if (hint) hint.textContent = pieces > 1 ? `Читаем файлы… ${step} из ${pieces}` : "Читаем файлы…";
-      const body = new FormData();
-      body.append("batch", batch);
-      body.append("upload_id", uploadId);
-      body.append("name", file.name);
-      body.append("index", String(index));
-      body.append("total", String(total));
-      body.append("chunk", file.slice(index * UPLOAD_CHUNK, (index + 1) * UPLOAD_CHUNK), "part");
-      await readJson(await fetch("/api/admin/preview/chunk", { method: "POST", body }));
-    }
+    let next = 0;
+    let failed = false;
+    const worker = async () => {
+      while (next < total && !failed) {
+        const index = next++;
+        try {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            const body = new FormData();
+            body.append("batch", batch);
+            body.append("upload_id", uploadId);
+            body.append("name", file.name);
+            body.append("index", String(index));
+            body.append("total", String(total));
+            body.append("chunk", file.slice(index * UPLOAD_CHUNK, (index + 1) * UPLOAD_CHUNK), "part");
+            let response;
+            try {
+              response = await fetch("/api/admin/preview/chunk", { method: "POST", body });
+              await readJson(response);
+              break;
+            } catch (error) {
+              if (attempt === 2 || (response && response.status < 500)) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 250 * (2 ** attempt)));
+            }
+          }
+          completed += 1;
+          if (hint) hint.textContent = `Загружаем файлы… ${completed} из ${pieces}`;
+        } catch (error) {
+          failed = true;
+          throw error;
+        }
+      }
+    };
+    // All workers must finish before surfacing an error or allowing another upload.
+    const results = await Promise.allSettled(Array.from({ length: Math.min(3, total) }, worker));
+    const error = results.find((result) => result.status === "rejected");
+    if (error) throw error.reason;
   }
+  if (hint) hint.textContent = "Разбираем файлы…";
   return readJson(await fetch("/api/admin/preview/finish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -4130,11 +4199,33 @@ function setAdminOpen(open) {
   else if (infoWide()) sidebar.classList.add("wide");
 }
 
+let infoScriptLoading = null;
+
+function ensureInfoCatalog() {
+  if (infoScriptLoading) return infoScriptLoading;
+  infoScriptLoading = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    const version = document.querySelector('script[src*="/static/app.js"]')?.src.split("?")[1] || "";
+    script.src = `/static/info-copy.js${version ? `?${version}` : ""}`;
+    script.onload = resolve;
+    script.onerror = () => {
+      script.remove();
+      infoScriptLoading = null;
+      reject(new Error("Не удалось загрузить справочник. Откройте раздел ещё раз."));
+    };
+    document.body.append(script);
+  });
+  return infoScriptLoading;
+}
+
 function wireInfoWidth() {
   const sidebar = document.getElementById("sidebar");
   if (!sidebar) return;
   for (const id of ["admin-info", "info-lr", "info-statuses"]) {
-    document.getElementById(id)?.addEventListener("toggle", syncInfoWidth);
+    document.getElementById(id)?.addEventListener("toggle", (event) => {
+      syncInfoWidth();
+      if (event.target.open) ensureInfoCatalog().catch((error) => setAdminStatus(error.message));
+    });
   }
 }
 
@@ -4375,6 +4466,9 @@ function wireChrome() {
     }
     if (period !== periodKey()) {
       if (freeRangePending()) {
+        loadSeq += 1;
+        cancelLoad("report");
+        resetEmployees();
         setStatus("");
         setBanner("");
         render();
@@ -4387,6 +4481,12 @@ function wireChrome() {
 }
 
 function showGate() {
+  document.getElementById("screen")?.removeAttribute("aria-busy");
+  loadSeq += 1;
+  cancelLoad("report");
+  resetEmployees();
+  state.report = null;
+  state.reportKey = "";
   state.user = null;
   const gate = document.getElementById("gate");
   const layout = document.querySelector(".layout");
@@ -4603,18 +4703,7 @@ function wireAuth() {
 }
 
 async function boot() {
-  try {
-    const data = await readJson(await fetch("/api/auth/me"));
-    if (!data.ok) {
-      showGate();
-      return;
-    }
-    state.user = data;
-    applySession();
-    await openApp();
-  } catch (error) {
-    showGate();
-  }
+  await openApp();
 }
 
 async function openApp() {
@@ -4629,6 +4718,8 @@ async function openApp() {
       showGate();
       return;
     }
+    if (data.user) state.user = data.user;
+    if (state.user) applySession();
     state.today = data.today || "";
     if (!state.anchor) state.anchor = data.max_date || data.today;
     if (!state.rangeStart) state.rangeStart = state.anchor;
@@ -4648,6 +4739,7 @@ async function openApp() {
     }
     await loadReport();
   } catch (error) {
+    if (!state.user) showGate();
     setBanner("Не удалось открыть сервис");
     setStatus("");
   }
@@ -4658,3 +4750,4 @@ wireAdmin();
 wireAuth();
 wirePassword();
 boot();
+

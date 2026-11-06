@@ -9,8 +9,12 @@ import re
 import secrets
 import threading
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
+
+from cache_store import BoundedCache
+from request_metrics import timed
 
 import pandas as pd
 from sqlalchemy import create_engine, inspect, text
@@ -22,8 +26,12 @@ log = logging.getLogger("losses")
 ROOT = Path(__file__).resolve().parent
 
 _engine = None
-_cache = {}
-_ready = {}
+_cache = BoundedCache(64, 128 * 1024 * 1024, 3600)
+_ready = BoundedCache(256, 32 * 1024 * 1024, 3600)
+_summary = BoundedCache(1, 1024 * 1024, 60)
+_build_locks = {name: [threading.RLock() for _ in range(64)]
+                for name in ("frame", "json", "summary")}
+SESSION_TTL = 60 * 60 * 24 * 30
 _columns_cache = None
 _generation = 0
 _cache_lock = threading.Lock()
@@ -137,12 +145,22 @@ def clear_cache():
         _generation += 1
         _cache.clear()
         _ready.clear()
+        _summary.clear()
         _columns_cache = None
 
 
 def cache_generation():
     with _cache_lock:
         return _generation
+
+
+@contextmanager
+def build_lock(key):
+    """Bounded lock stripes prevent duplicate builds without holding the cache lock."""
+    namespace = key[0] if isinstance(key, tuple) else "summary"
+    locks = _build_locks[namespace]
+    with locks[hash(key) % len(locks)]:
+        yield
 
 
 def is_missing_table(exc):
@@ -216,6 +234,16 @@ def ensure_schema():
         conn.execute(text(
             "INSERT INTO access_users (id, role) "
             "SELECT 1, 'admin' WHERE NOT EXISTS (SELECT 1 FROM access_users WHERE id = 1)"
+        ))
+        conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS access_sessions ("
+            "token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at BIGINT NOT NULL)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS access_sessions_user_idx ON access_sessions (user_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS access_sessions_expiry_idx ON access_sessions (expires_at)"
         ))
         if not inspect(conn).has_table("losses"):
             return
@@ -329,6 +357,47 @@ def get_access_user(user_id):
             return None
         raise DataError(f"Не удалось прочитать доступ: {public_error(exc)}") from exc
     return _access_row(row)
+
+
+def _session_hash(token):
+    return hashlib.sha256(token.encode("ascii")).hexdigest()
+
+
+def create_session(user_id):
+    token = secrets.token_urlsafe(32)
+    now = int(time.time())
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(text("DELETE FROM access_sessions WHERE expires_at <= :now"), {"now": now})
+            conn.execute(text(
+                "INSERT INTO access_sessions (token_hash, user_id, expires_at) VALUES (:hash, :id, :expiry)"
+            ), {"hash": _session_hash(token), "id": int(user_id), "expiry": now + SESSION_TTL})
+    except Exception as exc:
+        raise DataError("Не удалось создать сессию") from exc
+    return token
+
+
+def get_session_user(token):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", str(token or "")):
+        return None
+    try:
+        with get_engine().connect() as conn:
+            row = conn.execute(text(
+                "SELECT u.id, u.role, u.phone, u.email FROM access_sessions s "
+                "JOIN access_users u ON u.id = s.user_id "
+                "WHERE s.token_hash = :hash AND s.expires_at > :now"
+            ), {"hash": _session_hash(token), "now": int(time.time())}).one_or_none()
+        return _access_row(row)
+    except Exception as exc:
+        raise DataError(f"Не удалось проверить сессию: {public_error(exc)}") from exc
+
+
+def revoke_session(token):
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}", str(token or "")):
+        return
+    with get_engine().begin() as conn:
+        conn.execute(text("DELETE FROM access_sessions WHERE token_hash = :hash"),
+                     {"hash": _session_hash(token)})
 
 
 _PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
@@ -491,6 +560,8 @@ def set_access_password_value(user_id, password):
                 )
                 if not result.rowcount:
                     raise ValueError("Нет такого ID")
+                conn.execute(text("DELETE FROM access_sessions WHERE user_id = :id"),
+                             {"id": int(user_id)})
         except ValueError:
             raise
         except Exception as exc:
@@ -510,6 +581,8 @@ def set_access_password(user_id):
                 )
                 if not result.rowcount:
                     raise ValueError("Нет такого ID")
+                conn.execute(text("DELETE FROM access_sessions WHERE user_id = :id"),
+                             {"id": int(user_id)})
         except ValueError:
             raise
         except Exception as exc:
@@ -540,6 +613,7 @@ def set_access_contact(user_id, phone, email, domain=""):
     return get_access_user(user_id)
 
 
+@timed("load")
 def load_data(start, end, columns):
     existing = known_columns()
     if not existing:
@@ -612,20 +686,20 @@ def load_employee_slice(start, end, badge, lr="5"):
 
 
 def load_cached(start, end, kind="report"):
-    """Кадр только для чтения: отчёт его не копирует и не меняет."""
-    columns = FRAME_COLUMNS[kind]
+    """Read-only frames, bounded by memory and shared across simultaneous readers."""
     key = (kind, start.isoformat(), end.isoformat())
-    now = time.monotonic()
-    generation = cache_generation()
-    with _cache_lock:
-        hit = _cache.get(key)
-        if hit and now - hit[0] < CACHE_TTL and hit[2] == generation:
-            return hit[1]
-    df = load_data(start, end, columns)
-    with _cache_lock:
-        if generation == _generation:
-            _cache[key] = (time.monotonic(), df, generation)
-    return df
+    with build_lock(("frame", key)):
+        with _cache_lock:
+            generation = _generation
+            hit = _cache.get(key, generation)
+        if hit is not None:
+            return hit
+        df = load_data(start, end, FRAME_COLUMNS[kind])
+        size = int(df.memory_usage(index=True, deep=True).sum())
+        with _cache_lock:
+            if generation == _generation:
+                _cache.put(key, df, generation, size)
+        return df
 
 
 def ready_key(kind, period):
@@ -643,14 +717,8 @@ def ready_key(kind, period):
 
 
 def get_ready(key):
-    now = time.monotonic()
     with _cache_lock:
-        hit = _ready.get(key)
-        if hit and now - hit[0] < CACHE_TTL and hit[2] == _generation:
-            return hit[1]
-        if hit:
-            _ready.pop(key, None)
-    return None
+        return _ready.get(key, _generation)
 
 
 def put_ready(key, payload, generation):
@@ -662,7 +730,7 @@ def put_ready(key, payload, generation):
     ).encode("utf-8")
     with _cache_lock:
         if generation == _generation:
-            _ready[key] = (time.monotonic(), body, generation)
+            _ready.put(key, body, generation, len(body))
     return body
 
 
@@ -684,7 +752,22 @@ def _as_date(value):
     return ts.date().isoformat()
 
 
+@timed("summary")
 def get_summary():
+    with build_lock("summary"):
+        with _cache_lock:
+            generation = _generation
+            hit = _summary.get("summary", generation)
+        if hit is not None:
+            return hit
+        result = _read_summary()
+        with _cache_lock:
+            if generation == _generation:
+                _summary.put("summary", result, generation, len(json.dumps(result).encode("utf-8")))
+        return result
+
+
+def _read_summary():
     engine = get_engine()
     try:
         with engine.connect() as conn:
@@ -722,9 +805,11 @@ def get_summary():
 
 
 def _period_where():
-    if _dialect() == "postgresql":
-        return "loss_date::date >= :s AND loss_date::date <= :e"
-    return "date(loss_date) >= :s AND date(loss_date) <= :e"
+    return "loss_date >= :s AND loss_date < :e"
+
+
+def _period_params(start, end):
+    return {"s": start.isoformat(), "e": (end + timedelta(days=1)).isoformat()}
 
 
 def _delete_sql():
@@ -743,7 +828,7 @@ def _carry_mx(conn, df, d_min, d_max):
     old = pd.read_sql(
         text("SELECT barcode, mx FROM losses WHERE " + _period_where()),
         conn,
-        params={"s": d_min.isoformat(), "e": d_max.isoformat()},
+        params=_period_params(d_min, d_max),
     )
     if old.empty:
         return df
@@ -786,7 +871,7 @@ def _assembly_rows(conn, d_min, d_max):
     params = {}
     if d_min is not None:
         where.append(_period_where())
-        params = {"s": d_min.isoformat(), "e": d_max.isoformat()}
+        params = _period_params(d_min, d_max)
     pieces = []
     if "reason" in names:
         pieces.append("reason = '5'")
@@ -959,7 +1044,7 @@ def apply_twin(frame):
     params = {}
     if d_min is not None:
         period_sql = " AND " + _period_where()
-        params = {"s": d_min.isoformat(), "e": d_max.isoformat()}
+        params = _period_params(d_min, d_max)
     engine = get_engine()
     updated = 0
     unknown = False
@@ -1009,7 +1094,7 @@ def replace_period(df, d_min, d_max):
                 df = _carry_mx(conn, df, d_min, d_max)
                 existing = _add_missing_columns(conn, df, engine.dialect.name)
                 use = [col for col in df.columns if col in existing]
-                conn.execute(text(_delete_sql()), {"s": d_min.isoformat(), "e": d_max.isoformat()})
+                conn.execute(text(_delete_sql()), _period_params(d_min, d_max))
                 if use and len(df):
                     df.loc[:, use].to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
             elif len(df):
@@ -1030,3 +1115,4 @@ def truncate_losses():
             else:
                 conn.execute(text("DELETE FROM losses"))
         clear_cache()
+

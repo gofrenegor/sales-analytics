@@ -316,3 +316,25 @@ def test_prepare_twin_keeps_distinct_places():
     out, stats = prepare_twin([frame])
     assert stats["duplicates"] == 1
     assert set(out["mx"]) == {"A.1", "B.2"}
+
+
+
+def test_block_series_are_shared_between_dashboard_and_pages(monkeypatch):
+    import analytics
+
+    period = compute_period("День", date(2026, 10, 10), date(2026, 10, 10))
+    frame = prepare_losses(pd.DataFrame([row(reason="5", status_before="ORS")]))
+    calls = []
+    original = analytics._block_points
+    def count(part, period, label, grain):
+        calls.append((label, tuple(part.index)))
+        return original(part, period, label, grain)
+    monkeypatch.setattr(analytics, "_block_points", count)
+    context = analytics._BlockSeries(frame, frame.iloc[0:0], period, "hour")
+    items = analytics.warehouse_block_items(frame)
+    analytics.build_block_chart(frame, frame.iloc[0:0], period, False, "hour", context)
+    count_after_chart = len(calls)
+    pages = analytics.build_block_pages(frame, frame.iloc[0:0], period, items, False, "hour", context)
+    assert len(calls) == count_after_chart
+    page = pages[items[0]["name"]]
+    assert sum(point["sum"] for point in page["series"]["5"]) == 100

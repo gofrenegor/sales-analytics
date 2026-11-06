@@ -440,3 +440,112 @@ def test_index_injects_asset_version(client):
     match = re.search(r"/static/app\.js\?v=(\d+)", html)
     assert match
     assert f'/static/styles.css?v={match.group(1)}' in html
+
+
+
+def test_session_cannot_be_forged_and_logout_revokes_it(client):
+    import db
+    from sqlalchemy import text
+
+    token = client.cookies.get("access_session")
+    assert token and re.fullmatch(r"[A-Za-z0-9_-]{43}", token)
+    with db.get_engine().connect() as conn:
+        hashes = conn.execute(text("SELECT token_hash FROM access_sessions")).scalars().all()
+    assert token not in hashes
+    assert db.get_session_user(token)["id"] == 1
+    assert client.post("/api/auth/logout").status_code == 200
+    assert db.get_session_user(token) is None
+    client.cookies.set("access_id", "1")
+    assert client.get("/api/bootstrap").status_code == 401
+    client.cookies.set("access_session", "1")
+    assert client.get("/api/auth/me").json()["ok"] is False
+    client.cookies.set("access_session", "A" * 43)
+    assert client.get("/api/bootstrap").status_code == 401
+
+
+def test_password_change_revokes_other_sessions_and_rotates_current(client):
+    import db
+
+    old = client.cookies.get("access_session")
+    other = db.create_session(1)
+    assert client.post("/api/auth/password", json={"password": "another-password"}).status_code == 200
+    new = client.cookies.get("access_session")
+    assert new != old
+    assert db.get_session_user(old) is None
+    assert db.get_session_user(other) is None
+    assert client.get("/api/bootstrap").json()["user"]["id"] == 1
+
+
+def test_expired_session_is_rejected(client):
+    import db
+    from sqlalchemy import text
+
+    token = client.cookies.get("access_session")
+    with db.get_engine().begin() as conn:
+        conn.execute(text("UPDATE access_sessions SET expires_at = 0"))
+    assert db.get_session_user(token) is None
+    assert client.get("/api/bootstrap").status_code == 401
+
+
+def test_summary_is_cached_and_invalidated(client, monkeypatch):
+    import db
+
+    db.clear_cache()
+    calls = []
+    def read():
+        calls.append(1)
+        return db.empty_summary()
+    monkeypatch.setattr(db, "_read_summary", read)
+    db.get_summary()
+    db.get_summary()
+    assert len(calls) == 1
+    db.clear_cache()
+    db.get_summary()
+    assert len(calls) == 2
+
+
+def test_expired_preview_cannot_be_committed(client):
+    import server
+    import time
+
+    server.pending["expired"] = {"ts": time.time() - server.PENDING_TTL - 1}
+    assert client.post("/api/admin/commit", json={"token": "expired"}).status_code == 404
+
+
+def test_concurrent_frame_reads_build_once(client, monkeypatch):
+    import db
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    db.clear_cache()
+    barrier = threading.Barrier(4)
+    calls = []
+    def load(*args):
+        calls.append(1)
+        time.sleep(0.02)
+        return pd.DataFrame({"loss_sum": [1]})
+    monkeypatch.setattr(db, "load_data", load)
+    def read():
+        barrier.wait(timeout=5)
+        return db.load_cached(date(2026, 1, 1), date(2026, 1, 2))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        frames = list(pool.map(lambda _: read(), range(4)))
+    assert len(calls) == 1
+    assert all(frame is frames[0] for frame in frames)
+
+
+def test_report_exposes_cache_and_request_timings(client):
+    import db
+
+    db.clear_cache()
+    params = {"mode": "День", "anchor": "2026-10-01"}
+    first = client.get("/api/report", params=params)
+    assert first.status_code == 200
+    assert first.headers["x-cache"] == "MISS"
+    assert "app;dur=" in first.headers["server-timing"]
+    assert "json;dur=" in first.headers["server-timing"]
+    assert first.headers["cache-control"] == "no-store"
+    second = client.get("/api/report", params=params)
+    assert second.headers["x-cache"] == "HIT"
+    assert second.json() == first.json()

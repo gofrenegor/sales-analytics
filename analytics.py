@@ -2730,36 +2730,74 @@ def _zip_lr_points(asm_rows, lay_rows):
     return rows
 
 
-def build_block_chart(curr, prev, period, has_prev, grain):
+class _BlockSeries:
+    """Reuse classified block subsets and expensive chart tops within one report."""
+    def __init__(self, curr, prev, period, grain):
+        self.period = period
+        self.grain = grain
+        self.parts = {}
+        self.platforms = {}
+        self.points = {}
+        self.empty = {}
+        for label, frame in (("Текущий период", curr), ("Прошлый период", prev)):
+            self.empty[label] = frame.iloc[0:0]
+            if frame.empty:
+                continue
+            blocks, reasons = _frame_keys(frame)
+            mask = reasons.isin(("5", "27"))
+            columns = ["loss_date", "loss_sum", "loss_qty", "block_group", "reason"]
+            grouped = frame.loc[mask, columns].groupby(
+                [blocks.loc[mask], reasons.loc[mask]], sort=False,
+            )
+            self.parts.update({(label, str(block), str(reason)): group
+                               for (block, reason), group in grouped})
+            names = _text_key(frame["block_name"])
+            grouped = frame.loc[mask, ["loss_date", "loss_sum"]].groupby(
+                [blocks.loc[mask], names.loc[mask]], sort=False,
+            )
+            self.platforms.update({(label, str(block), str(name)): group
+                                   for (block, name), group in grouped})
+
+    def part(self, label, block, reason):
+        return self.parts.get((label, block, reason), self.empty[label])
+
+    def series(self, label, block, reason):
+        key = (label, block, reason)
+        if key not in self.points:
+            self.points[key] = _block_points(self.part(*key), self.period, label, self.grain)
+        return self.points[key]
+
+    def platform(self, label, block, name):
+        return self.platforms.get((label, block, name), self.empty[label])
+
+
+def build_block_chart(curr, prev, period, has_prev, grain, series=None):
     """Четыре линии среза «блоки». В сумме только LR 5 и LR 27, по дням отдельно.
 
     У линии есть площадки блока (`PLATFORMS`): тот же LR 5+27, графики площадок
     ложатся на поле этого графика.
     """
-    curr_blocks, curr_reasons = _frame_keys(curr)
-    prev_blocks, prev_reasons = _frame_keys(prev)
+    series = series or _BlockSeries(curr, prev, period, grain)
     lines = []
     for index, name in enumerate(ALL_BLOCKS):
         color = _block_donut_color(index)
-        asm = _block_reason_part(curr, curr_blocks, curr_reasons, name, "5")
-        lay = _block_reason_part(curr, curr_blocks, curr_reasons, name, "27")
+        asm = series.part("Текущий период", name, "5")
+        lay = series.part("Текущий период", name, "27")
         points = _zip_lr_points(
-            _block_points(asm, period, "Текущий период", grain),
-            _block_points(lay, period, "Текущий период", grain),
+            series.series("Текущий период", name, "5"),
+            series.series("Текущий период", name, "27"),
         )
         if has_prev:
-            old_asm = _block_reason_part(prev, prev_blocks, prev_reasons, name, "5")
-            old_lay = _block_reason_part(prev, prev_blocks, prev_reasons, name, "27")
             points = points + _zip_lr_points(
-                _block_points(old_asm, period, "Прошлый период", grain),
-                _block_points(old_lay, period, "Прошлый период", grain),
+                series.series("Прошлый период", name, "5"),
+                series.series("Прошлый период", name, "27"),
             )
         platforms = []
         for platform in PLATFORMS.get(name, []):
-            part = _platform_lr(curr, curr_blocks, curr_reasons, name, platform)
+            part = series.platform("Текущий период", name, platform)
             plat_points = _flat_points(part, period, "Текущий период", grain)
             if has_prev:
-                old = _platform_lr(prev, prev_blocks, prev_reasons, name, platform)
+                old = series.platform("Прошлый период", name, platform)
                 plat_points = plat_points + _flat_points(old, period, "Прошлый период", grain)
             platforms.append({
                 "name": platform,
@@ -2779,30 +2817,28 @@ def build_block_chart(curr, prev, period, has_prev, grain):
     return lines
 
 
-def build_block_pages(curr, prev, period, items, has_prev, grain):
+def build_block_pages(curr, prev, period, items, has_prev, grain, series=None):
     """Страницы блоков: лицо, кольцо LR 5 и 27, точки графика по имени block_group."""
-    curr_blocks, curr_reasons = _frame_keys(curr)
-    prev_blocks, prev_reasons = _frame_keys(prev)
+    series = series or _BlockSeries(curr, prev, period, grain)
     pages = {}
     for item in items or []:
         name = str(item.get("name") or "")
         if not name:
             continue
-        series = {}
+        chart_series = {}
         sums = {}
         for code in ("5", "27"):
-            part = _block_reason_part(curr, curr_blocks, curr_reasons, name, code)
-            points = _block_points(part, period, "Текущий период", grain)
+            part = series.part("Текущий период", name, code)
+            points = series.series("Текущий период", name, code)
             if has_prev:
-                old = _block_reason_part(prev, prev_blocks, prev_reasons, name, code)
-                points = points + _block_points(old, period, "Прошлый период", grain)
-            series[code] = points
+                points = points + series.series("Прошлый период", name, code)
+            chart_series[code] = points
             sums[code] = _sum(part, "loss_sum")
         total = sums["5"] + sums["27"]
         pages[name] = {
             "face": name,
             "donut_svg": build_block_lr_donut_svg(sums["5"], sums["27"], fmt_rub(total)),
-            "series": series,
+            "series": chart_series,
         }
     return pages
 
@@ -2897,6 +2933,7 @@ def build_report(df_curr, df_prev, period):
         if has_prev:
             daily.extend(daily_series(prev, period["_prev_start"], period["_prev_end"], "Прошлый период"))
 
+    block_series = _BlockSeries(curr, prev, period, chart_grain)
     return {
         "empty": False,
         "has_prev": has_prev,
@@ -2914,7 +2951,7 @@ def build_report(df_curr, df_prev, period):
                 "total": block_sum,
                 "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(block_sum)),
                 "items": block_items,
-                "lines": build_block_chart(curr, prev, period, has_prev, chart_grain),
+                "lines": build_block_chart(curr, prev, period, has_prev, chart_grain, block_series),
             },
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,
@@ -2931,5 +2968,6 @@ def build_report(df_curr, df_prev, period):
         "chart_time_missing": chart_time_missing,
         "flows": flows,
         "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
-        "block_pages": build_block_pages(curr, prev, period, block_items, has_prev, chart_grain),
+        "block_pages": build_block_pages(curr, prev, period, block_items, has_prev, chart_grain, block_series),
     }
+
