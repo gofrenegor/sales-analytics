@@ -2785,7 +2785,7 @@ button.back:active { transform: translateX(-3px); }
 /* Списания склада: третий луч и раскрываемый отчёт. */
 .wh-fork { max-width: calc(100vw - 16px); flex-wrap: wrap; }
 .wh > #section-losses { flex-shrink: 0; }
-.wh > #slice-writeoffs { position: absolute; top: 8px; display: none; white-space: nowrap; z-index: 1; }
+.wh > #slice-writeoffs { position: absolute; top: -8px; display: none; white-space: nowrap; z-index: 1; }
 .wh.is-open > #slice-writeoffs { display: block; }
 .writeoff-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; }
 .writeoff-scroll { max-width: 100%; overflow: auto; border: 1px solid var(--line-strong); border-radius: 16px; margin-top: 20px; }

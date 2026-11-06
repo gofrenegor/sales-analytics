@@ -3823,7 +3823,7 @@ function layoutFork() {
   if (!losses || !blocks || !flows || !fork || !svg || !lineBlocks || !lineFlows || !writeoffs || !lineWriteoffs) return;
   if (!fork.offsetWidth || !losses.offsetWidth) return;
 
-  const writeoffsLeft = losses.offsetLeft + losses.offsetWidth + 8;
+  const writeoffsLeft = losses.offsetLeft + losses.offsetWidth + 10;
   writeoffs.style.left = `${writeoffsLeft}px`;
   wh.style.width = `${writeoffsLeft + writeoffs.offsetWidth}px`;
 
