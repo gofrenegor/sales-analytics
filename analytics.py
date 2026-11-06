@@ -1,6 +1,7 @@
 """Правила списаний и сборка отчёта для сайта."""
 
 import calendar
+import json
 import math
 import os
 import re
@@ -83,12 +84,26 @@ COLS = [
     "status_employee_id",
     "flow", "process_stage", "block_group",
 ]
-# Полная выгрузка: бейджик исполнителя лежит в колонке AC.
+# Колонка AC — сотрудник статуса перед списанием.
+# На пропуске сборки это раскладчик или инвентаризатор, не сборщик.
 EMPLOYEE_COL_INDEX = 28
 EMPLOYEE_HEADERS = (
     "id сотрудника статуса перед списан",
     "id сотрудника статуса перед списанием",
     "id сотрудника",
+)
+# Пара колонок списания. AWH — блок, EMP — сотрудники.
+# Сборщик — EMP, который не равен ID из колонки AC.
+COUNTERPARTY_TYPE_HEADERS = (
+    "тип контрагента",
+    "тип контрагентов",
+    "типы контрагентов",
+)
+COUNTERPARTY_ID_HEADERS = (
+    "контрагент id",
+    "контрагенты id",
+    "id контрагента",
+    "id контрагентов",
 )
 # AF — последний стикер до списания. Q — флаг оприходования (вещь получила движение).
 STICKER_COL_INDEX = 31
@@ -1141,6 +1156,8 @@ def process_excel(file):
     df = pd.read_excel(file, engine="openpyxl")
     df.columns = df.columns.astype(str).str.strip()
     employee = _employee_raw(df)
+    party_types = _counterparty_series(df, "type")
+    party_ids = _counterparty_series(df, "id")
     sticker = _pick_series(df, STICKER_HEADERS, STICKER_COL_INDEX, "стикер", _looks_sticker)
     posted = _pick_series(df, POSTED_HEADERS, POSTED_COL_INDEX, "оприход", _looks_posted)
     mx = _mx_raw(df)
@@ -1178,6 +1195,21 @@ def process_excel(file):
         df["status_employee_id"] = employee.map(badge_id)
     elif "status_employee_id" in df.columns:
         df["status_employee_id"] = df["status_employee_id"].map(badge_id)
+    if party_types is not None and party_ids is not None:
+        scanners = (
+            df["status_employee_id"].tolist()
+            if "status_employee_id" in df.columns
+            else [None] * len(df)
+        )
+        picked = [
+            assembler_badge(kind, raw_id, scanner)
+            for kind, raw_id, scanner in zip(
+                party_types.reindex(df.index).tolist(),
+                party_ids.reindex(df.index).tolist(),
+                scanners,
+            )
+        ]
+        df["assembly_employee_id"] = pd.Series(picked, index=df.index, dtype="object")
     df["last_sticker"] = sticker.map(sticker_text).to_numpy() if sticker is not None else ""
     df["posted"] = posted.map(posted_flag).to_numpy() if posted is not None else ""
     df["mx"] = mx.map(sticker_text).to_numpy() if mx is not None else ""
@@ -1212,6 +1244,8 @@ def prepare_losses(df):
             df[col] = None
     if "status_employee_id" in df.columns:
         df["status_employee_id"] = df["status_employee_id"].map(badge_id)
+    if "assembly_employee_id" in df.columns:
+        df["assembly_employee_id"] = df["assembly_employee_id"].map(_optional_badge)
     if "loss_sum" not in df.columns:
         df["loss_sum"] = 0
     if "loss_qty" not in df.columns:
@@ -1226,6 +1260,128 @@ def prepare_losses(df):
     df["status_before"] = df["status_before"].fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     df.loc[df["status_before"] == "", "status_before"] = "НЕ УКАЗАНО"
     return classify_losses(df)
+
+
+def _cell_missing(value):
+    if isinstance(value, (list, tuple)):
+        return False
+    try:
+        if value is None or pd.isna(value):
+            return True
+    except (TypeError, ValueError):
+        if value is None:
+            return True
+    if isinstance(value, str) and value.strip().lower() in {"", "nan", "none", "nat", "<na>", "null"}:
+        return True
+    return False
+
+
+def _split_counterparty_text(text):
+    body = text.strip()
+    if len(body) >= 2 and body[0] == "[" and body[-1] == "]":
+        body = body[1:-1]
+    sep = ";" if ";" in body and "," not in body else ","
+    items = []
+    for part in body.split(sep):
+        item = part.strip()
+        if len(item) >= 2 and item[0] == item[-1] and item[0] in "\"'":
+            item = item[1:-1].strip()
+        if item:
+            items.append(item)
+    return items
+
+
+def parse_counterparty_list(value):
+    """Список из ячейки «["AWH", "EMP"]» или «[6814, 797086]».
+
+    None — ячейка пустая. Пустой список — ячейка была, значений нет.
+    """
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    if _cell_missing(value):
+        return None
+    text = str(value).strip()
+    text = (
+        text.replace("\u201c", "\"").replace("\u201d", "\"")
+        .replace("\u00ab", "\"").replace("\u00bb", "\"")
+        .replace("\u2018", "'").replace("\u2019", "'")
+    )
+    if text.lower() in {"", "nan", "none", "nat", "<na>", "null"}:
+        return None
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return parsed
+    return _split_counterparty_text(text)
+
+
+def assembler_badge(types, ids, scanner):
+    """Бейдж сборщика по паре «тип контрагента» / «контрагент id».
+
+    None — обеих ячеек нет: строка остаётся на сотруднике перед списанием.
+    Пустая строка — контрагенты разобраны, отдельного сборщика нет.
+    Иначе один EMP, который не равен ID сотрудника перед списанием.
+    AWH — блок. Совпавший EMP — раскладчик или инвентаризатор.
+    """
+    type_list = parse_counterparty_list(types)
+    id_list = parse_counterparty_list(ids)
+    if type_list is None and id_list is None:
+        return None
+    found = []
+    scanner_badge = badge_id(scanner)
+    for kind, raw in zip(type_list or [], id_list or []):
+        if str(kind).strip().upper() != "EMP":
+            continue
+        emp = badge_id(raw)
+        if not emp or emp == scanner_badge or emp in found:
+            continue
+        found.append(emp)
+    if len(found) == 1:
+        return found[0]
+    return ""
+
+
+def _stored_missing(value):
+    """NULL в базе. Пустая строка — отдельного сборщика нет, это не пропуск значения."""
+    if isinstance(value, str):
+        return False
+    try:
+        return value is None or bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return value is None
+
+
+def _optional_badge(value):
+    """Цифры бейджа. NULL остаётся None, чтобы сборка взяла колонку AC."""
+    if _stored_missing(value):
+        return None
+    return badge_id(value)
+
+
+def assembly_badge_value(stored, scanner):
+    """Бейдж пропуска сборки. NULL — старая строка, бейдж сотрудника перед списанием."""
+    if _stored_missing(stored):
+        return badge_id(scanner)
+    return badge_id(stored)
+
+
+def _assembly_badges(part):
+    if "status_employee_id" in part.columns:
+        scanner = part["status_employee_id"].map(badge_id)
+    else:
+        scanner = pd.Series("", index=part.index)
+    if "assembly_employee_id" not in part.columns:
+        return scanner
+    return pd.Series(
+        [
+            assembly_badge_value(stored, scan)
+            for stored, scan in zip(part["assembly_employee_id"].tolist(), scanner.tolist())
+        ],
+        index=part.index,
+    )
 
 
 def badge_id(value):
@@ -1395,6 +1551,34 @@ def _employee_raw(df):
             return df.iloc[:, EMPLOYEE_COL_INDEX]
     if named is not None:
         return df[named]
+    return None
+
+
+def _header_key(name):
+    return " ".join(str(name).strip().lower().replace("ё", "е").replace("\xa0", " ").split())
+
+
+def _counterparty_series(df, kind):
+    """Колонка контрагентов до обрезки листа.
+
+    kind «type» — «Тип контрагента», «id» — «Контрагент ID».
+    """
+    folded = [(_header_key(col), col) for col in df.columns]
+    if kind == "type":
+        headers = COUNTERPARTY_TYPE_HEADERS
+        def accept(key):
+            return "тип" in key and "контрагент" in key
+    else:
+        headers = COUNTERPARTY_ID_HEADERS
+        def accept(key):
+            return "контрагент" in key and "id" in key and "тип" not in key
+    by_name = {key: col for key, col in folded}
+    for name in headers:
+        if name in by_name:
+            return df[by_name[name]]
+    for key, col in folded:
+        if accept(key):
+            return df[col]
     return None
 
 
@@ -1909,11 +2093,20 @@ def _employee_badges(part):
 
 
 def build_employees(df):
-    """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. found — сколько оприходовано. Без списка ШК."""
+    """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. found — сколько оприходовано. Без списка ШК.
+
+    Раскладка — сотрудник перед списанием. Сборка — сборщик из контрагентов.
+    """
     empty = {lr: [] for lr in EMPLOYEE_LRS}
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return empty
-    wanted = [col for col in ("reason", "status_employee_id", "loss_sum", "status_before", "posted") if col in df.columns]
+    wanted = [
+        col for col in (
+            "reason", "status_employee_id", "assembly_employee_id",
+            "loss_sum", "status_before", "posted",
+        )
+        if col in df.columns
+    ]
     part = df.loc[df["reason"].astype(str).isin(EMPLOYEE_LRS), wanted].copy()
     if part.empty:
         return empty
@@ -1922,6 +2115,16 @@ def build_employees(df):
         part["badge"] = ""
     else:
         part["badge"] = part["status_employee_id"].map(badge_id)
+    assembly = part["lr"].eq("5")
+    if assembly.any():
+        part.loc[assembly, "badge"] = _assembly_badges(part.loc[assembly]).to_numpy()
+        if "assembly_employee_id" in part.columns:
+            # Контрагенты разобраны, сборщика нет: не оставлять пропуск на раскладчике
+            # и не рисовать пустой бейдж.
+            unnamed = assembly & part["assembly_employee_id"].map(
+                lambda value: isinstance(value, str) and not badge_id(value)
+            )
+            part = part.loc[~unnamed]
     if "loss_sum" not in part.columns:
         part["loss_sum"] = 0.0
     part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
@@ -1952,7 +2155,11 @@ def build_employee_items(df, badge, lr):
     part = df.loc[df["reason"].astype(str) == code]
     if part.empty or "status_employee_id" not in part.columns:
         return []
-    part = part.loc[part["status_employee_id"].map(badge_id) == (badge or "")]
+    if code == "5":
+        badges = _assembly_badges(part)
+    else:
+        badges = part["status_employee_id"].map(badge_id)
+    part = part.loc[badges == (badge or "")]
     if part.empty:
         return []
     stickers = part["last_sticker"] if "last_sticker" in part.columns else pd.Series("", index=part.index)

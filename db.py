@@ -32,11 +32,13 @@ CACHE_TTL = 3600
 READ_COLUMNS = (
     "loss_date", "barcode", "block_name", "status_block_id", "loss_sum", "loss_qty",
     "reason", "status_before_date", "status_before", "block_id", "office_id",
-    "status_employee_id", "last_sticker", "posted", "mx",
+    "status_employee_id", "assembly_employee_id", "last_sticker", "posted", "mx",
 )
 WRITE_COLUMNS = READ_COLUMNS
 # Главный экран не читает ШК и бейджик. Список сотрудников — бейджик и флаг
 # оприходования (процент найденного), без стикеров. Стикер и МХ — срез по клику.
+# Сборка группируется по assembly_employee_id. NULL в этой колонке — старая
+# строка: бейдж как в status_employee_id.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
@@ -45,7 +47,7 @@ FRAME_COLUMNS = {
     "employees": (
         "loss_date", "block_name", "loss_sum",
         "reason", "status_before", "block_id", "office_id",
-        "status_employee_id", "posted",
+        "status_employee_id", "assembly_employee_id", "posted",
     ),
     # Проблемные ряды сборки: МХ и сумма. Бейджик и стикер не читаются.
     # status_before нужен, чтобы ORS попал в LR 5 так же, как в списке сотрудников.
@@ -57,7 +59,7 @@ FRAME_COLUMNS = {
 DETAIL_COLUMNS = (
     "loss_date", "block_name", "loss_sum", "loss_qty",
     "reason", "status_before", "block_id", "office_id",
-    "status_employee_id", "last_sticker", "posted", "mx",
+    "status_employee_id", "assembly_employee_id", "last_sticker", "posted", "mx",
 )
 
 
@@ -182,6 +184,11 @@ def _ensure_loss_index(conn):
             "CREATE INDEX IF NOT EXISTS losses_employee_date_idx "
             "ON losses (status_employee_id, loss_date)"
         ))
+    if "assembly_employee_id" in names:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS losses_assembly_date_idx "
+            "ON losses (assembly_employee_id, loss_date)"
+        ))
 
 
 def ensure_schema():
@@ -211,7 +218,10 @@ def ensure_schema():
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
-        for col in ("office_id", "block_id", "status_employee_id", "last_sticker", "posted", "mx"):
+        for col in (
+            "office_id", "block_id", "status_employee_id", "assembly_employee_id",
+            "last_sticker", "posted", "mx",
+        ):
             if col not in existing:
                 conn.execute(text(f"ALTER TABLE losses ADD COLUMN {col} TEXT"))
         _ensure_loss_index(conn)
@@ -548,10 +558,30 @@ def load_data(start, end, columns):
     return analytics.prepare_losses(df)
 
 
-def load_employee_slice(start, end, badge):
+def _employee_filter_sql(badge, lr, columns):
+    """Сборка ищет сборщика. Пустой assembly_employee_id в базе — старая строка, колонка AC."""
+    use_assembly = str(lr) == "5" and "assembly_employee_id" in columns
+    if not use_assembly:
+        if badge:
+            return "AND status_employee_id = :badge"
+        return "AND (status_employee_id IS NULL OR status_employee_id = '')"
+    if badge:
+        return (
+            "AND (assembly_employee_id = :badge "
+            "OR (assembly_employee_id IS NULL AND status_employee_id = :badge))"
+        )
+    return (
+        "AND (assembly_employee_id = '' "
+        "OR (assembly_employee_id IS NULL "
+        "AND (status_employee_id IS NULL OR status_employee_id = '')))"
+    )
+
+
+def load_employee_slice(start, end, badge, lr="5"):
     """Строки одного бейджика за окно. В общий кэш кадра не кладётся.
 
     ready — в таблице уже есть стикер и флаг. Иначе старая заливка, колонки пустые.
+    На сборке бейджик — сборщик. На раскладке — сотрудник перед списанием.
     """
     existing = known_columns()
     ready = bool(existing) and "last_sticker" in existing and "posted" in existing
@@ -564,10 +594,7 @@ def load_employee_slice(start, end, badge):
         "end": (end + timedelta(days=1)).isoformat(),
         "badge": badge or "",
     }
-    if badge:
-        emp_sql = "AND status_employee_id = :badge"
-    else:
-        emp_sql = "AND (status_employee_id IS NULL OR status_employee_id = '')"
+    emp_sql = _employee_filter_sql(badge, lr, existing)
     sql = text(
         "SELECT " + ", ".join(cols)
         + " FROM losses WHERE loss_date >= :start AND loss_date < :end "
