@@ -43,7 +43,7 @@ const state = {
 };
 
 const MODES = ["День", "Неделя", "Месяц", "Свободный"];
-const DEFAULT_YEAR = "2026";
+const DEFAULT_YEAR = String(new Date().getFullYear());
 const VIEWS = ["dashboard", "flow", "group", "block_detail", "employees", "block_loss"];
 
 const VIEW_DEPTH = { dashboard: 0, employees: 0, flow: 1, group: 2, block_detail: 3, block_loss: 1 };
@@ -1915,6 +1915,28 @@ function svgEl(name, attrs) {
   return node;
 }
 
+// The API supplies server-rendered SVG for the donut charts. Keep the
+// renderer, but sanitize the markup before it crosses into the live DOM.
+function safeSvgFragment(markup) {
+  const template = document.createElement("template");
+  template.innerHTML = String(markup || "");
+  const allowed = new Set(["svg", "g", "path", "line", "circle", "text", "tspan", "polyline", "polygon", "rect"]);
+  const attrs = /^(class|d|fill|fill-opacity|font-size|height|id|opacity|pointer-events|preserveaspectratio|role|stroke|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-width|text-anchor|transform|viewbox|visibility|width|x|x1|x2|y|y1|y2|data-[a-z0-9_-]+)$/i;
+  for (const node of [...template.content.querySelectorAll("*")]) {
+    if (!allowed.has(node.localName)) {
+      node.remove();
+      continue;
+    }
+    for (const attribute of [...node.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (!attrs.test(name) || name.startsWith("on") || /(?:javascript:|data:text\/html|url\s*\()/i.test(attribute.value)) {
+        node.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return template.content;
+}
+
 function chartTickDays(maxDay) {
   const limit = 60;
   if (maxDay <= limit) {
@@ -3593,7 +3615,7 @@ function renderDashboard(screen) {
   const chart = el("div");
   state.donutToken = (state.donutToken || 0) + 1;
   const donutSvg = blocksMode && dash.blocks && dash.blocks.donut_svg ? dash.blocks.donut_svg : dash.donut_svg;
-  chart.innerHTML = donutSvg.replaceAll("__DONUT__", String(state.donutToken));
+  chart.replaceChildren(safeSvgFragment(donutSvg.replaceAll("__DONUT__", String(state.donutToken))));
   bindDonut(chart);
   const donutCol = el("div", { class: "loss-col" });
   donutCol.append(chart);
@@ -3785,7 +3807,7 @@ function renderBlockLoss(screen) {
   const lr = state.blockLr === "27" ? "27" : "5";
   const series = (page.series && page.series[lr]) || [];
   const ring = el("div", { class: "loss-col" });
-  ring.innerHTML = page.donut_svg || "";
+  ring.replaceChildren(safeSvgFragment(page.donut_svg || ""));
   const hero = el("div", { class: "hero hero-block" });
   hero.append(ring);
   const chartCol = el(

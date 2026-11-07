@@ -1114,7 +1114,10 @@ def merge_losses(df):
         raise DataError("Для обновления потерь нужна заполненная колонка «ШК» в каждой строке Superset.")
     frame = df.loc[:, [col for col in df.columns if col in WRITE_COLUMNS]].copy()
     frame["barcode"] = frame["barcode"].map(analytics.sticker_text)
-    keys = ("barcode", "assembly_employee_id", "status_employee_id")
+    # A barcode can legitimately have separate loss records for different LR
+    # reasons. Include reason in the identity so an LR 27 row cannot replace an
+    # LR 5 row for the same barcode and employee pair.
+    keys = ("barcode", "assembly_employee_id", "status_employee_id", "reason")
     for col in keys[1:]:
         if col not in frame:
             frame[col] = None

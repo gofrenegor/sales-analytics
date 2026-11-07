@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pandas as pd
 from fastapi import Cookie, Depends, FastAPI, File, Form, Query, Request, UploadFile
@@ -37,6 +38,15 @@ UPLOAD_MAX_BYTES = 80 * 1024 * 1024
 _UPLOAD_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 uploads = {}
 uploads_lock = threading.Lock()
+preview_slots = threading.BoundedSemaphore(2)
+
+# Login throttling is intentionally process-local: the deployment is currently
+# documented to run one Uvicorn worker. It still stops accidental/brute-force
+# bursts without adding a database table to the hot path.
+LOGIN_WINDOW = 10 * 60
+LOGIN_MAX_FAILURES = 8
+login_attempts = {}
+login_attempts_lock = threading.Lock()
 
 
 class TokenIn(BaseModel):
@@ -87,6 +97,48 @@ class PasswordIn(BaseModel):
 
 def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
+
+
+def _client_keys(request: Request, contact: str) -> tuple[str, str]:
+    # Do not trust X-Forwarded-For here; Uvicorn is expected to trust only the
+    # configured reverse proxy. The contact is normalized only for bucketing.
+    host = request.client.host if request.client else "unknown"
+    normalized = str(contact or "").strip().lower()[:128]
+    return host, f"{host}|{normalized}"
+
+
+def _login_allowed(key: str):
+    now = time.time()
+    with login_attempts_lock:
+        item = login_attempts.get(key)
+        if not item or now - item["start"] >= LOGIN_WINDOW:
+            login_attempts[key] = {"start": now, "failures": 0}
+            return True, 0
+        if item["failures"] >= LOGIN_MAX_FAILURES:
+            return False, max(1, int(LOGIN_WINDOW - (now - item["start"])))
+        return True, 0
+
+
+def _login_failed(key: str):
+    now = time.time()
+    with login_attempts_lock:
+        item = login_attempts.setdefault(key, {"start": now, "failures": 0})
+        if now - item["start"] >= LOGIN_WINDOW:
+            item.update(start=now, failures=0)
+        item["failures"] += 1
+
+
+def _login_succeeded(key: str):
+    with login_attempts_lock:
+        login_attempts.pop(key, None)
+
+
+def _login_cleanup():
+    cutoff = time.time() - LOGIN_WINDOW
+    with login_attempts_lock:
+        for key, item in list(login_attempts.items()):
+            if item["start"] < cutoff:
+                login_attempts.pop(key, None)
 
 
 def _ready_response(body, cache_status):
@@ -161,7 +213,8 @@ def _read_workbooks(blobs, reader):
         try:
             frames.append(reader(BytesIO(payload)))
         except Exception as exc:
-            return fail(400, f"Не удалось прочитать {name}: {exc}")
+            log.warning("workbook parse failed name=%s error=%s", name, exc)
+            return fail(400, f"Не удалось прочитать {name}. Проверьте формат файла.")
     return frames
 
 
@@ -287,6 +340,23 @@ app = FastAPI(title="Аналитика списаний", lifespan=lifespan, de
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
+    # Cookie-authenticated state changes must come from this origin. Browsers
+    # send Origin on fetch POSTs; requests without it (CLI/health checks) stay
+    # compatible with the existing API.
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
+        origin = request.headers.get("origin")
+        if origin:
+            try:
+                origin_host = urlsplit(origin).netloc
+            except ValueError:
+                origin_host = ""
+            if not origin_host or origin_host.lower() != request.headers.get("host", "").lower():
+                response = fail(403, "Недопустимый источник запроса")
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                response.headers["X-Frame-Options"] = "DENY"
+                response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+                return response
     started = time.perf_counter()
     values = {}
     token = timings.set(values)
@@ -303,6 +373,13 @@ async def request_timing(request: Request, call_next):
         if elapsed >= 1000:
             log.info("slow request method=%s path=%s status=%s ms=%.1f",
                      request.method, request.url.path, response.status_code, elapsed)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
 
 
@@ -326,13 +403,25 @@ def auth_me(user=Depends(actor)):
 
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn, request: Request):
+    _login_cleanup()
+    keys = _client_keys(request, body.contact or body.phone)
+    checks = [_login_allowed(key) for key in keys]
+    retry_after = max(retry for allowed, retry in checks)
+    if not all(allowed for allowed, _ in checks):
+        response = fail(429, "Слишком много попыток входа. Повторите позже.")
+        response.headers["Retry-After"] = str(retry_after)
+        return response
     try:
         contact = body.contact or body.phone
         user = db.match_login(contact, body.password, body.domain)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     if not user:
+        for key in keys:
+            _login_failed(key)
         return fail(401, "некорректный логин или пароль")
+    for key in keys:
+        _login_succeeded(key)
     response = JsonBody({
         "ok": True,
         "id": user["id"],
@@ -703,17 +792,22 @@ async def preview(
     blocked = denied(user, admin=True)
     if blocked:
         return blocked
-    if len(files) > 20:
-        return fail(400, "Не больше 20 файлов за одну загрузку")
-    blobs = []
-    size = 0
-    for upload in files:
-        data = await upload.read(UPLOAD_MAX_BYTES - size + 1)
-        size += len(data)
-        if size > UPLOAD_MAX_BYTES:
-            return fail(400, "Файлы слишком большие: предел 80 МБ")
-        blobs.append((upload.filename or "файл", data))
-    return await run_in_threadpool(_preview_from_blobs, blobs, kind, user["id"])
+    if not preview_slots.acquire(blocking=False):
+        return fail(429, "Слишком много одновременных разборов. Повторите позже.")
+    try:
+        if len(files) > 20:
+            return fail(400, "Не больше 20 файлов за одну загрузку")
+        blobs = []
+        size = 0
+        for upload in files:
+            data = await upload.read(UPLOAD_MAX_BYTES - size + 1)
+            size += len(data)
+            if size > UPLOAD_MAX_BYTES:
+                return fail(400, "Файлы слишком большие: предел 80 МБ")
+            blobs.append((upload.filename or "файл", data))
+        return await run_in_threadpool(_preview_from_blobs, blobs, kind, user["id"])
+    finally:
+        preview_slots.release()
 
 
 @app.post("/api/admin/preview/chunk")
@@ -861,6 +955,7 @@ def _static_asset_stamp() -> str:
                 (STATIC / "app.js").stat().st_mtime,
                 (STATIC / "styles.css").stat().st_mtime,
                 (STATIC / "info-copy.js").stat().st_mtime,
+                (STATIC / "theme.js").stat().st_mtime,
             )
         )
     )

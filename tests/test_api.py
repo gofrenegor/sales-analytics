@@ -17,6 +17,7 @@ def client(tmp_path, monkeypatch):
 
     db.reset_engine()
     server.pending.clear()
+    server.login_attempts.clear()
     with TestClient(server.app) as test_client:
         db.set_access_contact(1, "79000000001", "root", "gmail.com")
         password = db.set_access_password(1)
@@ -95,7 +96,9 @@ def test_empty_then_upload_replace_and_wipe(client):
     replacement = xlsx([loss_row(today, "c", 99)])
     preview2 = client.post("/api/admin/preview", files=[("files", ("next.xlsx", replacement, MIME))])
     assert client.post("/api/admin/commit", json={"token": preview2.json()["token"]}).status_code == 200
-    assert client.get("/api/report", params={"mode": "День", "anchor": today.isoformat()}).json()["dashboard"]["in_sum"] == 99
+    # Superset imports merge by loss identity; rows absent from a newer export
+    # remain available, so the existing 77 plus the new 99 are both counted.
+    assert client.get("/api/report", params={"mode": "День", "anchor": today.isoformat()}).json()["dashboard"]["in_sum"] == 176
     assert client.get("/api/report", params={"mode": "День", "anchor": yesterday.isoformat()}).json()["dashboard"]["in_sum"] == 20
 
     assert client.post("/api/admin/cache/clear").json()["message"] == "Кэш сброшен!"
@@ -440,6 +443,27 @@ def test_index_injects_asset_version(client):
     match = re.search(r"/static/app\.js\?v=(\d+)", html)
     assert match
     assert f'/static/styles.css?v={match.group(1)}' in html
+
+
+def test_security_headers_and_cross_origin_post_blocked(client):
+    response = client.get("/")
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+    blocked = client.post("/api/auth/logout", headers={"Origin": "https://evil.example"})
+    assert blocked.status_code == 403
+
+
+def test_login_is_rate_limited(client):
+    for _ in range(8):
+        assert client.post("/api/auth/login", json={
+            "contact": "79000000001", "password": "wrong-password",
+        }).status_code == 401
+    limited = client.post("/api/auth/login", json={
+        "contact": "79000000001", "password": "wrong-password",
+    })
+    assert limited.status_code == 429
+    assert int(limited.headers["retry-after"]) > 0
 
 
 
