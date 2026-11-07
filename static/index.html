@@ -161,8 +161,18 @@
         </details>
         <div id="db-summary"></div>
         <hr>
-        <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всё</label>
+        <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всю базу данных</label>
         <button type="button" id="wipe" class="wide danger" disabled>🗑️ Очистить базу</button>
+        <section id="owner-tools" class="owner-tools" hidden>
+          <div class="owner-tools-head">
+            <div>
+              <p class="info-label">Закрытый список доступа</p>
+              <p class="hint">Только для владельца ID 1 · пароли не отображаются</p>
+            </div>
+            <button type="button" id="owner-refresh" class="quiet">обновить</button>
+          </div>
+          <div id="owner-users" class="owner-users"><p class="hint">Загрузите список.</p></div>
+        </section>
       </details>
       </div>
       <button type="button" id="logout-btn" class="wide ghost">выйти</button>
