@@ -226,6 +226,10 @@ def ensure_schema():
             conn.execute(text("ALTER TABLE access_users ADD COLUMN email TEXT"))
         if "password_hash" not in access_cols:
             conn.execute(text("ALTER TABLE access_users ADD COLUMN password_hash TEXT"))
+        if "issued_by" not in access_cols:
+            conn.execute(text("ALTER TABLE access_users ADD COLUMN issued_by INTEGER"))
+        if "issued_at" not in access_cols:
+            conn.execute(text("ALTER TABLE access_users ADD COLUMN issued_at BIGINT"))
         conn.execute(text(
             "CREATE UNIQUE INDEX IF NOT EXISTS access_users_phone_idx ON access_users (phone)"
         ))
@@ -340,6 +344,8 @@ def _access_row(row):
         "role": row.role,
         "phone": row.phone or None,
         "email": row.email or None,
+        "issued_by": getattr(row, "issued_by", None),
+        "issued_at": getattr(row, "issued_at", None),
     }
 
 
@@ -350,7 +356,7 @@ def get_access_user(user_id):
             if not inspect(conn).has_table("access_users"):
                 return None
             row = conn.execute(
-                text("SELECT id, role, phone, email FROM access_users WHERE id = :id"),
+                text("SELECT id, role, phone, email, issued_by, issued_at FROM access_users WHERE id = :id"),
                 {"id": int(user_id)},
             ).one_or_none()
     except Exception as exc:
@@ -384,7 +390,7 @@ def get_session_user(token):
     try:
         with get_engine().connect() as conn:
             row = conn.execute(text(
-                "SELECT u.id, u.role, u.phone, u.email FROM access_sessions s "
+                "SELECT u.id, u.role, u.phone, u.email, u.issued_by, u.issued_at FROM access_sessions s "
                 "JOIN access_users u ON u.id = s.user_id "
                 "WHERE s.token_hash = :hash AND s.expires_at > :now"
             ), {"hash": _session_hash(token), "now": int(time.time())}).one_or_none()
@@ -503,7 +509,20 @@ def _require_contacts(phone, email, domain):
     return normalize_phone(phone), normalize_email(email, domain)
 
 
-def grant_access(role, phone, email, domain=""):
+def list_access_users():
+    try:
+        with get_engine().connect() as conn:
+            rows = conn.execute(text(
+                "SELECT u.id, u.role, u.phone, u.email, u.issued_by, u.issued_at, "
+                "i.phone AS issuer_phone, i.email AS issuer_email "
+                "FROM access_users u LEFT JOIN access_users i ON i.id = u.issued_by ORDER BY u.id"
+            )).mappings().all()
+    except Exception as exc:
+        raise DataError(f"Не удалось прочитать пользователей: {public_error(exc)}") from exc
+    return [dict(row) for row in rows]
+
+
+def grant_access(role, phone, email, domain="", issuer_id=None):
     if role not in ACCESS_ROLES:
         raise ValueError("Выберите права")
     normalized, mail = _require_contacts(phone, email, domain)
@@ -522,8 +541,8 @@ def grant_access(role, phone, email, domain=""):
                 ).scalar() or 1)
                 conn.execute(
                     text(
-                        "INSERT INTO access_users (id, role, phone, email, password_hash) "
-                        "VALUES (:id, :role, :phone, :email, :password_hash)"
+                        "INSERT INTO access_users (id, role, phone, email, password_hash, issued_by, issued_at) "
+                        "VALUES (:id, :role, :phone, :email, :password_hash, :issued_by, :issued_at)"
                     ),
                     {
                         "id": next_id,
@@ -531,6 +550,8 @@ def grant_access(role, phone, email, domain=""):
                         "phone": normalized,
                         "email": mail,
                         "password_hash": hashed,
+                        "issued_by": int(issuer_id) if issuer_id is not None else None,
+                        "issued_at": int(time.time()),
                     },
                 )
         except ValueError:

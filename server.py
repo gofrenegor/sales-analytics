@@ -91,6 +91,11 @@ class ContactIn(BaseModel):
     domain: str = ""
 
 
+class UserPasswordIn(BaseModel):
+    user_id: int
+    password: str = ""
+
+
 class PasswordIn(BaseModel):
     password: str = ""
 
@@ -731,7 +736,40 @@ def access_grant(body: GrantIn, user=Depends(actor)):
     if blocked:
         return blocked
     try:
-        return db.grant_access(body.role, body.phone, body.email, body.domain)
+        return db.grant_access(body.role, body.phone, body.email, body.domain, issuer_id=user["id"])
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+
+
+def owner_one(user):
+    if not user or user.get("id") != 1 or user.get("role") != "admin":
+        return fail(403, "Раздел доступен только владельцу")
+    return None
+
+
+@app.get("/api/admin/owner/users")
+def owner_users(user=Depends(actor)):
+    blocked = owner_one(user)
+    if blocked:
+        return blocked
+    try:
+        return {"users": db.list_access_users()}
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+
+
+@app.post("/api/admin/owner/password")
+def owner_password(body: UserPasswordIn, user=Depends(actor)):
+    blocked = owner_one(user)
+    if blocked:
+        return blocked
+    if body.user_id == 1:
+        return fail(400, "Пароль владельца меняется в разделе смены пароля")
+    try:
+        db.set_access_password_value(body.user_id, body.password)
+        return {"ok": True, "user_id": body.user_id}
     except ValueError as exc:
         return fail(400, str(exc))
     except (db.DataError, db.ConfigError) as exc:

@@ -368,6 +368,22 @@ p { margin: 0.5rem 0; }
   margin: 0.35rem 0 0.15rem;
   padding: 0.15rem 0.65rem 0.55rem;
 }
+.owner-tools {
+  margin-top: 0.8rem;
+  padding: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--amber) 42%, var(--line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--amber-dim) 45%, transparent);
+}
+.owner-tools[hidden] { display: none; }
+.owner-tools-head { display:flex; justify-content:space-between; gap:0.6rem; align-items:flex-start; }
+.owner-users { display:flex; flex-direction:column; gap:0.5rem; margin-top:0.65rem; }
+.owner-user { padding:0.65rem; border:1px solid var(--line); border-radius:10px; background:var(--card); }
+.owner-user-main { display:flex; justify-content:space-between; gap:0.5rem; font-size:0.9rem; }
+.owner-user-meta { color:var(--muted); font-size:0.78rem; margin-top:0.15rem; }
+.owner-password { display:flex; gap:6px; margin-top:0.5rem; }
+.owner-password input { min-width:0; flex:1; height:2rem; padding:0 0.5rem; border:1px solid var(--line-strong); border-radius:8px; background:var(--card); }
+.owner-password button { white-space:nowrap; }
 #info-main .info-label { margin-top: 0.35rem; }
 .grant-secret {
   padding: 0.7rem 0.85rem;

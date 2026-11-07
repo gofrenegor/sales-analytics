@@ -4350,6 +4350,7 @@ async function sendPreview(files, hint) {
 function wireAdmin() {
   wireGrant();
   wireOwnPhone();
+  wireOwnerTools();
   document.getElementById("cache-btn").addEventListener("click", async () => {
     try {
       const data = await readJson(await fetch("/api/admin/cache/clear", { method: "POST" }));
@@ -4440,6 +4441,10 @@ function wireAdmin() {
 
   document.getElementById("sure").addEventListener("change", (event) => {
     document.getElementById("wipe").disabled = !event.target.checked;
+    const tools = document.getElementById("owner-tools");
+    const owner = state.user && Number(state.user.id) === 1 && state.user.role === "admin";
+    if (tools) tools.hidden = !(event.target.checked && owner);
+    if (event.target.checked && owner) loadOwnerUsers();
   });
   document.getElementById("wipe").addEventListener("click", async () => {
     try {
@@ -4808,6 +4813,10 @@ function showGate() {
   const next = document.getElementById("password-next");
   if (next) next.value = "";
   setPasswordNote("");
+  const sure = document.getElementById("sure");
+  if (sure) sure.checked = false;
+  const ownerTools = document.getElementById("owner-tools");
+  if (ownerTools) ownerTools.hidden = true;
   setAdminOpen(false);
   document.getElementById("gate-contact")?.focus();
 }
@@ -4875,6 +4884,51 @@ function fillOwnContact(user) {
   if (domain && parts[1] && [...domain.options].some((opt) => opt.value === parts[1])) {
     domain.value = parts[1];
   }
+}
+
+function ownerDate(value) {
+  if (!value) return "не указано";
+  try { return new Date(Number(value) * 1000).toLocaleString("ru-RU"); } catch (error) { return "не указано"; }
+}
+
+async function loadOwnerUsers() {
+  const host = document.getElementById("owner-users");
+  if (!host) return;
+  host.replaceChildren(el("p", { class: "hint" }, "Загрузка списка…"));
+  try {
+    const data = await readJson(await fetch("/api/admin/owner/users"));
+    host.replaceChildren();
+    for (const user of data.users || []) {
+      const issuer = user.issuer_id ? `выдал ID ${user.issuer_id}${user.issuer_email ? ` · ${user.issuer_email}` : ""}` : "источник не указан";
+      const card = el("article", { class: "owner-user" },
+        el("div", { class: "owner-user-main" }, el("strong", {}, `ID ${user.id} · ${user.role === "admin" ? "админка" : "просмотр"}`), el("span", {}, user.email || user.phone || "нет контактов")),
+        el("div", { class: "owner-user-meta" }, `${issuer} · ${ownerDate(user.issued_at)}`),
+      );
+      if (Number(user.id) !== 1) {
+        const input = el("input", { type: "password", minlength: "8", maxlength: "64", placeholder: "новый пароль", autocomplete: "new-password" });
+        const button = el("button", { type: "button", class: "ghost" }, "сменить пароль");
+        const note = el("span", { class: "owner-user-meta" });
+        button.addEventListener("click", async () => {
+          const password = input.value.trim();
+          if (password.length < 8 || password.length > 64) { note.textContent = "Пароль от 8 до 64 символов"; return; }
+          button.disabled = true;
+          try {
+            await readJson(await fetch("/api/admin/owner/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: user.id, password }) }));
+            input.value = "";
+            note.textContent = "пароль обновлён, прежние сессии закрыты";
+          } catch (error) { note.textContent = error.message; }
+          finally { button.disabled = false; }
+        });
+        card.append(el("div", { class: "owner-password" }, input, button), note);
+      }
+      host.append(card);
+    }
+    if (!host.children.length) host.append(el("p", { class: "hint" }, "Пользователей пока нет."));
+  } catch (error) { host.replaceChildren(el("p", { class: "box bad" }, error.message)); }
+}
+
+function wireOwnerTools() {
+  document.getElementById("owner-refresh")?.addEventListener("click", loadOwnerUsers);
 }
 
 function paintAccount(user) {
