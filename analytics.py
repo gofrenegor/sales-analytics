@@ -2237,13 +2237,18 @@ def build_group_view(dc, dp, flow_title, group, other_curr, has_prev):
 
 
 def flow_names(flow_title):
-    names = list(ALL_BLOCKS)
+    names = [name for name in ALL_BLOCKS if name != OUTBOUND_BLOCK]
     names.append(DEFECT_GROUP if flow_title == "Входящий поток" else "Опер площадь")
     return names
 
 
 def flow_cards(dc, dp, flow_title, has_prev, other_curr):
-    grouped = ensure(build(dc, dp, "block_group"), flow_names(flow_title))
+    grouped = build(dc, dp, "block_group")
+    if "name" in grouped.columns:
+        grouped = grouped.loc[grouped["name"] != OUTBOUND_BLOCK].reset_index(drop=True)
+        total = float(grouped["loss_sum"].sum()) if not grouped.empty else 0.0
+        grouped["pct"] = grouped["loss_sum"] / total * 100 if total > 0 else 0.0
+    grouped = ensure(grouped, flow_names(flow_title))
     dc_parts = _split(dc, "block_group")
     dp_parts = _split(dp, "block_group")
     blank_c = dc.iloc[0:0]
@@ -2645,6 +2650,7 @@ def reason_moves(curr, prev):
         if frame is None or len(frame) == 0 or not set(cols).issubset(getattr(frame, "columns", [])):
             return pd.DataFrame(columns=cols)
         part = frame[frame["flow"].isin(("Входящий поток", "Исходящий поток"))]
+        part = part[part["block_group"] != OUTBOUND_BLOCK]
         if part.empty:
             return pd.DataFrame(columns=cols)
         return part.groupby(["reason", "block_group", "flow"], sort=False)["loss_sum"].sum().reset_index()

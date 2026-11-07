@@ -5,6 +5,7 @@ import pytest
 
 from analytics import (
     ALL_BLOCKS,
+    OUTBOUND_BLOCK,
     DEFECT_GROUP,
     DEFECT_STATUSES,
     build_loss_donut_svg,
@@ -260,8 +261,11 @@ def test_other_only_keeps_empty_structure():
     current = prepare_losses(pd.DataFrame([row(status_before="ZZZ", loss_sum=5)]))
     report = build_report(current, prepare_losses(pd.DataFrame()), period)
     assert report["empty"] is False
-    assert [card["name"] for card in report["flows"]["in"]["cards"]] == ALL_BLOCKS + [DEFECT_GROUP]
-    assert [card["name"] for card in report["flows"]["out"]["cards"]] == ALL_BLOCKS + ["Опер площадь"]
+    flow_blocks = [name for name in ALL_BLOCKS if name != OUTBOUND_BLOCK]
+    assert [card["name"] for card in report["flows"]["in"]["cards"]] == flow_blocks + [DEFECT_GROUP]
+    assert [card["name"] for card in report["flows"]["out"]["cards"]] == flow_blocks + ["Опер площадь"]
+    assert OUTBOUND_BLOCK not in [card["name"] for card in report["flows"]["in"]["cards"]]
+    assert OUTBOUND_BLOCK not in [card["name"] for card in report["flows"]["out"]["cards"]]
     assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["in"]["cards"]]
     assert "Другие логобъекты" not in [card["name"] for card in report["flows"]["out"]["cards"]]
     assert report["dashboard"]["in_sum"] == 0
