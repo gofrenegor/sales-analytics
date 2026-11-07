@@ -4899,7 +4899,7 @@ async function loadOwnerUsers() {
     const data = await readJson(await fetch("/api/admin/owner/users"));
     host.replaceChildren();
     for (const user of data.users || []) {
-      const issuer = user.issuer_id ? `выдал ID ${user.issuer_id}${user.issuer_email ? ` · ${user.issuer_email}` : ""}` : "источник не указан";
+      const issuer = user.issued_by ? `выдал ID ${user.issued_by}${user.issuer_email ? ` · ${user.issuer_email}` : ""}` : "источник не указан";
       const card = el("article", { class: "owner-user" },
         el("div", { class: "owner-user-main" }, el("strong", {}, `ID ${user.id} · ${user.role === "admin" ? "админка" : "просмотр"}`), el("span", {}, user.email || user.phone || "нет контактов")),
         el("div", { class: "owner-user-meta" }, `${issuer} · ${ownerDate(user.issued_at)}`),

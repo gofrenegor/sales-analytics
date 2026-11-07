@@ -104,12 +104,26 @@ def fail(status, message):
     return JsonBody(status_code=status, content={"error": message})
 
 
-def _client_keys(request: Request, contact: str) -> tuple[str, str]:
+def _client_keys(request: Request, contact: str, domain: str = "") -> tuple[str, str | None]:
     # Do not trust X-Forwarded-For here; Uvicorn is expected to trust only the
     # configured reverse proxy. The contact is normalized only for bucketing.
     host = request.client.host if request.client else "unknown"
-    normalized = str(contact or "").strip().lower()[:128]
-    return host, f"{host}|{normalized}"
+    raw = str(contact or "").strip().lower()[:128]
+    if not raw:
+        return host, None
+    try:
+        kind = db.contact_kind(raw)
+        if kind == "phone":
+            normalized = f"phone:{db.normalize_phone(raw)}"
+        elif kind == "email":
+            normalized = f"email:{db.normalize_email(raw, str(domain or "")[:128])}"
+        else:
+            normalized = raw
+    except ValueError:
+        # Invalid contacts still share a bounded bucket, while valid phone and
+        # email spellings cannot bypass the contact limit with formatting.
+        normalized = raw
+    return host, normalized
 
 
 def _login_allowed(key: str):
@@ -255,7 +269,7 @@ def _preview_superset(blobs, frames, owner):
         return fail(400, str(exc))
     except Exception as exc:
         log.exception("preview")
-        return fail(400, f"Не удалось разобрать файл: {exc}")
+        return fail(400, "Не удалось разобрать файл. Проверьте формат и обязательные столбцы.")
     token = None
     start = end = None
     mx_rows = 0
@@ -266,7 +280,7 @@ def _preview_superset(blobs, frames, owner):
             return fail(400, str(exc))
         except Exception as exc:
             log.exception("preview dates")
-            return fail(400, f"Не удалось разобрать даты: {exc}")
+            return fail(400, "Не удалось определить даты в файле.")
         if "mx" in frame.columns:
             mx_rows = int((frame["mx"].map(analytics.sticker_text) != "").sum())
         token = _put_pending(frame, "superset", owner)
@@ -292,7 +306,7 @@ def _preview_twin(blobs, frames, owner):
         return fail(400, str(exc))
     except Exception as exc:
         log.exception("preview twin")
-        return fail(400, f"Не удалось разобрать файл: {exc}")
+        return fail(400, "Не удалось разобрать файл. Проверьте формат и обязательные столбцы.")
     token = None
     start = end = None
     matched = unmatched = 0
@@ -305,7 +319,7 @@ def _preview_twin(blobs, frames, owner):
             return fail(503, str(exc))
         except Exception as exc:
             log.exception("preview twin match")
-            return fail(400, f"Не удалось сверить twin с базой: {exc}")
+            return fail(400, "Не удалось проверить файл по данным базы.")
         matched = int(plan["matched"])
         unmatched = int(plan["unmatched"])
         start, end = plan["start"], plan["end"]
@@ -360,7 +374,10 @@ async def request_timing(request: Request, call_next):
                 response.headers["X-Content-Type-Options"] = "nosniff"
                 response.headers["X-Frame-Options"] = "DENY"
                 response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
                 response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+                if request.url.scheme == "https":
+                    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
                 return response
     started = time.perf_counter()
     values = {}
@@ -409,7 +426,7 @@ def auth_me(user=Depends(actor)):
 @app.post("/api/auth/login")
 def auth_login(body: LoginIn, request: Request):
     _login_cleanup()
-    keys = _client_keys(request, body.contact or body.phone)
+    keys = [key for key in _client_keys(request, body.contact or body.phone, body.domain) if key]
     checks = [_login_allowed(key) for key in keys]
     retry_after = max(retry for allowed, retry in checks)
     if not all(allowed for allowed, _ in checks):
@@ -925,7 +942,12 @@ def preview_finish(body: BatchIn, user=Depends(actor)):
         if any(i not in slot["parts"] for i in range(slot["total"])):
             return fail(400, "Не все куски файла дошли")
         blobs.append((slot["name"], b"".join(slot["parts"][i] for i in range(slot["total"]))))
-    result = _preview_from_blobs(blobs, body.kind, user["id"])
+    if not preview_slots.acquire(blocking=False):
+        return fail(429, "Слишком много одновременных разборов. Повторите позже.")
+    try:
+        result = _preview_from_blobs(blobs, body.kind, user["id"])
+    finally:
+        preview_slots.release()
     if isinstance(result, dict):
         with uploads_lock:
             uploads.pop(body.batch, None)

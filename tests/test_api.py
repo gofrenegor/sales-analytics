@@ -454,6 +454,19 @@ def test_security_headers_and_cross_origin_post_blocked(client):
     assert blocked.status_code == 403
 
 
+def test_login_contact_bucket_is_not_tied_to_ip(client):
+    import server
+    from starlette.requests import Request
+
+    def request(host):
+        return Request({"type": "http", "method": "POST", "path": "/", "headers": [], "client": (host, 1234), "scheme": "http", "server": (host, 80)})
+
+    first = server._client_keys(request("192.0.2.1"), "+7 900 000-00-01", "gmail.com")
+    second = server._client_keys(request("192.0.2.2"), "79000000001", "gmail.com")
+    assert first[0] != second[0]
+    assert first[1] == second[1] == "phone:79000000001"
+
+
 def test_login_is_rate_limited(client):
     for _ in range(8):
         assert client.post("/api/auth/login", json={
@@ -464,6 +477,34 @@ def test_login_is_rate_limited(client):
     })
     assert limited.status_code == 429
     assert int(limited.headers["retry-after"]) > 0
+
+
+def test_preview_errors_do_not_expose_exception_text(client, monkeypatch):
+    import server
+
+    monkeypatch.setattr(server.analytics, "prepare_upload", lambda frames: (_ for _ in ()).throw(RuntimeError("secret implementation detail")))
+    response = client.post("/api/admin/preview", files=[("files", ("data.xlsx", xlsx([loss_row(date.today(), "a", 1)]), MIME))])
+    assert response.status_code == 400
+    assert "secret implementation detail" not in response.text
+
+
+def test_chunked_preview_honors_parse_limit(client):
+    import server
+    import time
+
+    server.uploads["batch-limit"] = {
+        "ts": time.time(), "owner": 1, "bytes": 3,
+        "files": {"upload-limit": {"name": "data.xlsx", "total": 1, "parts": {0: b"bad"}}},
+    }
+    assert server.preview_slots.acquire(blocking=False)
+    assert server.preview_slots.acquire(blocking=False)
+    try:
+        response = client.post("/api/admin/preview/finish", json={"batch": "batch-limit", "ids": ["upload-limit"]})
+        assert response.status_code == 429
+    finally:
+        server.preview_slots.release()
+        server.preview_slots.release()
+        server.uploads.pop("batch-limit", None)
 
 
 
