@@ -1802,10 +1802,19 @@ button:disabled { opacity: 0.45; cursor: not-allowed; }
   position: relative;
   width: 100%;
   min-width: 0;
+  aspect-ratio: 1;
   container-type: inline-size;
   justify-self: center;
 }
-.loss-donut-wrap svg { width: 100%; height: auto; overflow: visible; display: block; pointer-events: none; }
+/* viewBox 400×400. Без aspect-ratio высота svg внутри container-type становится 0, и кольцо пропадает. */
+.loss-donut-wrap svg {
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
+  overflow: visible;
+  display: block;
+  pointer-events: none;
+}
 .loss-donut text { font-family: Manrope, sans-serif; }
 .loss-donut text.loss-seg-label {
   font-weight: 700;
