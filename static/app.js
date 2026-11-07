@@ -1920,18 +1920,27 @@ function svgEl(name, attrs) {
 function safeSvgFragment(markup) {
   const template = document.createElement("template");
   template.innerHTML = String(markup || "");
-  const allowed = new Set(["svg", "g", "path", "line", "circle", "text", "tspan", "polyline", "polygon", "rect"]);
-  const attrs = /^(class|d|fill|fill-opacity|font-size|height|id|opacity|pointer-events|preserveaspectratio|role|stroke|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-width|text-anchor|transform|viewbox|visibility|width|x|x1|x2|y|y1|y2|data-[a-z0-9_-]+)$/i;
+  const allowed = new Set([
+    "svg", "g", "path", "line", "circle", "text", "tspan", "polyline", "polygon", "rect", "title", "clippath", "clipPath",
+    "a", "div", "span", "p",
+  ]);
+  const attrs = /^(aria-hidden|aria-label|class|clip-path|clippathunits|cx|cy|d|fill|fill-opacity|font-size|height|href|id|opacity|pathlength|pointer-events|preserveaspectratio|r|role|stroke|stroke-dasharray|stroke-dashoffset|stroke-linecap|stroke-linejoin|stroke-width|style|text-anchor|transform|viewbox|visibility|width|x|x1|x2|y|y1|y2|data-[a-z0-9_-]+)$/i;
   for (const node of [...template.content.querySelectorAll("*")]) {
+    if (!node.isConnected) continue;
     if (!allowed.has(node.localName)) {
-      node.remove();
+      node.replaceWith(...node.childNodes);
       continue;
     }
     for (const attribute of [...node.attributes]) {
       const name = attribute.name.toLowerCase();
-      if (!attrs.test(name) || name.startsWith("on") || /(?:javascript:|data:text\/html|url\s*\()/i.test(attribute.value)) {
-        node.removeAttribute(attribute.name);
-      }
+      const value = attribute.value;
+      const unsafe = !attrs.test(name)
+        || name.startsWith("on")
+        || /(?:javascript:|data:text\/html)/i.test(value)
+        || (/url\s*\(/i.test(value) && !/url\s*\(\s*#/i.test(value));
+      const badHref = name === "href" && !/^#[^"'<>\s]*$/.test(value);
+      const badStyle = name === "style" && !/^transform-origin:\s*[\d.]+px\s+[\d.]+px;?$/i.test(value.trim());
+      if (unsafe || badHref || badStyle) node.removeAttribute(attribute.name);
     }
   }
   return template.content;

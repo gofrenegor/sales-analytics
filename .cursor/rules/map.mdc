@@ -192,6 +192,7 @@ systemctl restart sales-analytics
 ## Кольца потоков и блоков
 
 - `static/styles.css`: `.loss-donut-wrap` и вложенный `svg` держат `aspect-ratio: 1`. ViewBox кольца 400×400. `container-type: inline-size` на обёртке нужен для `cqi` в дырке; без явного квадрата высота svg становится 0 и колонка кольца остаётся пустой. Подписи долей рисуются с `overflow: visible` и за квадрат выходят.
+- `static/app.js`: `safeSvgFragment` пропускает кольцо в DOM. Нельзя выкидывать `div`/`span`/`p`/`a` вместе с детьми: внутри них лежит svg. Нужны `clipPath`, `clip-path="url(#…)"`, `pathLength`, `cx`/`cy`/`r`, `class`. `href` только с `#`. Чужой `url(` снимается. Чужой тег разворачивается, поддерево не удаляется. `style` только `transform-origin`.
 
 ## Повторные загрузки Superset
 
