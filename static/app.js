@@ -14,6 +14,7 @@ const state = {
   slice: "flows",
   report: null,
   reportKey: "",
+  reportDetail: "",
   employees: null,
   employeesKey: "",
   employeesLoading: false,
@@ -523,7 +524,7 @@ function go(patch, push = true) {
   writeUrl(push);
   render();
   if (state.view === "employees") loadEmployees();
-  else if (state.reportKey !== periodKey()) loadReport();
+  else if (state.reportKey !== periodKey() || !reportHasDetail(reportDetailForView())) loadReport();
 }
 
 function goBack(view) {
@@ -538,6 +539,19 @@ function periodKey() {
   return state.mode === "Свободный"
     ? `${state.mode}|${state.rangeStart}|${state.rangeEnd}`
     : `${state.mode}|${state.anchor}`;
+}
+
+function reportDetailForView() {
+  if (state.slice === "writeoffs") return "writeoffs";
+  if (state.view === "block_loss") return "blocks";
+  if (state.view === "flow" || state.view === "group" || state.view === "block_detail") return "flows";
+  return "summary";
+}
+
+function reportHasDetail(detail) {
+  if (!state.report) return false;
+  if (state.reportDetail === "full" || state.reportDetail === detail) return true;
+  return detail === "summary" && Boolean(state.reportDetail);
 }
 
 function freeRangePending() {
@@ -1386,6 +1400,7 @@ async function loadReport(options = {}) {
   if (state.reportKey !== key) {
     state.report = null;
     state.reportKey = "";
+    state.reportDetail = "";
   }
   if (state.view === "employees") {
     setStatus("");
@@ -1399,7 +1414,10 @@ async function loadReport(options = {}) {
   setStatus("Обновление…");
   setBanner("");
   try {
-    const response = await fetchLatest("report", `/api/report?${periodParams().toString()}`);
+    const params = periodParams();
+    const detail = options.detail || reportDetailForView();
+    params.set("detail", detail);
+    const response = await fetchLatest("report", `/api/report?${params.toString()}`);
     const data = await parseJson(response);
     if (seq !== loadSeq) return;
     if (response.status === 401) {
@@ -1409,6 +1427,7 @@ async function loadReport(options = {}) {
     if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
     state.report = data;
     state.reportKey = key;
+    state.reportDetail = detail;
     render();
     setStatus("");
     if (state.view === "employees") loadEmployees();
@@ -4809,6 +4828,7 @@ function showGate() {
   resetEmployees();
   state.report = null;
   state.reportKey = "";
+  state.reportDetail = "";
   state.user = null;
   const gate = document.getElementById("gate");
   const layout = document.querySelector(".layout");

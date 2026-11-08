@@ -6,7 +6,8 @@ After=network.target
 User=root
 WorkingDirectory=/var/www/sales-analytics
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501
+# uploads, preview frames and cache invalidation are process-local
+ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501 --workers 1
 Restart=always
 RestartSec=2
 

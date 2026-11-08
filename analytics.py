@@ -2,10 +2,12 @@
 
 import calendar
 import csv
+import io
 import json
 import math
 import os
 import re
+import zipfile
 from datetime import date, datetime, timedelta
 from html import escape
 from pathlib import Path
@@ -160,6 +162,58 @@ BLOCK_DONUT_COLORS = (
 DONUT_CORNER = 8
 # Угол дуги на экране. Истинный процент остаётся в подписи, тонкая доля всё ещё нажимается.
 BLOCK_MIN_DEG = 12.0
+
+# XLSX is a ZIP container.  A small, highly-compressed XML member can expand
+# far beyond the upload limit before openpyxl gets a chance to apply row
+# limits, so validate the container before handing it to the parser.
+XLSX_MAX_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+XLSX_MAX_MEMBER_BYTES = 256 * 1024 * 1024
+XLSX_MAX_COMPRESSION_RATIO = 5000
+XLSX_MAX_ROWS = 1_000_000
+XLSX_MAX_COLUMNS = 512
+
+
+def validate_xlsx_payload(payload):
+    """Reject malformed or zip-bomb workbooks before openpyxl allocates memory."""
+    if not isinstance(payload, (bytes, bytearray, memoryview)):
+        raise ValueError("Файл XLSX имеет некорректный формат")
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            infos = archive.infolist()
+            if not infos:
+                raise ValueError("Файл XLSX пустой")
+            total = 0
+            for info in infos:
+                # ZIP paths are not extracted by this service, but rejecting
+                # traversal makes the preflight safe if that ever changes.
+                if info.filename.startswith("/") or ".." in info.filename.split("/"):
+                    raise ValueError("Файл XLSX содержит недопустимый путь")
+                size = int(info.file_size)
+                compressed = max(1, int(info.compress_size))
+                if size > XLSX_MAX_MEMBER_BYTES or size / compressed > XLSX_MAX_COMPRESSION_RATIO:
+                    raise ValueError("Файл XLSX слишком сильно сжат")
+                total += size
+                if total > XLSX_MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError("Распакованный XLSX превышает лимит 512 МиБ")
+            # The dimension is cheap to inspect and catches accidental
+            # million-column/row exports before pandas builds object arrays.
+            dimension = re.compile(rb'<dimension[^>]+ref="[^:]+:([A-Z]+)([0-9]+)"')
+            for info in infos:
+                if not info.filename.startswith("xl/worksheets/") or not info.filename.endswith(".xml"):
+                    continue
+                match = dimension.search(archive.read(info))
+                if not match:
+                    continue
+                letters, rows = match.groups()
+                columns = 0
+                for char in letters:
+                    columns = columns * 26 + (char - 64)
+                if int(rows) > XLSX_MAX_ROWS or columns > XLSX_MAX_COLUMNS:
+                    raise ValueError(
+                        f"Файл XLSX слишком большой: не более {XLSX_MAX_ROWS} строк и {XLSX_MAX_COLUMNS} колонок"
+                    )
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Файл XLSX повреждён") from exc
 
 
 def business_today():
@@ -2242,7 +2296,7 @@ def flow_names(flow_title):
     return names
 
 
-def flow_cards(dc, dp, flow_title, has_prev, other_curr):
+def flow_cards(dc, dp, flow_title, has_prev, other_curr, include_group_views=True):
     grouped = build(dc, dp, "block_group")
     if "name" in grouped.columns:
         grouped = grouped.loc[grouped["name"] != OUTBOUND_BLOCK].reset_index(drop=True)
@@ -2256,14 +2310,15 @@ def flow_cards(dc, dp, flow_title, has_prev, other_curr):
     cards = []
     for rec in pack_cards(grouped, has_prev):
         gname = rec["name"]
-        rec["group_view"] = build_group_view(
-            dc_parts.get(gname, blank_c),
-            dp_parts.get(gname, blank_p),
-            flow_title,
-            gname,
-            other_curr,
-            has_prev,
-        )
+        if include_group_views:
+            rec["group_view"] = build_group_view(
+                dc_parts.get(gname, blank_c),
+                dp_parts.get(gname, blank_p),
+                flow_title,
+                gname,
+                other_curr,
+                has_prev,
+            )
         cards.append(rec)
     return cards
 
@@ -3049,8 +3104,24 @@ def empty_report(period):
     }
 
 
-def build_report(df_curr, df_prev, period):
-    """Весь экран одним JSON: кольцо, карточки, детализация LR, график, проверка данных."""
+def _report_detail(detail):
+    """Набор тяжёлых частей отчёта, которые нужны текущему экрану.
+
+    ``full`` keeps the historical API response.  The browser starts with the
+    compact dashboard and asks for one detail tree only when it is opened.
+    """
+    value = str(detail or "full").strip().lower()
+    if value not in {"summary", "flows", "blocks", "writeoffs", "full"}:
+        raise ValueError("Некорректный режим детализации отчёта")
+    return value
+
+
+def build_report(df_curr, df_prev, period, detail="full"):
+    """Собирает отчёт. Тяжёлые деревья можно включать по мере открытия экрана."""
+    detail = _report_detail(detail)
+    include_group_views = detail in {"flows", "full"}
+    include_block_pages = detail in {"blocks", "full"}
+    include_writeoffs = detail in {"writeoffs", "full"}
     if df_curr is None or "flow" not in getattr(df_curr, "columns", []):
         df_curr = prepare_losses(df_curr if df_curr is not None else pd.DataFrame())
     if df_prev is None or "flow" not in getattr(df_prev, "columns", []):
@@ -3071,7 +3142,7 @@ def build_report(df_curr, df_prev, period):
     for code, title in (("in", "Входящий поток"), ("out", "Исходящий поток")):
         dc = curr[curr["flow"] == title]
         dp = prev[prev["flow"] == title]
-        cards = flow_cards(dc, dp, title, has_prev, other_curr)
+        cards = flow_cards(dc, dp, title, has_prev, other_curr, include_group_views)
         if period["days"] > 1:
             sparks = spark_by_group(dc, period["_start"], period["_end"])
             for card in cards:
@@ -3126,6 +3197,11 @@ def build_report(df_curr, df_prev, period):
             daily.extend(daily_series(prev, period["_prev_start"], period["_prev_end"], "Прошлый период"))
 
     block_series = _BlockSeries(curr, prev, period, chart_grain)
+    block_pages = build_block_pages(
+        curr, prev, period, block_items + [{"name": OUTBOUND_BLOCK}], has_prev,
+        chart_grain, block_series,
+    ) if include_block_pages else {}
+    warehouse_writeoffs = build_warehouse_writeoffs(df_curr) if include_writeoffs else None
     return {
         "empty": False,
         "has_prev": has_prev,
@@ -3153,7 +3229,7 @@ def build_report(df_curr, df_prev, period):
                 "delta_text": get_delta_text(other_sum, other_qty, op_sum, op_qty) if not other_prev.empty else None,
             },
         },
-        "warehouse_writeoffs": build_warehouse_writeoffs(df_curr),
+        "warehouse_writeoffs": warehouse_writeoffs,
         "quality": build_quality(curr, other_curr, ignored_curr),
         "daily": daily,
         "show_daily": show_daily,
@@ -3161,8 +3237,6 @@ def build_report(df_curr, df_prev, period):
         "chart_time_missing": chart_time_missing,
         "flows": flows,
         "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
-        "block_pages": build_block_pages(
-            curr, prev, period, block_items + [{"name": OUTBOUND_BLOCK}], has_prev, chart_grain, block_series,
-        ),
+        "block_pages": block_pages,
     }
 

@@ -8,8 +8,8 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date
-from io import BytesIO
 from pathlib import Path
+from tempfile import SpooledTemporaryFile
 from urllib.parse import urlsplit
 
 import pandas as pd
@@ -230,7 +230,16 @@ def _read_workbooks(blobs, reader):
         if not str(name).lower().endswith(".xlsx"):
             return fail(400, f"Нужен файл .xlsx: {name}")
         try:
-            frames.append(reader(BytesIO(payload)))
+            analytics.validate_xlsx_payload(payload)
+            # Keep small files in memory, but spill larger workbooks to the
+            # managed temp directory so BytesIO + openpyxl do not duplicate a
+            # tens-of-megabytes upload on the Python heap.
+            with SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b") as handle:
+                handle.write(payload)
+                handle.seek(0)
+                frames.append(reader(handle))
+        except ValueError as exc:
+            return fail(400, str(exc))
         except Exception as exc:
             log.warning("workbook parse failed name=%s error=%s", name, exc)
             return fail(400, f"Не удалось прочитать {name}. Проверьте формат файла.")
@@ -569,14 +578,14 @@ def _build_cached_json(key, kind, period, build):
     return _ready_response(body, "MISS")
 
 
-def _report_payload(period):
+def _report_payload(period, detail="full"):
     current = db.load_cached(period["_start"], period["_end"], "report")
     if period.get("compare") is False:
         previous = pd.DataFrame()
     else:
         previous = db.load_cached(period["_prev_start"], period["_prev_end"], "report")
     with measure("compute"):
-        return analytics.build_report(current, previous, period)
+        return analytics.build_report(current, previous, period, detail=detail)
 
 
 def _employees_payload(period):
@@ -643,6 +652,7 @@ def report(
     anchor: str | None = None,
     start: str | None = None,
     end: str | None = None,
+    detail: str = "full",
     user=Depends(actor),
 ):
     blocked = denied(user)
@@ -651,7 +661,14 @@ def report(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("report-v8", period, _report_payload)
+    detail = str(detail or "full").strip().lower()
+    if detail not in {"summary", "flows", "blocks", "writeoffs", "full"}:
+        return fail(400, "Некорректный режим детализации отчёта")
+    return _cached_json(
+        "report-v9", period,
+        lambda current_period: _report_payload(current_period, detail),
+        extra=(detail,),
+    )
 
 
 @app.get("/api/employees")

@@ -197,6 +197,14 @@ def _ensure_loss_index(conn):
     if not inspect(conn).has_table("losses"):
         return
     conn.execute(text("CREATE INDEX IF NOT EXISTS losses_loss_date_idx ON losses (loss_date)"))
+    # Report filters by date first; these covering prefixes keep the compact
+    # aggregation and employee/problem slices index-backed on large tables.
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS losses_date_reason_idx ON losses (loss_date, reason)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS losses_date_block_idx ON losses (loss_date, block_name)"
+    ))
     names = {col["name"] for col in inspect(conn).get_columns("losses")}
     if "status_employee_id" in names:
         conn.execute(text(
