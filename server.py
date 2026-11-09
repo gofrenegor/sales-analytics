@@ -60,7 +60,7 @@ def _allowed_hosts():
     # Keep the local proxy targets available even if systemd is still using an
     # older Environment= line during a rolling restart. Public names remain
     # explicit in ALLOWED_HOSTS; this list contains only this deployment's IP.
-    defaults = ["localhost", "127.0.0.1", "testserver", "77.239.127.134"]
+    defaults = ["localhost", "127.0.0.1", "testserver", "77.239.127.134", "analytic.v6.navy"]
     values = defaults + (configured.split(",") if configured else [])
     return tuple(value.strip().lower().rstrip(".") for value in values if value.strip())
 
