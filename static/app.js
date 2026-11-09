@@ -4992,9 +4992,18 @@ function applySession() {
 const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 
 function randomPassword() {
-  const bytes = new Uint8Array(8);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length]).join("");
+  const result = [];
+  const limit = 256 - (256 % PASSWORD_ALPHABET.length);
+  while (result.length < 16) {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    for (const byte of bytes) {
+      if (byte >= limit) continue;
+      result.push(PASSWORD_ALPHABET[byte % PASSWORD_ALPHABET.length]);
+      if (result.length === 16) break;
+    }
+  }
+  return result.join("");
 }
 
 function setPasswordNote(text, bad) {

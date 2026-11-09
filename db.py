@@ -416,12 +416,17 @@ def revoke_session(token):
 
 
 _PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-_PBKDF_ROUNDS = 120_000
+# New passwords use the current OWASP PBKDF2-HMAC-SHA256 work factor. Existing
+# hashes keep their recorded cost and continue to verify during migration.
+_PBKDF_ROUNDS = 600_000
+_PASSWORD_LENGTH = 16
+_MIN_ACCEPTED_PBKDF_ROUNDS = 100_000
+_MAX_ACCEPTED_PBKDF_ROUNDS = 2_000_000
 _DUMMY_HASH = None
 
 
 def generate_password():
-    return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(8))
+    return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(_PASSWORD_LENGTH))
 
 
 def hash_password(password):
@@ -437,10 +442,13 @@ def verify_password(password, stored):
         kind, rounds, salt, digest = str(stored or "").split("$", 3)
         if kind != "pbkdf2":
             return False
+        rounds = int(rounds)
+        if not _MIN_ACCEPTED_PBKDF_ROUNDS <= rounds <= _MAX_ACCEPTED_PBKDF_ROUNDS:
+            return False
         check = hashlib.pbkdf2_hmac(
-            "sha256", str(password).encode("utf-8"), bytes.fromhex(salt), int(rounds),
+            "sha256", str(password).encode("utf-8"), bytes.fromhex(salt), rounds,
         )
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return False
     return hmac.compare_digest(check.hex(), digest)
 

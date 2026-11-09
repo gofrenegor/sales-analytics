@@ -16,7 +16,7 @@ import pandas as pd
 from fastapi import Cookie, Depends, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 import analytics
@@ -48,15 +48,91 @@ LOGIN_MAX_FAILURES = 8
 login_attempts = {}
 login_attempts_lock = threading.Lock()
 
+# Reject oversized request envelopes before Starlette/Pydantic allocates them.
+# Multipart uploads get the larger limit; all JSON/API requests remain small.
+MAX_JSON_BODY_BYTES = int(os.environ.get("MAX_JSON_BODY_BYTES", str(256 * 1024)))
+MAX_UPLOAD_BODY_BYTES = int(os.environ.get("MAX_UPLOAD_BODY_BYTES", str(UPLOAD_MAX_BYTES + 4 * 1024 * 1024)))
+MAX_URL_BYTES = int(os.environ.get("MAX_URL_BYTES", "8192"))
+
+
+def _allowed_hosts():
+    configured = os.environ.get("ALLOWED_HOSTS", "").strip()
+    values = configured.split(",") if configured else ["localhost", "127.0.0.1", "testserver"]
+    return tuple(value.strip().lower().rstrip(".") for value in values if value.strip())
+
+
+ALLOWED_HOSTS = _allowed_hosts()
+
+
+def _host_name(value):
+    value = str(value or "").strip().lower().rstrip(".")
+    if value.startswith("[") and "]" in value:
+        return value[1:value.index("]")]
+    return value.split(":", 1)[0]
+
+
+def _host_allowed(value):
+    host = _host_name(value)
+    for allowed in ALLOWED_HOSTS:
+        allowed_name = _host_name(allowed)
+        if allowed_name == "*" or (allowed_name.startswith("*.") and host.endswith(allowed_name[1:])):
+            return True
+        if host == allowed_name:
+            return True
+    return False
+
+
+def _effective_port(parsed):
+    if parsed.port is not None:
+        return parsed.port
+    return 443 if parsed.scheme.lower() == "https" else 80
+
+
+def _same_origin(request: Request, origin: str) -> bool:
+    try:
+        parsed = urlsplit(origin)
+        if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
+            return False
+        host = parsed.hostname or ""
+        request_host = request.url.hostname or ""
+        request_scheme = request.url.scheme.lower()
+        if host.lower().rstrip(".") != request_host.lower().rstrip("."):
+            return False
+        return parsed.scheme.lower() == request_scheme and _effective_port(parsed) == _effective_port(request.url)
+    except ValueError:
+        return False
+
+
+def _security_headers(response, request: Request):
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), usb=(), payment=()")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; object-src 'none'; font-src 'self'; img-src 'self' data:; "
+        "style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "
+        "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    )
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
+    response.headers.setdefault("Origin-Agent-Cluster", "?1")
+    if request.url.scheme == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+    return response
+
 
 class TokenIn(BaseModel):
-    token: str
+    token: str = Field(..., max_length=80)
 
 
 class BatchIn(BaseModel):
-    batch: str
-    ids: list[str]
-    kind: str = "superset"
+    batch: str = Field(..., min_length=8, max_length=80)
+    ids: list[str] = Field(..., min_length=1, max_length=20)
+    kind: str = Field("superset", max_length=16)
 
 
 class ConfirmIn(BaseModel):
@@ -72,32 +148,32 @@ class JsonBody(JSONResponse):
 
 
 class LoginIn(BaseModel):
-    contact: str = ""
-    phone: str = ""
-    domain: str = ""
-    password: str = ""
+    contact: str = Field("", max_length=128)
+    phone: str = Field("", max_length=128)
+    domain: str = Field("", max_length=128)
+    password: str = Field("", max_length=128)
 
 
 class GrantIn(BaseModel):
-    role: str
-    phone: str = ""
-    email: str = ""
-    domain: str = ""
+    role: str = Field(..., max_length=16)
+    phone: str = Field("", max_length=128)
+    email: str = Field("", max_length=128)
+    domain: str = Field("", max_length=128)
 
 
 class ContactIn(BaseModel):
-    phone: str = ""
-    email: str = ""
-    domain: str = ""
+    phone: str = Field("", max_length=128)
+    email: str = Field("", max_length=128)
+    domain: str = Field("", max_length=128)
 
 
 class UserPasswordIn(BaseModel):
-    user_id: int
-    password: str = ""
+    user_id: int = Field(..., ge=1)
+    password: str = Field("", max_length=128)
 
 
 class PasswordIn(BaseModel):
-    password: str = ""
+    password: str = Field("", max_length=128)
 
 
 def fail(status, message):
@@ -186,7 +262,7 @@ def _auth_cookie(response, token, request):
         "access_session", token,
         httponly=True,
         secure=secure in {"1", "true"} or request.url.scheme == "https",
-        samesite="lax", max_age=db.SESSION_TTL, path="/",
+        samesite="strict", max_age=db.SESSION_TTL, path="/",
     )
     response.delete_cookie("access_id", path="/")
     response.headers["Cache-Control"] = "no-store"
@@ -363,31 +439,52 @@ async def lifespan(_app):
     yield
 
 
-app = FastAPI(title="Аналитика списаний", lifespan=lifespan, default_response_class=JsonBody)
+_docs_enabled = os.environ.get("ENABLE_API_DOCS", "").lower() in {"1", "true", "yes"}
+app = FastAPI(
+    title="Аналитика списаний",
+    lifespan=lifespan,
+    default_response_class=JsonBody,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 
 @app.middleware("http")
 async def request_timing(request: Request, call_next):
+    # A reverse proxy must pass the public host through unchanged. Rejecting
+    # unexpected Host values prevents host-header poisoning and cache-key splits.
+    if not _host_allowed(request.headers.get("host", "")):
+        return _security_headers(fail(400, "Недопустимый host"), request)
+
+    raw_url_size = len(request.scope.get("raw_path") or b"") + len(request.scope.get("query_string") or b"")
+    if raw_url_size > MAX_URL_BYTES:
+        return _security_headers(fail(414, "Слишком длинный адрес запроса"), request)
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            request_bytes = int(content_length)
+        except ValueError:
+            return _security_headers(fail(400, "Некорректная длина запроса"), request)
+        path = request.url.path
+        if path == "/api/admin/preview" and request.method == "POST":
+            max_bytes = MAX_UPLOAD_BODY_BYTES
+        elif path == "/api/admin/preview/chunk" and request.method == "POST":
+            max_bytes = UPLOAD_CHUNK + 512 * 1024
+        else:
+            max_bytes = MAX_JSON_BODY_BYTES
+        if request_bytes > max_bytes:
+            return _security_headers(fail(413, "Запрос слишком большой"), request)
+
     # Cookie-authenticated state changes must come from this origin. Browsers
     # send Origin on fetch POSTs; requests without it (CLI/health checks) stay
     # compatible with the existing API.
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.url.path.startswith("/api/"):
         origin = request.headers.get("origin")
-        if origin:
-            try:
-                origin_host = urlsplit(origin).netloc
-            except ValueError:
-                origin_host = ""
-            if not origin_host or origin_host.lower() != request.headers.get("host", "").lower():
-                response = fail(403, "Недопустимый источник запроса")
-                response.headers["X-Content-Type-Options"] = "nosniff"
-                response.headers["X-Frame-Options"] = "DENY"
-                response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-                response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-                response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-                if request.url.scheme == "https":
-                    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-                return response
+        fetch_site = request.headers.get("sec-fetch-site", "").lower()
+        if (origin and not _same_origin(request, origin)) or fetch_site in {"cross-site", "cross-origin"}:
+            return _security_headers(fail(403, "Недопустимый источник запроса"), request)
     started = time.perf_counter()
     values = {}
     token = timings.set(values)
@@ -404,14 +501,7 @@ async def request_timing(request: Request, call_next):
         if elapsed >= 1000:
             log.info("slow request method=%s path=%s status=%s ms=%.1f",
                      request.method, request.url.path, response.status_code, elapsed)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
-    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; font-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
-    if request.url.scheme == "https":
-        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
-    return response
+    return _security_headers(response, request)
 
 
 @app.get("/api/health")

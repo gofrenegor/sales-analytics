@@ -3,11 +3,21 @@ Description=Loss analytics (FastAPI)
 After=network.target
 
 [Service]
-User=root
+User=www-data
+Group=www-data
 WorkingDirectory=/var/www/sales-analytics
 Environment=PYTHONUNBUFFERED=1
+Environment=ALLOWED_HOSTS=analytics.example.com
+Environment=AUTH_COOKIE_SECURE=1
+Environment=FORWARDED_ALLOW_IPS=127.0.0.1
+# Keep the worker unable to turn a web request into a host-level change.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+UMask=027
 # uploads, preview frames and cache invalidation are process-local
-ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501 --workers 1
+ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=2
 
