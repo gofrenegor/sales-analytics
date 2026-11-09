@@ -4934,12 +4934,12 @@ async function loadOwnerUsers() {
         el("div", { class: "owner-user-meta" }, `${issuer} · ${ownerDate(user.issued_at)}`),
       );
       if (Number(user.id) !== 1) {
-        const input = el("input", { type: "password", minlength: "8", maxlength: "64", placeholder: "новый пароль", autocomplete: "new-password" });
+        const input = el("input", { type: "password", minlength: "6", maxlength: "64", placeholder: "новый пароль", autocomplete: "new-password" });
         const button = el("button", { type: "button", class: "ghost" }, "сменить пароль");
         const note = el("span", { class: "owner-user-meta" });
         button.addEventListener("click", async () => {
           const password = input.value.trim();
-          if (password.length < 8 || password.length > 64) { note.textContent = "Пароль от 8 до 64 символов"; return; }
+          if (password.length < 6 || password.length > 64) { note.textContent = "Пароль от 6 до 64 символов"; return; }
           button.disabled = true;
           try {
             await readJson(await fetch("/api/admin/owner/password", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ user_id: user.id, password }) }));
@@ -5030,8 +5030,8 @@ function wirePassword() {
   panel.addEventListener("submit", async (event) => {
     event.preventDefault();
     const password = input.value.trim();
-    if (password.length < 8 || password.length > 64) {
-      setPasswordNote("Пароль от 8 до 64 символов", true);
+    if (password.length < 6 || password.length > 64) {
+      setPasswordNote("Пароль от 6 до 64 символов", true);
       return;
     }
     const save = panel.querySelector("button[type='submit']");
@@ -5044,7 +5044,7 @@ function wirePassword() {
       }));
       setPasswordNote("пароль обновлён");
     } catch (error) {
-      setPasswordNote(error.message || "Пароль от 8 до 64 символов", true);
+      setPasswordNote(error.message || "Пароль от 6 до 64 символов", true);
     } finally {
       if (save) save.disabled = false;
     }

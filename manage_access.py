@@ -11,11 +11,11 @@ def main():
     # Validate contacts before changing the database.
     phone = db.normalize_phone(phone)
     email = db.normalize_email(email)
-    password = getpass.getpass("Новый пароль (8–64 символа): ")
+    password = getpass.getpass("Новый пароль (6–64 символа): ")
     if password != getpass.getpass("Повторите пароль: "):
         raise SystemExit("Пароли не совпадают")
-    if not 8 <= len(password.strip()) <= 64:
-        raise SystemExit("Пароль от 8 до 64 символов")
+    if not 6 <= len(password.strip()) <= 64:
+        raise SystemExit("Пароль от 6 до 64 символов")
     db.ensure_schema()
     db.set_access_contact(1, phone, email)
     db.set_access_password_value(1, password)

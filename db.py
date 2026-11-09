@@ -585,8 +585,8 @@ def grant_access(role, phone, email, domain="", issuer_id=None):
 
 def set_access_password_value(user_id, password):
     plain = str(password or "").strip()
-    if len(plain) < 8 or len(plain) > 64:
-        raise ValueError("Пароль от 8 до 64 символов")
+    if len(plain) < 6 or len(plain) > 64:
+        raise ValueError("Пароль от 6 до 64 символов")
     hashed = hash_password(plain)
     with _write_lock:
         engine = get_engine()
