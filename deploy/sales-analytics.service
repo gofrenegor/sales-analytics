@@ -7,7 +7,7 @@ User=www-data
 Group=www-data
 WorkingDirectory=/var/www/sales-analytics
 Environment=PYTHONUNBUFFERED=1
-Environment=ALLOWED_HOSTS=analytic.v6.navy
+Environment=ALLOWED_HOSTS=analytic.v6.navy,77.239.127.134
 Environment=AUTH_COOKIE_SECURE=1
 Environment=FORWARDED_ALLOW_IPS=127.0.0.1
 # Keep the worker unable to turn a web request into a host-level change.
