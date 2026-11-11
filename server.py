@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 import analytics
 import db
+from features import uploads as upload_store
 from request_metrics import measure, timings
 
 log = logging.getLogger("losses")
@@ -38,7 +39,9 @@ UPLOAD_MAX_BYTES = 80 * 1024 * 1024
 _UPLOAD_ID = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 uploads = {}
 uploads_lock = threading.Lock()
-preview_slots = threading.BoundedSemaphore(2)
+PREVIEW_SLOTS = max(1, int(os.environ.get("PREVIEW_SLOTS", "2")))
+preview_slots = threading.BoundedSemaphore(PREVIEW_SLOTS)
+_PENDING_TOKEN = re.compile(r"^[A-Za-z0-9_-]{8,80}$")
 
 # Login throttling is intentionally process-local: the deployment is currently
 # documented to run one Uvicorn worker. It still stops accidental/brute-force
@@ -283,17 +286,131 @@ def sweep_pending():
         dead = [key for key, item in uploads.items() if now - item["ts"] > PENDING_TTL]
         for key in dead:
             uploads.pop(key, None)
+    try:
+        upload_store.sweep(PENDING_TTL)
+    except OSError:
+        log.warning("upload sweep failed", exc_info=True)
+
+
+def _acquire_preview():
+    if not preview_slots.acquire(blocking=False):
+        return False
+    if not upload_store.try_preview_lock(PREVIEW_SLOTS):
+        preview_slots.release()
+        return False
+    return True
+
+
+def _release_preview():
+    upload_store.release_preview_lock()
+    preview_slots.release()
 
 
 def _put_pending(frame, kind, owner):
     size = int(frame.memory_usage(index=True, deep=True).sum())
     token = secrets.token_urlsafe(18)
+    now = time.time()
     with pending_lock:
-        if len(pending) >= 8 or sum(item.get("size", 0) for item in pending.values()) + size > PENDING_MAX_BYTES:
+        try:
+            disk_count, disk_bytes = upload_store.pending_usage()
+        except OSError:
+            disk_count, disk_bytes = 0, 0
+        mem_bytes = sum(item.get("size", 0) for item in pending.values())
+        if max(len(pending), disk_count) >= 8 or max(mem_bytes, disk_bytes) + size > PENDING_MAX_BYTES:
             return None
-        pending[token] = {"df": frame, "ts": time.time(), "kind": kind,
-                          "owner": owner, "size": size}
+        pending[token] = {"df": frame, "ts": now, "kind": kind, "owner": owner, "size": size}
+    try:
+        upload_store.save_pending(token, frame, kind, owner, size, now)
+    except Exception:
+        log.warning("pending frame was kept in process memory only")
     return token
+
+
+def _take_pending(token, owner):
+    """Забирает кадр из памяти или с общего диска. Второй commit того же токена не проходит."""
+    if not _PENDING_TOKEN.fullmatch(token or ""):
+        return None
+    if not upload_store.claim(token):
+        return None
+    with pending_lock:
+        item = pending.pop(token, None)
+    if item is None:
+        try:
+            item = upload_store.load_pending(token)
+        except Exception:
+            log.warning("pending frame was not read")
+            item = None
+    if item is None or item.get("owner") != owner:
+        if item is not None:
+            with pending_lock:
+                pending.setdefault(token, item)
+        upload_store.release_claim(token)
+        return None
+    try:
+        upload_store.delete_pending(token)
+    except OSError:
+        log.warning("pending frame file was not removed")
+    return item
+
+
+def _restore_pending(token, item):
+    with pending_lock:
+        pending[token] = item
+    try:
+        upload_store.save_pending(
+            token, item["df"], item.get("kind") or "superset", item.get("owner"),
+            item.get("size") or 0, time.time(),
+        )
+    except Exception:
+        log.warning("pending frame was not restored to disk")
+    upload_store.release_claim(token)
+
+
+def _remember_batch(batch, owner):
+    """Память этого процесса. Чужой воркер виден по метаданным, без чтения всех кусков."""
+    with uploads_lock:
+        item = uploads.get(batch)
+    if item is None:
+        try:
+            loaded = upload_store.load_batch_meta(batch)
+        except Exception:
+            log.warning("upload batch was not read")
+            loaded = None
+        if loaded is not None:
+            with uploads_lock:
+                item = uploads.get(batch)
+                if item is None:
+                    uploads[batch] = loaded
+                    item = loaded
+    if item is not None and item.get("owner") != owner:
+        return False
+    return item
+
+
+def _merge_batch(batch, owner):
+    """Склеивает куски этого процесса и файлы, которые записал другой воркер."""
+    item = _remember_batch(batch, owner)
+    if not item:
+        return item
+    try:
+        loaded = upload_store.load_batch(batch)
+    except Exception:
+        log.warning("upload batch was not read")
+        return item
+    if not loaded:
+        return item
+    with uploads_lock:
+        current = uploads.get(batch) or item
+        for upload_id, slot in loaded["files"].items():
+            known = current["files"].get(upload_id)
+            if known is None:
+                current["files"][upload_id] = slot
+                continue
+            for index, data in slot["parts"].items():
+                known["parts"].setdefault(index, data)
+        current["bytes"] = max(current.get("bytes") or 0, loaded.get("bytes") or 0)
+        uploads[batch] = current
+    return current
 
 
 def _upload_kind(value):
@@ -659,11 +776,15 @@ def _build_cached_json(key, kind, period, build):
     cached = db.get_ready(key)
     if cached is not None:
         return _ready_response(cached, "HIT")
-    generation = db.cache_generation()
     try:
-        payload = build(period)
-        with measure("json"):
-            body = db.put_ready(key, payload, generation)
+        with db.shared_build_lock(key):
+            cached = db.get_ready(key)
+            if cached is not None:
+                return _ready_response(cached, "HIT")
+            generation = db.cache_generation()
+            payload = build(period)
+            with measure("json"):
+                body = db.put_ready(key, payload, generation)
     except (db.DataError, db.ConfigError) as exc:
         return fail(503, str(exc))
     except Exception as exc:
@@ -759,7 +880,7 @@ def report(
     if detail not in {"summary", "flows", "blocks", "writeoffs", "full"}:
         return fail(400, "Некорректный режим детализации отчёта")
     return _cached_json(
-        "report-v9", period,
+        "report-v10", period,
         lambda current_period: _report_payload(current_period, detail),
         extra=(detail,),
     )
@@ -958,7 +1079,7 @@ async def preview(
     blocked = denied(user, admin=True)
     if blocked:
         return blocked
-    if not preview_slots.acquire(blocking=False):
+    if not _acquire_preview():
         return fail(429, "Слишком много одновременных разборов. Повторите позже.")
     try:
         if len(files) > 20:
@@ -973,7 +1094,7 @@ async def preview(
             blobs.append((upload.filename or "файл", data))
         return await run_in_threadpool(_preview_from_blobs, blobs, kind, user["id"])
     finally:
-        preview_slots.release()
+        _release_preview()
 
 
 @app.post("/api/admin/preview/chunk")
@@ -1001,13 +1122,24 @@ async def preview_chunk(
     data = await chunk.read(UPLOAD_CHUNK + 1)
     if len(data) > UPLOAD_CHUNK:
         return fail(400, "Слишком большой кусок файла")
+    remembered = _remember_batch(batch, user["id"])
+    if remembered is False:
+        return fail(404, "Загрузка не найдена")
     with uploads_lock:
         item = uploads.get(batch)
         if item is None:
-            if len(uploads) >= 8:
-                return fail(503, "Слишком много одновременных загрузок")
-            item = {"ts": time.time(), "files": {}, "bytes": 0, "owner": user["id"]}
-            uploads[batch] = item
+            if remembered is not None:
+                uploads[batch] = remembered
+                item = remembered
+            else:
+                try:
+                    batches = upload_store.batch_count()
+                except OSError:
+                    batches = 0
+                if max(len(uploads), batches) >= 8:
+                    return fail(503, "Слишком много одновременных загрузок")
+                item = {"ts": time.time(), "files": {}, "bytes": 0, "owner": user["id"]}
+                uploads[batch] = item
         if item["owner"] != user["id"]:
             return fail(404, "Загрузка не найдена")
         item["ts"] = time.time()
@@ -1024,10 +1156,21 @@ async def preview_chunk(
         if next_bytes > UPLOAD_MAX_BYTES:
             return fail(400, "Файл слишком большой")
         global_bytes = sum(value["bytes"] for value in uploads.values())
-        if global_bytes - item["bytes"] + next_bytes > UPLOADS_MAX_BYTES:
+        try:
+            disk_bytes = upload_store.stored_bytes()
+        except OSError:
+            disk_bytes = 0
+        if max(global_bytes, disk_bytes) - item["bytes"] + next_bytes > UPLOADS_MAX_BYTES:
             return fail(503, "Нет места для загрузки. Завершите другие загрузки.")
         slot["parts"][index] = data
         item["bytes"] = next_bytes
+        part_stamp = item["ts"]
+        part_owner = item["owner"]
+        part_bytes = item["bytes"]
+    try:
+        upload_store.save_part(batch, upload_id, name, index, total, data, part_owner, part_stamp, part_bytes)
+    except Exception:
+        log.warning("upload chunk was kept in process memory only")
     return {"ok": True, "index": index, "total": total}
 
 
@@ -1039,9 +1182,8 @@ def preview_finish(body: BatchIn, user=Depends(actor)):
     sweep_pending()
     if not _UPLOAD_ID.fullmatch(body.batch) or not body.ids or len(body.ids) > 20:
         return fail(400, "Некорректная загрузка")
-    with uploads_lock:
-        item = uploads.get(body.batch)
-    if item is None or item["owner"] != user["id"]:
+    item = _merge_batch(body.batch, user["id"])
+    if not item:
         return fail(404, "Загрузка устарела. Выберите файлы ещё раз.")
     blobs = []
     for upload_id in body.ids:
@@ -1053,15 +1195,19 @@ def preview_finish(body: BatchIn, user=Depends(actor)):
         if any(i not in slot["parts"] for i in range(slot["total"])):
             return fail(400, "Не все куски файла дошли")
         blobs.append((slot["name"], b"".join(slot["parts"][i] for i in range(slot["total"]))))
-    if not preview_slots.acquire(blocking=False):
+    if not _acquire_preview():
         return fail(429, "Слишком много одновременных разборов. Повторите позже.")
     try:
         result = _preview_from_blobs(blobs, body.kind, user["id"])
     finally:
-        preview_slots.release()
+        _release_preview()
     if isinstance(result, dict):
         with uploads_lock:
             uploads.pop(body.batch, None)
+        try:
+            upload_store.delete_batch(body.batch)
+        except OSError:
+            log.warning("upload batch file was not removed")
     return result
 
 
@@ -1071,12 +1217,7 @@ def commit(body: TokenIn, user=Depends(actor)):
     if blocked:
         return blocked
     sweep_pending()
-    with pending_lock:
-        item = pending.get(body.token)
-        if item is not None and item.get("owner") == user["id"]:
-            pending.pop(body.token)
-        else:
-            item = None
+    item = _take_pending(body.token, user["id"])
     if item is None:
         return fail(404, "Загрузка устарела. Выберите файлы ещё раз.")
     frame = item["df"]
@@ -1090,14 +1231,13 @@ def commit(body: TokenIn, user=Depends(actor)):
             message = "Данные сохранены!"
         summary = db.get_summary()
     except (db.DataError, db.ConfigError) as exc:
-        with pending_lock:
-            pending[body.token] = item
+        _restore_pending(body.token, item)
         return fail(400, str(exc))
     except Exception as exc:
         log.exception("commit")
-        with pending_lock:
-            pending[body.token] = item
+        _restore_pending(body.token, item)
         return fail(400, db.public_error(exc))
+    upload_store.release_claim(body.token)
     return {"ok": True, "message": message, "summary": summary}
 
 
@@ -1119,17 +1259,35 @@ def truncate(body: ConfirmIn, user=Depends(actor)):
     return {"ok": True, "message": "База очищена!", "summary": summary}
 
 
+APP_JS_PARTS = (
+    "state.js",
+    "format.js",
+    "period.js",
+    "report.js",
+    "charts.js",
+    "employees.js",
+    "writeoffs.js",
+    "warehouse.js",
+    "admin.js",
+)
+
+
+def _app_js_paths():
+    folder = STATIC / "features"
+    return [folder / name for name in APP_JS_PARTS]
+
+
+def _bundle_app_js() -> str:
+    return "".join(path.read_text(encoding="utf-8") for path in _app_js_paths())
+
+
 def _static_asset_stamp() -> str:
-    return str(
-        int(
-            max(
-                (STATIC / "app.js").stat().st_mtime,
-                (STATIC / "styles.css").stat().st_mtime,
-                (STATIC / "info-copy.js").stat().st_mtime,
-                (STATIC / "theme.js").stat().st_mtime,
-            )
-        )
-    )
+    paths = _app_js_paths() + [
+        STATIC / "styles.css",
+        STATIC / "info-copy.js",
+        STATIC / "theme.js",
+    ]
+    return str(int(max(path.stat().st_mtime for path in paths)))
 
 
 def _index_html() -> str:
@@ -1150,6 +1308,19 @@ def index():
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return Response(status_code=204)
+
+
+@app.get("/static/app.js")
+def app_script(request: Request):
+    # Один ответ из файлов static/features: браузер по-прежнему качает один скрипт.
+    headers = {"Cache-Control": "no-cache"}
+    if "v" in request.query_params:
+        headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return Response(
+        content=_bundle_app_js(),
+        media_type="application/javascript; charset=utf-8",
+        headers=headers,
+    )
 
 
 class CachedStatic(StaticFiles):
