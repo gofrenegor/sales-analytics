@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from cache_store import BoundedCache
+from features import cache as shared_cache
 from request_metrics import timed
 
 import pandas as pd
@@ -34,6 +35,8 @@ _build_locks = {name: [threading.RLock() for _ in range(64)]
 SESSION_TTL = 60 * 60 * 24 * 30
 _columns_cache = None
 _generation = 0
+_generation_checked = 0.0
+_shared_read_failed = False
 _cache_lock = threading.Lock()
 _write_lock = threading.Lock()
 CACHE_TTL = 3600
@@ -128,6 +131,11 @@ def get_engine():
         kwargs["poolclass"] = NullPool
     else:
         kwargs["connect_args"] = {"connect_timeout": 10}
+        # Пул свой у каждого воркера. 4+4 хватает одному процессу и не
+        # выбирает max_connections, когда процессов несколько.
+        kwargs["pool_size"] = max(1, int(os.environ.get("DB_POOL_SIZE", "4")))
+        kwargs["max_overflow"] = max(0, int(os.environ.get("DB_MAX_OVERFLOW", "4")))
+        kwargs["pool_timeout"] = float(os.environ.get("DB_POOL_TIMEOUT", "10"))
     _engine = create_engine(url, **kwargs)
     return _engine
 
@@ -141,9 +149,16 @@ def reset_engine():
 
 
 def clear_cache():
-    global _columns_cache, _generation
+    """Сбрасывает память процесса и поколение в базе, общее для всех воркеров."""
+    global _columns_cache, _generation, _generation_checked
+    remote = None
+    try:
+        remote = shared_cache.bump_generation()
+    except Exception:
+        log.warning("shared cache generation was not bumped", exc_info=True)
     with _cache_lock:
-        _generation += 1
+        _generation = remote if remote is not None else _generation + 1
+        _generation_checked = time.monotonic()
         _cache.clear()
         _ready.clear()
         _summary.clear()
@@ -151,8 +166,34 @@ def clear_cache():
 
 
 def cache_generation():
+    """Поколение базы. Повтор внутри короткого окна не открывает новое соединение."""
+    global _generation, _generation_checked, _columns_cache, _shared_read_failed
+    now = time.monotonic()
     with _cache_lock:
+        if now - _generation_checked < shared_cache.COALESCE_SECONDS:
+            return _generation
+    try:
+        remote = shared_cache.read_generation()
+    except Exception:
+        if not _shared_read_failed:
+            _shared_read_failed = True
+            log.warning("shared cache generation was not read", exc_info=True)
+        with _cache_lock:
+            return _generation
+    _shared_read_failed = False
+    with _cache_lock:
+        if remote != _generation:
+            _generation = remote
+            _cache.clear()
+            _ready.clear()
+            _summary.clear()
+            _columns_cache = None
+        _generation_checked = time.monotonic()
         return _generation
+
+
+def shared_build_lock(key):
+    return shared_cache.shared_build_lock(key)
 
 
 @contextmanager
@@ -258,6 +299,7 @@ def ensure_schema():
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS access_sessions_expiry_idx ON access_sessions (expires_at)"
         ))
+        shared_cache.ensure(conn, engine.dialect.name)
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
@@ -273,6 +315,7 @@ def ensure_schema():
 def known_columns():
     """None — таблицы нет. Иначе множество колонок. Повторный показ не ходит в каталог."""
     global _columns_cache
+    cache_generation()
     with _cache_lock:
         if _columns_cache is not None and _columns_cache[0] == _generation:
             found = _columns_cache[1]
@@ -729,8 +772,8 @@ def load_cached(start, end, kind="report"):
     """Read-only frames, bounded by memory and shared across simultaneous readers."""
     key = (kind, start.isoformat(), end.isoformat())
     with build_lock(("frame", key)):
+        generation = cache_generation()
         with _cache_lock:
-            generation = _generation
             hit = _cache.get(key, generation)
         if hit is not None:
             return hit
@@ -746,8 +789,8 @@ def load_employee_summary(start, end):
     """Общий компактный список для страниц, поиска и сортировки; кэш инвалидируется импортом."""
     key = ("employee-summary-v1", start.isoformat(), end.isoformat())
     with build_lock(("employees", key)):
+        generation = cache_generation()
         with _cache_lock:
-            generation = _generation
             hit = _cache.get(key, generation)
         if hit is not None:
             return hit
@@ -775,8 +818,22 @@ def ready_key(kind, period):
 
 
 def get_ready(key):
+    generation = cache_generation()
     with _cache_lock:
-        return _ready.get(key, _generation)
+        hit = _ready.get(key, generation)
+    if hit is not None:
+        return hit
+    try:
+        body = shared_cache.load_ready(key, generation)
+    except Exception:
+        log.warning("shared ready cache was not read", exc_info=True)
+        return None
+    if not body:
+        return None
+    with _cache_lock:
+        if _generation == generation:
+            _ready.put(key, body, generation, len(body))
+    return body
 
 
 def put_ready(key, payload, generation):
@@ -786,6 +843,10 @@ def put_ready(key, payload, generation):
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode("utf-8")
+    try:
+        shared_cache.store_ready(key, generation, body)
+    except Exception:
+        log.warning("shared ready cache was not stored", exc_info=True)
     with _cache_lock:
         if generation == _generation:
             _ready.put(key, body, generation, len(body))
@@ -813,8 +874,8 @@ def _as_date(value):
 @timed("summary")
 def get_summary():
     with build_lock("summary"):
+        generation = cache_generation()
         with _cache_lock:
-            generation = _generation
             hit = _summary.get("summary", generation)
         if hit is not None:
             return hit

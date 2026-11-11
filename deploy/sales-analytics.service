@@ -16,7 +16,8 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
 UMask=027
-# uploads, preview frames and cache invalidation are process-local
+# Ready JSON and upload files are shared. Pandas frames are still per process:
+# raise --workers only when the host has RAM for one frame cache per worker.
 ExecStart=/var/www/sales-analytics/venv/bin/python -m uvicorn server:app --host 127.0.0.1 --port 8501 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1
 Restart=always
 RestartSec=2

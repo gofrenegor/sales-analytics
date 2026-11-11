@@ -3117,11 +3117,20 @@ def _report_detail(detail):
 
 
 def build_report(df_curr, df_prev, period, detail="full"):
-    """Собирает отчёт. Тяжёлые деревья можно включать по мере открытия экрана."""
+    """Собирает отчёт. Тяжёлые деревья включаются только для открытого экрана.
+
+    ``summary`` — главная «потоки»: кольцо, кнопки, взлёт и дневной график.
+    График блоков и страницы блоков считаются для ``blocks``.
+    ``writeoffs`` не строит ни потоки, ни блоки.
+    ``full`` сохраняет прежний полный ответ.
+    """
     detail = _report_detail(detail)
     include_group_views = detail in {"flows", "full"}
-    include_block_pages = detail in {"blocks", "full"}
+    include_blocks = detail in {"blocks", "full"}
+    include_block_pages = include_blocks
     include_writeoffs = detail in {"writeoffs", "full"}
+    include_flows = detail in {"summary", "flows", "full"}
+    include_home_chart = include_flows
     if df_curr is None or "flow" not in getattr(df_curr, "columns", []):
         df_curr = prepare_losses(df_curr if df_curr is not None else pd.DataFrame())
     if df_prev is None or "flow" not in getattr(df_prev, "columns", []):
@@ -3137,40 +3146,56 @@ def build_report(df_curr, df_prev, period, detail="full"):
     curr = df_curr[df_curr["flow"] != "Другое"]
     prev = df_prev[df_prev["flow"] != "Другое"]
     has_prev = not prev.empty
-
-    flows = {}
-    for code, title in (("in", "Входящий поток"), ("out", "Исходящий поток")):
-        dc = curr[curr["flow"] == title]
-        dp = prev[prev["flow"] == title]
-        cards = flow_cards(dc, dp, title, has_prev, other_curr, include_group_views)
-        if period["days"] > 1:
-            sparks = spark_by_group(dc, period["_start"], period["_end"])
-            for card in cards:
-                series = sparks.get(card["name"])
-                if series and any(series):
-                    card["spark"] = series
-        flows[code] = {
-            "title": title,
-            "sum": _sum(dc, "loss_sum"),
-            "qty": _sum(dc, "loss_qty"),
-            "prev_sum": _sum(dp, "loss_sum"),
-            "prev_qty": _sum(dp, "loss_qty"),
-            "cards": cards,
+    if detail == "writeoffs":
+        return {
+            "empty": False,
+            "has_prev": has_prev,
+            "period": public_period(period),
+            "dashboard": None,
+            "warehouse_writeoffs": build_warehouse_writeoffs(df_curr),
+            "quality": build_quality(curr, other_curr, ignored_curr),
+            "daily": [],
+            "show_daily": False,
+            "chart_grain": "day",
+            "chart_time_missing": False,
+            "flows": None,
+            "moves": {"up": None, "down": None},
+            "block_pages": {},
         }
 
-    in_sum = flows["in"]["sum"]
-    out_sum = flows["out"]["sum"]
-    flow_total = in_sum + out_sum
-    for code in ("in", "out"):
-        item = flows[code]
-        item["share"] = (item["sum"] / flow_total * 100) if flow_total else 0.0
-        item["delta_text"] = (
-            get_delta_text(item["sum"], item["qty"], item["prev_sum"], item["prev_qty"]) if has_prev else None
-        )
+    flows = None
+    in_sum = out_sum = 0.0
+    if include_flows:
+        flows = {}
+        for code, title in (("in", "Входящий поток"), ("out", "Исходящий поток")):
+            dc = curr[curr["flow"] == title]
+            dp = prev[prev["flow"] == title]
+            cards = flow_cards(dc, dp, title, has_prev, other_curr, include_group_views)
+            if include_group_views and period["days"] > 1:
+                sparks = spark_by_group(dc, period["_start"], period["_end"])
+                for card in cards:
+                    series = sparks.get(card["name"])
+                    if series and any(series):
+                        card["spark"] = series
+            flows[code] = {
+                "title": title,
+                "sum": _sum(dc, "loss_sum"),
+                "qty": _sum(dc, "loss_qty"),
+                "prev_sum": _sum(dp, "loss_sum"),
+                "prev_qty": _sum(dp, "loss_qty"),
+                "cards": cards,
+            }
+        in_sum = flows["in"]["sum"]
+        out_sum = flows["out"]["sum"]
+        flow_total = in_sum + out_sum
+        for code in ("in", "out"):
+            item = flows[code]
+            item["share"] = (item["sum"] / flow_total * 100) if flow_total else 0.0
+            item["delta_text"] = (
+                get_delta_text(item["sum"], item["qty"], item["prev_sum"], item["prev_qty"]) if has_prev else None
+            )
     total_sum = _sum(curr, "loss_sum")
     total_qty = _sum(curr, "loss_qty")
-    block_items = warehouse_block_items(curr)
-    block_sum = sum(item["sum"] for item in block_items)
     prev_sum = _sum(prev, "loss_sum")
     prev_qty = _sum(prev, "loss_qty")
     other_sum = _sum(other_curr, "loss_sum")
@@ -3183,7 +3208,7 @@ def build_report(df_curr, df_prev, period, detail="full"):
     chart_grain = "hour" if hour_mode else "day"
     daily = []
     chart_time_missing = False
-    if show_daily and chart_grain == "hour":
+    if include_home_chart and show_daily and chart_grain == "hour":
         parts = [curr]
         if has_prev:
             parts.append(prev)
@@ -3191,16 +3216,23 @@ def build_report(df_curr, df_prev, period, detail="full"):
         daily.extend(hourly_series(curr, period["_start"], "Текущий период"))
         if has_prev:
             daily.extend(hourly_series(prev, period["_prev_start"], "Прошлый период"))
-    elif show_daily:
+    elif include_home_chart and show_daily:
         daily.extend(daily_series(curr, period["_start"], period["_end"], "Текущий период"))
         if has_prev:
             daily.extend(daily_series(prev, period["_prev_start"], period["_prev_end"], "Прошлый период"))
 
-    block_series = _BlockSeries(curr, prev, period, chart_grain)
-    block_pages = build_block_pages(
-        curr, prev, period, block_items + [{"name": OUTBOUND_BLOCK}], has_prev,
-        chart_grain, block_series,
-    ) if include_block_pages else {}
+    if include_blocks:
+        block_items = warehouse_block_items(curr)
+        block_sum = sum(item["sum"] for item in block_items)
+        block_series = _BlockSeries(curr, prev, period, chart_grain)
+        block_pages = build_block_pages(
+            curr, prev, period, block_items + [{"name": OUTBOUND_BLOCK}], has_prev,
+            chart_grain, block_series,
+        ) if include_block_pages else {}
+        block_lines = build_block_chart(curr, prev, period, has_prev, chart_grain, block_series)
+        block_donut = build_blocks_donut_svg(block_items, fmt_rub(block_sum))
+    else:
+        block_items, block_sum, block_pages, block_lines, block_donut = [], 0, {}, [], ""
     warehouse_writeoffs = build_warehouse_writeoffs(df_curr) if include_writeoffs else None
     return {
         "empty": False,
@@ -3214,12 +3246,12 @@ def build_report(df_curr, df_prev, period, detail="full"):
             "prev_sum": prev_sum,
             "prev_qty": prev_qty,
             "delta_text": get_delta_text(total_sum, total_qty, prev_sum, prev_qty) if has_prev else None,
-            "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)),
+            "donut_svg": build_loss_donut_svg(in_sum, out_sum, fmt_rub(in_sum + out_sum)) if include_flows else "",
             "blocks": {
                 "total": block_sum,
-                "donut_svg": build_blocks_donut_svg(block_items, fmt_rub(block_sum)),
+                "donut_svg": block_donut,
                 "items": block_items,
-                "lines": build_block_chart(curr, prev, period, has_prev, chart_grain, block_series),
+                "lines": block_lines,
             },
             "other": {
                 "show": bool(other_sum) or not other_prev.empty,
@@ -3232,11 +3264,11 @@ def build_report(df_curr, df_prev, period, detail="full"):
         "warehouse_writeoffs": warehouse_writeoffs,
         "quality": build_quality(curr, other_curr, ignored_curr),
         "daily": daily,
-        "show_daily": show_daily,
+        "show_daily": show_daily if include_blocks or include_home_chart else False,
         "chart_grain": chart_grain,
         "chart_time_missing": chart_time_missing,
         "flows": flows,
-        "moves": reason_moves(curr, prev) if has_prev else {"up": None, "down": None},
+        "moves": reason_moves(curr, prev) if has_prev and include_home_chart else {"up": None, "down": None},
         "block_pages": block_pages,
     }
 

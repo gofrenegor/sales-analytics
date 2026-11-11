@@ -1,6 +1,6 @@
 #!/bin/sh
 cd "$(dirname "$0")"
-# Keep one process: uploads, preview frames, locks and the in-process caches
-# are deliberately process-local until a shared Redis/store is deployed.
-exec python3 -m uvicorn server:app --host 0.0.0.0 --port "${PORT:-8501}" --workers 1 \
+# Default one process. Ready JSON and uploads are shared, but each worker keeps
+# its own pandas frames. Raise --workers only when RAM allows.
+exec python3 -m uvicorn server:app --host 0.0.0.0 --port "${PORT:-8501}" --workers "${WEB_WORKERS:-1}" \
   --proxy-headers --forwarded-allow-ips="${FORWARDED_ALLOW_IPS:-127.0.0.1}"
