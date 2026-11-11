@@ -61,9 +61,9 @@ MAX_URL_BYTES = int(os.environ.get("MAX_URL_BYTES", "8192"))
 def _allowed_hosts():
     configured = os.environ.get("ALLOWED_HOSTS", "").strip()
     # Keep the local proxy targets available even if systemd is still using an
-    # older Environment= line during a rolling restart. Public names remain
-    # explicit in ALLOWED_HOSTS; this list contains only this deployment's IP.
-    defaults = ["localhost", "127.0.0.1", "testserver", "77.239.127.134", "analytic.v6.navy"]
+    # older Environment= line during a rolling restart. Include this
+    # deployment's public domain and IP as defaults.
+    defaults = ["localhost", "127.0.0.1", "testserver", "77.239.127.134", "loss-analytic.ru"]
     values = defaults + (configured.split(",") if configured else [])
     return tuple(value.strip().lower().rstrip(".") for value in values if value.strip())
 

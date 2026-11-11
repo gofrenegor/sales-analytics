@@ -7,6 +7,10 @@ FastAPI, PostgreSQL и статический интерфейс. Локальн
 
 ## Обновление сервера
 
+Публичный адрес: https://loss-analytic.ru; IP сервера: `77.239.127.134`.
+После смены домена обновите установленные конфигурации systemd и nginx из
+`deploy/`, настройте TLS-сертификат для нового домена и перезагрузите конфигурации.
+
 ```sh
 cd /var/www/sales-analytics && git pull --ff-only
 systemctl restart sales-analytics
