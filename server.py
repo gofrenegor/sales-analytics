@@ -880,7 +880,7 @@ def report(
     if detail not in {"summary", "flows", "blocks", "writeoffs", "full"}:
         return fail(400, "Некорректный режим детализации отчёта")
     return _cached_json(
-        "report-v10", period,
+        "report-v11", period,
         lambda current_period: _report_payload(current_period, detail),
         extra=(detail,),
     )

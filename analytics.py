@@ -1909,6 +1909,36 @@ def _own_office_mask(off):
     return blank | (off == OWN_OFFICE_ID)
 
 
+def flow_status_sets():
+    """Ручные списки плюс статусы из общего маппинга списаний.
+
+    Уже разобранный код не переносится: список в начале файла важнее TSV.
+    Из справочника берутся только новые коды с потоком «Входящий», «Исходящий»
+    или «Дефектация». Дефектация идёт во вход, группа «Брак», как SDL.
+    ПВЗ, внескладское, ЧП и «Поток не определен» в диаграмму не попадают.
+    """
+    cached = getattr(flow_status_sets, "_cache", None)
+    if cached is not None:
+        return cached
+    inbound = set(INBOUND_STATUSES)
+    outbound = set(OUTBOUND_STATUSES)
+    defect = set(DEFECT_STATUSES)
+    claimed = inbound | outbound | defect
+    for code, row in WRITEOFF_MAPPING.items():
+        if code in claimed:
+            continue
+        flow = row.get("Наименование потока", "")
+        if flow == "Входящий поток":
+            inbound.add(code)
+        elif flow == "Исходящий поток":
+            outbound.add(code)
+        elif flow == "Дефектация":
+            defect.add(code)
+    cached = (inbound, outbound, defect)
+    flow_status_sets._cache = cached
+    return cached
+
+
 def classify_losses(df):
     """flow, process_stage, block_group.
 
@@ -1931,11 +1961,12 @@ def classify_losses(df):
     df.loc[hit, "reason"] = forced_lr.loc[hit]
     by_block_id = df["status_before"].isin(PLACE_BY_BLOCK_ID)
 
+    inbound, outbound, defect = flow_status_sets()
     df["flow"] = "Другое"
-    df.loc[df["status_before"].isin(INBOUND_STATUSES), "flow"] = "Входящий поток"
-    df.loc[df["status_before"].isin(OUTBOUND_STATUSES), "flow"] = "Исходящий поток"
+    df.loc[df["status_before"].isin(inbound), "flow"] = "Входящий поток"
+    df.loc[df["status_before"].isin(outbound), "flow"] = "Исходящий поток"
     is_assembly = df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")
-    is_defect = df["status_before"].isin(DEFECT_STATUSES) & ~is_assembly & ~by_block_id
+    is_defect = df["status_before"].isin(defect) & ~is_assembly & ~by_block_id
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
     df.loc[df["reason"].isin(OUTBOUND_LRS), "flow"] = "Исходящий поток"
