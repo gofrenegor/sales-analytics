@@ -12,6 +12,21 @@ function empPages(total) {
   return pages;
 }
 
+function empPagerSlots(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index);
+  const keep = new Set([0, total - 1, current]);
+  for (const index of [current - 1, current + 1]) {
+    if (index > 0 && index < total - 1) keep.add(index);
+  }
+  const sorted = [...keep].sort((left, right) => left - right);
+  const slots = [];
+  sorted.forEach((page, index) => {
+    if (index && page - sorted[index - 1] > 1) slots.push(null);
+    slots.push(page);
+  });
+  return slots;
+}
+
 function showEmpPage(index) {
   if (state.empPage === index) return;
   state.empPage = index;
@@ -102,14 +117,24 @@ function empPageCatalog(pageIndex, totalPages) {
       disabled: direction < 0 ? batch === 0 : end === totalPages,
       onclick: () => { batch += direction; paint(direction); },
     }, direction < 0 ? "←" : "→");
-    panel.replaceChildren(
-      grid,
-      el("div", { class: "emp-page-catalog-nav" },
-        move(-1),
-        el("span", { "aria-live": "polite", "aria-atomic": "true" }, `${start + 1}–${end} из ${totalPages}`),
-        move(1),
-      ),
-    );
+    const edge = (index) => el("button", {
+      type: "button",
+      class: "emp-page-choice",
+      "aria-label": `Страница ${index + 1}`,
+      "aria-current": index === pageIndex ? "page" : null,
+      onclick: () => {
+        panel.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        trigger.focus();
+        showEmpPage(index);
+      },
+    }, String(index + 1));
+    const nav = [move(-1)];
+    if (start > 0) nav.push(edge(0));
+    nav.push(el("span", { "aria-live": "polite", "aria-atomic": "true" }, `${start + 1}–${end} из ${totalPages}`));
+    if (end < totalPages) nav.push(edge(totalPages - 1));
+    nav.push(move(1));
+    panel.replaceChildren(grid, el("div", { class: "emp-page-catalog-nav" }, ...nav));
     if (focusDirection) {
       const next = panel.querySelector(`[data-direction="${focusDirection}"]`);
       (next && !next.disabled ? next : grid.querySelector("button"))?.focus();
@@ -608,23 +633,28 @@ function renderEmployees(screen) {
   screen.append(list);
   if (pack.pages > 1) {
     const nav = el("nav", { class: "emp-pages has-catalog", "aria-label": "Страницы сотрудников" });
-    if (pageIndex > 0) {
-      nav.append(el("button", {
-        type: "button",
-        class: "emp-page-arrow",
-        "aria-label": "Предыдущая страница",
-        onclick: () => showEmpPage(pageIndex - 1),
-      }, "←"));
+    const arrow = (direction) => el("button", {
+      type: "button",
+      class: "emp-page-arrow",
+      "aria-label": direction < 0 ? "Предыдущая страница" : "Следующая страница",
+      onclick: () => showEmpPage(pageIndex + direction),
+    }, direction < 0 ? "←" : "→");
+    if (pageIndex > 0) nav.append(arrow(-1));
+    for (const slot of empPagerSlots(pageIndex, pack.pages)) {
+      if (slot == null) {
+        nav.append(el("span", { class: "emp-page-gap", "aria-hidden": "true" }, "…"));
+      } else if (slot === pageIndex) {
+        nav.append(empPageCatalog(pageIndex, pack.pages));
+      } else {
+        nav.append(el("button", {
+          type: "button",
+          class: "emp-page-num",
+          "aria-label": `Страница ${slot + 1}`,
+          onclick: () => showEmpPage(slot),
+        }, String(slot + 1)));
+      }
     }
-    nav.append(empPageCatalog(pageIndex, pack.pages));
-    if (pageIndex < pack.pages - 1) {
-      nav.append(el("button", {
-        type: "button",
-        class: "emp-page-arrow",
-        "aria-label": "Следующая страница",
-        onclick: () => showEmpPage(pageIndex + 1),
-      }, "→"));
-    }
+    if (pageIndex < pack.pages - 1) nav.append(arrow(1));
     screen.append(nav);
   }
 }

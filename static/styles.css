@@ -777,15 +777,34 @@ button.prob-line:active { transform: scale(0.97); }
   transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .emp-page-arrow:active { transform: scale(0.97); }
-.emp-page-tab {
+.emp-page-tab,
+.emp-page-num {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-width: 2.1rem;
   padding: 0 0.35rem;
+}
+.emp-page-tab {
   border: 1px solid var(--blue);
   background: var(--blue);
   color: #fff;
+}
+.emp-page-num {
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.emp-page-num:active { transform: scale(0.97); }
+.emp-page-gap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.7rem;
+  min-width: 1rem;
+  color: var(--muted);
+  font-weight: 750;
 }
 .emp-pages.has-catalog { align-items: flex-end; }
 .emp-page-picker {
@@ -854,9 +873,20 @@ button.prob-line:active { transform: scale(0.97); }
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
+.emp-page-catalog-nav .emp-page-choice {
+  width: auto;
+  min-width: 2.1rem;
+  height: 1.7rem;
+  padding: 0 0.4rem;
+}
+.emp-page-catalog-nav > span {
+  flex: 1 1 auto;
+  text-align: center;
+}
 @media (hover: hover) and (pointer: fine) {
   .emp-page-catalog-toggle:hover,
-  .emp-page-choice:hover { border-color: var(--blue); }
+  .emp-page-choice:hover,
+  .emp-page-num:hover { border-color: var(--blue); }
 }
 @media (max-width: 560px) {
   .emp-page-catalog-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
