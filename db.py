@@ -48,8 +48,8 @@ READ_COLUMNS = (
     "status_after",
 )
 WRITE_COLUMNS = READ_COLUMNS
-# Главный экран не читает ШК и бейджик. Список сотрудников — бейджик и флаг
-# оприходования (процент найденного), без стикеров. Стикер и МХ — срез по клику.
+# Главный экран не читает ШК и бейджик. Список сотрудников — бейджик, флаг
+# оприходования и дата списания (окно LR 37), без стикеров. Стикер и МХ — срез по клику.
 # Сборка группируется по assembly_employee_id. NULL в этой колонке — старая
 # строка: бейдж как в status_employee_id.
 FRAME_COLUMNS = {
@@ -58,7 +58,7 @@ FRAME_COLUMNS = {
         "reason", "status_before", "block_id", "office_id", "posted", "mx",
     ),
     "employees": (
-        "block_name", "loss_sum", "reason", "status_before",
+        "loss_date", "block_name", "loss_sum", "reason", "status_before",
         "status_employee_id", "assembly_employee_id", "posted",
     ),
     # Проблемные ряды сборки: МХ и сумма. Бейджик и стикер не читаются.
@@ -789,7 +789,7 @@ def load_cached(start, end, kind="report"):
 
 def load_employee_summary(start, end):
     """Общий компактный список для страниц, поиска и сортировки; кэш инвалидируется импортом."""
-    key = ("employee-summary-v1", start.isoformat(), end.isoformat())
+    key = ("employee-summary-v2", start.isoformat(), end.isoformat())
     with build_lock(("employees", key)):
         generation = cache_generation()
         with _cache_lock:

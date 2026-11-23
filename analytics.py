@@ -51,6 +51,10 @@ ASSEMBLY_LR = ["5"]
 OUTBOUND_LRS = ("29",)
 # LR 27 всегда вход. Нераспознанный статус при нём — отставание входа: место, без оперки и брака.
 INBOUND_LRS = ("27",)
+# LR 37 только 2, 3 и 4 ноября 2026: вход и блок места списания. Другие даты не трогает.
+LR37_PLACE_INBOUND_CODE = "37"
+LR37_PLACE_INBOUND_START = date(2026, 11, 2)
+LR37_PLACE_INBOUND_END = date(2026, 11, 4)
 # Кольцо блоков: в дырке и в процентах только сборка и раскладка.
 BLOCK_RING_LRS = ("5", "27")
 # LR 5 из выгрузки сохраняется всегда. Для остальных ORS — сборка, RNR — неразложка.
@@ -1952,12 +1956,29 @@ def flow_status_sets():
     return cached
 
 
+def _lr37_place_inbound(df):
+    """LR 37 с 2 по 4 ноября 2026 включительно, по календарной дате списания."""
+    reason = df["source_reason"] if "source_reason" in df.columns else df.get("reason")
+    if reason is None or "loss_date" not in df.columns:
+        return pd.Series(False, index=df.index)
+    reason = reason.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    days = pd.to_datetime(df["loss_date"], errors="coerce")
+    if getattr(days.dt, "tz", None) is not None:
+        days = days.dt.tz_localize(None)
+    days = days.dt.normalize()
+    start = pd.Timestamp(LR37_PLACE_INBOUND_START)
+    end = pd.Timestamp(LR37_PLACE_INBOUND_END)
+    return reason.eq(LR37_PLACE_INBOUND_CODE) & days.ge(start) & days.le(end)
+
+
 def classify_losses(df):
     """flow, process_stage, block_group.
 
     reason и status_before уже нормализованы (LR без «.0», статус — заглавные буквы).
     Исходный LR 5 всегда сохраняется: исходящий поток, этап «Сборка».
     Для остальных ORS задаёт LR 5, RNR — LR 27.
+    LR 37 за 2–4 ноября 2026 остаётся 37: входящий поток блока места списания.
+    Статус, оперка и брак эту строку не забирают.
     LR 29 всегда исходящий поток: входной статус и брак поток не перебивают.
     LR 27 всегда входящий поток: исходящий статус, брак и «Другое» поток не перебивают.
     Нераспознанный статус при LR 27 — отставание входа, как MRD и SLT: группа по месту, без оперки и брака.
@@ -1971,8 +1992,9 @@ def classify_losses(df):
     ни в брак: исход и блок места потери.
     """
     df = df.copy()
+    place_inbound = _lr37_place_inbound(df)
     forced_lr = df["status_before"].map(STATUS_FORCE_LR)
-    hit = forced_lr.notna() & ~df["reason"].eq("5")
+    hit = forced_lr.notna() & ~df["reason"].eq("5") & ~place_inbound
     df.loc[hit, "reason"] = forced_lr.loc[hit]
     by_block_id = df["status_before"].isin(PLACE_BY_BLOCK_ID)
     is_layout = df["reason"].isin(INBOUND_LRS)
@@ -1981,9 +2003,9 @@ def classify_losses(df):
     df["flow"] = "Другое"
     df.loc[df["status_before"].isin(inbound), "flow"] = "Входящий поток"
     df.loc[df["status_before"].isin(outbound), "flow"] = "Исходящий поток"
-    is_assembly = df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")
+    is_assembly = (df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")) & ~place_inbound
     # LR 27 остаётся на месте списания: оперка и брак его не забирают.
-    is_defect = df["status_before"].isin(defect) & ~is_assembly & ~by_block_id & ~is_layout
+    is_defect = df["status_before"].isin(defect) & ~is_assembly & ~by_block_id & ~is_layout & ~place_inbound
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
     df.loc[df["reason"].isin(OUTBOUND_LRS), "flow"] = "Исходящий поток"
@@ -2005,12 +2027,16 @@ def classify_losses(df):
         & ~is_assembly
         & ~by_block_id
         & ~is_layout
+        & ~place_inbound
     )
+    placed = own.fillna(UNMAPPED_GROUP)
     df["block_group"] = (
-        own.fillna(UNMAPPED_GROUP)
+        placed
         .mask(is_operka, "Опер площадь")
         .mask(is_defect, DEFECT_GROUP)
     )
+    df.loc[place_inbound, "flow"] = "Входящий поток"
+    df.loc[place_inbound, "block_group"] = placed.loc[place_inbound]
     return df
 
 
@@ -2485,7 +2511,7 @@ def prepare_employee_losses(df):
     status = part["status_before"] if "status_before" in part else pd.Series("", index=part.index)
     part["status_before"] = status.fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
     forced = part["status_before"].map(STATUS_FORCE_LR)
-    hit = forced.notna() & ~part["reason"].eq("5")
+    hit = forced.notna() & ~part["reason"].eq("5") & ~_lr37_place_inbound(part)
     part.loc[hit, "reason"] = forced.loc[hit]
     return part.loc[part["reason"].isin(EMPLOYEE_LRS)]
 

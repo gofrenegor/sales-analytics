@@ -890,7 +890,7 @@ def report(
     if detail not in {"summary", "flows", "blocks", "writeoffs", "full"}:
         return fail(400, "Некорректный режим детализации отчёта")
     return _cached_json(
-        "report-v13", period,
+        "report-v14", period,
         lambda current_period: _report_payload(current_period, detail),
         extra=(detail,),
     )
@@ -915,9 +915,9 @@ def employees(
     if error is not None:
         return error
     if lr is None:
-        return _cached_json("employees-v3", period, _employees_payload)
+        return _cached_json("employees-v4", period, _employees_payload)
     return _cached_json(
-        "employee-page-v1", period,
+        "employee-page-v2", period,
         lambda window: _employees_page_payload(window, lr, page, sort, q),
         extra=(lr, page, sort, q),
     )
@@ -938,7 +938,7 @@ def employee_rows(
     period, error = _period(mode, anchor, start, end)
     if error is not None:
         return error
-    return _cached_json("employee-rows-v2", period, _problem_rows_payload)
+    return _cached_json("employee-rows-v3", period, _problem_rows_payload)
 
 
 @app.get("/api/employees/items")
@@ -964,7 +964,7 @@ def employee_items(
     if error is not None:
         return error
     return _cached_json(
-        "employee-items-v3", period,
+        "employee-items-v4", period,
         lambda value: _employee_items_payload(value, badge, lr), (badge, lr),
     )
 
