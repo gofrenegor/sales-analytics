@@ -128,6 +128,15 @@ def row(**overrides):
             "Исходящий поток",
             "Опер площадь",
         ),
+        ({"status_before": "CTS", "reason": "27"}, "Входящий поток", "Рязань Тюшевское 1"),
+        ({"status_before": "ZZZ", "reason": "27"}, "Входящий поток", "Рязань Тюшевское 1"),
+        (
+            {"status_before": "SMC", "reason": "27", "block_id": "6800"},
+            "Входящий поток",
+            "Рязань Тюшевское 1",
+        ),
+        ({"status_before": "SDL", "reason": "27"}, "Входящий поток", "Рязань Тюшевское 1"),
+        ({"status_before": "LSS", "reason": "27"}, "Входящий поток", "Рязань Тюшевское 1"),
     ],
 )
 def test_classify(overrides, flow, group):

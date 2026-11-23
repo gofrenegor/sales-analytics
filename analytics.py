@@ -49,6 +49,8 @@ OPERKA_STATUSES = ["SMC", "SPS", "SAS", "SAP", "PAP", "LSS", "GWS", "WMI"]
 ASSEMBLY_LR = ["5"]
 # Лостризон важнее статуса: LR 29 всегда исход, даже на входном статусе и в браке.
 OUTBOUND_LRS = ("29",)
+# LR 27 всегда вход. Нераспознанный статус при нём — отставание входа: место, без оперки и брака.
+INBOUND_LRS = ("27",)
 # Кольцо блоков: в дырке и в процентах только сборка и раскладка.
 BLOCK_RING_LRS = ("5", "27")
 # LR 5 из выгрузки сохраняется всегда. Для остальных ORS — сборка, RNR — неразложка.
@@ -1952,6 +1954,8 @@ def classify_losses(df):
     Исходный LR 5 всегда сохраняется: исходящий поток, этап «Сборка».
     Для остальных ORS задаёт LR 5, RNR — LR 27.
     LR 29 всегда исходящий поток: входной статус и брак поток не перебивают.
+    LR 27 всегда входящий поток: исходящий статус, брак и «Другое» поток не перебивают.
+    Нераспознанный статус при LR 27 — отставание входа, как MRD и SLT: группа по месту, без оперки и брака.
     Группа блока при этом прежняя. Без LR 5 SMS, OSS, MRD и SLT — вход. MRD и SLT — отставание входа, отдельной карточки нет:
     группа — название места списания, как у OSS. Оперка и брак их не забирают.
     Оперка у остальных только у своего офиса и только когда ID блока места потери — 6800,
@@ -1966,16 +1970,19 @@ def classify_losses(df):
     hit = forced_lr.notna() & ~df["reason"].eq("5")
     df.loc[hit, "reason"] = forced_lr.loc[hit]
     by_block_id = df["status_before"].isin(PLACE_BY_BLOCK_ID)
+    is_layout = df["reason"].isin(INBOUND_LRS)
 
     inbound, outbound, defect = flow_status_sets()
     df["flow"] = "Другое"
     df.loc[df["status_before"].isin(inbound), "flow"] = "Входящий поток"
     df.loc[df["status_before"].isin(outbound), "flow"] = "Исходящий поток"
     is_assembly = df["reason"].isin(ASSEMBLY_LR) | df["status_before"].eq("ORS")
-    is_defect = df["status_before"].isin(defect) & ~is_assembly & ~by_block_id
+    # LR 27 остаётся на месте списания: оперка и брак его не забирают.
+    is_defect = df["status_before"].isin(defect) & ~is_assembly & ~by_block_id & ~is_layout
     df.loc[is_defect, "flow"] = "Входящий поток"
     df.loc[is_assembly, "flow"] = "Исходящий поток"
     df.loc[df["reason"].isin(OUTBOUND_LRS), "flow"] = "Исходящий поток"
+    df.loc[is_layout, "flow"] = "Входящий поток"
 
     df["process_stage"] = df["status_before"].map(STAGE_MAPPING).fillna("Другое")
     df.loc[is_defect, "process_stage"] = DEFECT_GROUP
@@ -1992,6 +1999,7 @@ def classify_losses(df):
         & _own_office_mask(off)
         & ~is_assembly
         & ~by_block_id
+        & ~is_layout
     )
     df["block_group"] = (
         own.fillna(UNMAPPED_GROUP)
