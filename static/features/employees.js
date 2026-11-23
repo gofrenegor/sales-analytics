@@ -584,7 +584,7 @@ function renderEmployees(screen) {
     return;
   }
   if (pack.badges_missing) {
-    screen.append(el("p", { class: "hint" }, "Бейджики пустые. ID сотрудника берётся из колонки AC выгрузки. Если файл заливали без этой колонки — загрузите период ещё раз."));
+    screen.append(el("p", { class: "hint" }, "Бейджики пустые. ID берётся из столбца D «Контрагент ID». Залейте период ещё раз."));
   }
   if (!rows.length) {
     screen.append(el("p", { class: "box warn" }, "Такой бейджик не найден."));

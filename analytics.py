@@ -108,8 +108,8 @@ EMPLOYEE_HEADERS = (
     "id сотрудника статуса перед списанием",
     "id сотрудника",
 )
-# Пара колонок списания. AWH — блок, EMP — сотрудники.
-# Сборщик — EMP, который не равен ID из колонки AC.
+# Столбец D «Контрагент ID» — на кого списаны вещи. AWH — блок, EMP — бейдж.
+# Колонка AC — сотрудник прошлого статуса, на бейдж списания не садится.
 COUNTERPARTY_TYPE_HEADERS = (
     "тип контрагента",
     "тип контрагентов",
@@ -1602,28 +1602,31 @@ def parse_counterparty_list(value):
 
 
 def assembler_badge(types, ids, scanner):
-    """Бейдж сборщика по паре «тип контрагента» / «контрагент id».
+    """Бейдж списания: EMP из столбца D «Контрагент ID».
 
-    None — обеих ячеек нет: строка остаётся на сотруднике перед списанием.
-    Пустая строка — контрагенты разобраны, отдельного сборщика нет.
-    Иначе один EMP, который не равен ID сотрудника перед списанием.
-    AWH — блок. Совпавший EMP — раскладчик или инвентаризатор.
+    None — обеих ячеек нет. Пустая строка — EMP нет или их несколько и не ясно кто.
+    Один EMP берётся даже если он совпал с колонкой AC.
+    Несколько EMP — остаётся единственный, который не равен AC.
+    AWH — блок, не бейдж.
     """
     type_list = parse_counterparty_list(types)
     id_list = parse_counterparty_list(ids)
     if type_list is None and id_list is None:
         return None
     found = []
-    scanner_badge = badge_id(scanner)
     for kind, raw in zip(type_list or [], id_list or []):
         if str(kind).strip().upper() != "EMP":
             continue
         emp = badge_id(raw)
-        if not emp or emp == scanner_badge or emp in found:
+        if not emp or emp in found:
             continue
         found.append(emp)
     if len(found) == 1:
         return found[0]
+    scanner_badge = badge_id(scanner)
+    others = [emp for emp in found if emp != scanner_badge]
+    if len(others) == 1:
+        return others[0]
     return ""
 
 
@@ -1638,33 +1641,23 @@ def _stored_missing(value):
 
 
 def _optional_badge(value):
-    """Цифры бейджа. NULL остаётся None, чтобы сборка взяла колонку AC."""
+    """Цифры бейджа. NULL остаётся None: столбца D в этой заливке не было."""
     if _stored_missing(value):
         return None
     return badge_id(value)
 
 
-def assembly_badge_value(stored, scanner):
-    """Бейдж пропуска сборки. NULL — старая строка, бейдж сотрудника перед списанием."""
+def charged_badge_value(stored):
+    """Бейдж списания из столбца D. Пусто и NULL не подменяются колонкой AC."""
     if _stored_missing(stored):
-        return badge_id(scanner)
+        return ""
     return badge_id(stored)
 
 
-def _assembly_badges(part):
-    if "status_employee_id" in part.columns:
-        scanner = part["status_employee_id"].map(badge_id)
-    else:
-        scanner = pd.Series("", index=part.index)
+def _charged_badges(part):
     if "assembly_employee_id" not in part.columns:
-        return scanner
-    return pd.Series(
-        [
-            assembly_badge_value(stored, scan)
-            for stored, scan in zip(part["assembly_employee_id"].tolist(), scanner.tolist())
-        ],
-        index=part.index,
-    )
+        return pd.Series("", index=part.index)
+    return part["assembly_employee_id"].map(charged_badge_value)
 
 
 def badge_id(value):
@@ -2534,8 +2527,7 @@ def prepare_employee_losses(df):
 def build_employees(df):
     """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. found — сколько оприходовано. Без списка ШК.
 
-    Раскладка — исходный лост 27, бейдж сотрудника перед списанием (колонка AC).
-    Сборка — сборщик из контрагентов.
+    И сборка, и раскладка — EMP из столбца D «Контрагент ID». Колонка AC в бейдж не входит.
     """
     df = _visible_losses(df)
     empty = {lr: [] for lr in EMPLOYEE_LRS}
@@ -2552,20 +2544,8 @@ def build_employees(df):
     if part.empty:
         return empty
     part["lr"] = part["reason"].astype(str)
-    if "status_employee_id" not in part.columns:
-        part["badge"] = ""
-    else:
-        part["badge"] = part["status_employee_id"].map(badge_id)
-    assembly = part["lr"].eq("5")
-    if assembly.any():
-        part.loc[assembly, "badge"] = _assembly_badges(part.loc[assembly]).to_numpy()
-        if "assembly_employee_id" in part.columns:
-            # Контрагенты разобраны, сборщика нет: не оставлять пропуск на раскладчике
-            # и не рисовать пустой бейдж.
-            unnamed = assembly & part["assembly_employee_id"].map(
-                lambda value: isinstance(value, str) and not badge_id(value)
-            )
-            part = part.loc[~unnamed]
+    part["badge"] = _charged_badges(part)
+    part = part.loc[part["badge"].astype(str) != ""]
     if "loss_sum" not in part.columns:
         part["loss_sum"] = 0.0
     part["loss_sum"] = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
@@ -2601,12 +2581,9 @@ def build_employee_items(df, badge, lr):
     part = df.loc[_employee_operation(
         reasons, statuses, _lr37_place_inbound(df),
     ).eq(code)]
-    if part.empty or "status_employee_id" not in part.columns:
+    if part.empty:
         return []
-    if code == "5":
-        badges = _assembly_badges(part)
-    else:
-        badges = part["status_employee_id"].map(badge_id)
+    badges = _charged_badges(part)
     part = part.loc[badges == (badge or "")]
     if part.empty:
         return []

@@ -50,8 +50,8 @@ READ_COLUMNS = (
 WRITE_COLUMNS = READ_COLUMNS
 # Главный экран не читает ШК и бейджик. Список сотрудников — бейджик, флаг
 # оприходования и дата списания (окно LR 37), без стикеров. Стикер и МХ — срез по клику.
-# Сборка группируется по assembly_employee_id. NULL в этой колонке — старая
-# строка: бейдж как в status_employee_id.
+# Сборка и раскладка группируются по assembly_employee_id (столбец D).
+# NULL — в заливке не было контрагента, колонку AC вместо него не подставлять.
 FRAME_COLUMNS = {
     "report": (
         "loss_date", "block_name", "loss_sum", "loss_qty",
@@ -720,34 +720,25 @@ def load_data(start, end, columns):
 
 
 def _employee_filter_sql(badge, lr, columns):
-    """Сборка ищет сборщика. Пустой assembly_employee_id в базе — старая строка, колонка AC."""
-    use_assembly = str(lr) == "5" and "assembly_employee_id" in columns
-    if not use_assembly:
-        if badge:
-            return "AND status_employee_id = :badge"
-        return "AND (status_employee_id IS NULL OR status_employee_id = '')"
+    """Сборка и раскладка ищут EMP из столбца D. Колонка AC в выборку не входит."""
+    del lr
+    if "assembly_employee_id" not in columns:
+        return "AND 1 = 0"
     if badge:
-        return (
-            "AND (assembly_employee_id = :badge "
-            "OR (assembly_employee_id IS NULL AND status_employee_id = :badge))"
-        )
-    return (
-        "AND (assembly_employee_id = '' "
-        "OR (assembly_employee_id IS NULL "
-        "AND (status_employee_id IS NULL OR status_employee_id = '')))"
-    )
+        return "AND assembly_employee_id = :badge"
+    return "AND (assembly_employee_id IS NULL OR assembly_employee_id = '')"
 
 
 def load_employee_slice(start, end, badge, lr="5"):
     """Строки одного бейджика за окно. В общий кэш кадра не кладётся.
 
     ready — в таблице уже есть стикер и флаг. Иначе старая заливка, колонки пустые.
-    На сборке бейджик — сборщик. На раскладке — сотрудник перед списанием.
+    Бейджик и у сборки, и у раскладки — EMP из столбца D.
     """
     existing = known_columns()
     ready = bool(existing) and "last_sticker" in existing and "posted" in existing
     empty = analytics.prepare_losses(pd.DataFrame())
-    if not existing or "loss_date" not in existing or "status_employee_id" not in existing:
+    if not existing or "loss_date" not in existing or "assembly_employee_id" not in existing:
         return empty, ready
     cols = [col for col in DETAIL_COLUMNS if col in existing]
     params = {
@@ -789,7 +780,7 @@ def load_cached(start, end, kind="report"):
 
 def load_employee_summary(start, end):
     """Общий компактный список для страниц, поиска и сортировки; кэш инвалидируется импортом."""
-    key = ("employee-summary-v3", start.isoformat(), end.isoformat())
+    key = ("employee-summary-v4", start.isoformat(), end.isoformat())
     with build_lock(("employees", key)):
         generation = cache_generation()
         with _cache_lock:
