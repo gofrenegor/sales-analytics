@@ -146,6 +146,13 @@ class ConfirmIn(BaseModel):
     confirm: bool = False
 
 
+class PurgeIn(BaseModel):
+    start: str = Field("", max_length=10)
+    end: str = Field("", max_length=10)
+    blocks: list[str] = Field(default_factory=list, max_length=8)
+    confirm: bool = False
+
+
 class JsonBody(JSONResponse):
     """Русский текст остаётся буквами, без пробелов между полями."""
 
@@ -306,7 +313,7 @@ def _release_preview():
     preview_slots.release()
 
 
-def _put_pending(frame, kind, owner):
+def _put_pending(frame, kind, owner, files=None):
     size = int(frame.memory_usage(index=True, deep=True).sum())
     token = secrets.token_urlsafe(18)
     now = time.time()
@@ -318,9 +325,12 @@ def _put_pending(frame, kind, owner):
         mem_bytes = sum(item.get("size", 0) for item in pending.values())
         if max(len(pending), disk_count) >= 8 or max(mem_bytes, disk_bytes) + size > PENDING_MAX_BYTES:
             return None
-        pending[token] = {"df": frame, "ts": now, "kind": kind, "owner": owner, "size": size}
+        pending[token] = {
+            "df": frame, "ts": now, "kind": kind, "owner": owner, "size": size,
+            "files": [str(name) for name in (files or [])],
+        }
     try:
-        upload_store.save_pending(token, frame, kind, owner, size, now)
+        upload_store.save_pending(token, frame, kind, owner, size, now, files)
     except Exception:
         log.warning("pending frame was kept in process memory only")
     return token
@@ -359,7 +369,7 @@ def _restore_pending(token, item):
     try:
         upload_store.save_pending(
             token, item["df"], item.get("kind") or "superset", item.get("owner"),
-            item.get("size") or 0, time.time(),
+            item.get("size") or 0, time.time(), item.get("files"),
         )
     except Exception:
         log.warning("pending frame was not restored to disk")
@@ -489,7 +499,7 @@ def _preview_superset(blobs, frames, owner):
             return fail(400, "Не удалось определить даты в файле.")
         if "mx" in frame.columns:
             mx_rows = int((frame["mx"].map(analytics.sticker_text) != "").sum())
-        token = _put_pending(frame, "superset", owner)
+        token = _put_pending(frame, "superset", owner, [name for name, _payload in blobs])
         if token is None:
             return fail(503, "Нет места для предпросмотра. Завершите другие загрузки.")
     return {
@@ -530,7 +540,7 @@ def _preview_twin(blobs, frames, owner):
         unmatched = int(plan["unmatched"])
         start, end = plan["start"], plan["end"]
         if matched:
-            token = _put_pending(frame, "twin", owner)
+            token = _put_pending(frame, "twin", owner, [name for name, _payload in blobs])
             if token is None:
                 return fail(503, "Нет места для предпросмотра. Завершите другие загрузки.")
     return {
@@ -1222,12 +1232,13 @@ def commit(body: TokenIn, user=Depends(actor)):
         return fail(404, "Загрузка устарела. Выберите файлы ещё раз.")
     frame = item["df"]
     kind = item.get("kind") or "superset"
+    meta = {"kind": kind, "actor_id": user["id"], "files": item.get("files") or []}
     try:
         if kind == "twin":
-            result = db.apply_twin(frame)
+            result = db.apply_twin(frame, meta)
             message = f"МХ дописано: {int(result['updated'])}"
         else:
-            db.merge_losses(frame)
+            db.merge_losses(frame, meta)
             message = "Данные сохранены!"
         summary = db.get_summary()
     except (db.DataError, db.ConfigError) as exc:
@@ -1257,6 +1268,46 @@ def truncate(body: ConfirmIn, user=Depends(actor)):
         log.exception("truncate")
         return fail(500, db.public_error(exc))
     return {"ok": True, "message": "База очищена!", "summary": summary}
+
+
+@app.post("/api/admin/import/undo")
+def import_undo(body: ConfirmIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    if not body.confirm:
+        return fail(400, "Подтвердите удаление")
+    try:
+        result = db.undo_last_import()
+        summary = db.get_summary()
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    except Exception as exc:
+        log.exception("import undo")
+        return fail(500, db.public_error(exc))
+    return {"ok": True, "message": result["message"], "summary": summary}
+
+
+@app.post("/api/admin/purge")
+def purge(body: PurgeIn, user=Depends(actor)):
+    blocked = denied(user, admin=True)
+    if blocked:
+        return blocked
+    try:
+        result = db.purge_period(body.start, body.end, body.blocks, body.confirm)
+        if body.confirm:
+            result["summary"] = db.get_summary()
+            result["message"] = f"Удалено строк: {int(result['rows'])}"
+    except ValueError as exc:
+        return fail(400, str(exc))
+    except (db.DataError, db.ConfigError) as exc:
+        return fail(503, str(exc))
+    except Exception as exc:
+        log.exception("purge")
+        return fail(500, db.public_error(exc))
+    return result
 
 
 APP_JS_PARTS = (

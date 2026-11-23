@@ -154,6 +154,30 @@
         </details>
         <div id="db-summary"></div>
         <hr>
+        <p class="info-label">Последняя выгрузка</p>
+        <p id="import-last" class="hint">Последней выгрузки ещё нет. Файл, загруженный до обновления, снимается периодом ниже.</p>
+        <label class="check"><input type="checkbox" id="import-sure"> Стереть последнюю выгрузку</label>
+        <button type="button" id="import-undo-btn" class="wide danger" disabled>Стереть последнюю выгрузку</button>
+        <hr>
+        <p class="info-label">Стереть период</p>
+        <p class="hint">Дни и блоки. Строки этих дней в выбранных блоках удаляются. «Остальные» — оперка, брак и площадки вне блоков 1–4 и Исхода. Так снимается файл, загруженный до появления отката.</p>
+        <div class="purge-dates">
+          <label>С <input type="date" id="purge-start"></label>
+          <label>По <input type="date" id="purge-end"></label>
+        </div>
+        <div class="purge-blocks" id="purge-blocks">
+          <label class="check"><input type="checkbox" value="1"> блок 1</label>
+          <label class="check"><input type="checkbox" value="2"> блок 2</label>
+          <label class="check"><input type="checkbox" value="3"> блок 3</label>
+          <label class="check"><input type="checkbox" value="4"> блок 4</label>
+          <label class="check"><input type="checkbox" value="out"> Исход</label>
+          <label class="check"><input type="checkbox" value="other"> остальные</label>
+        </div>
+        <button type="button" id="purge-count-btn" class="wide ghost">Посчитать</button>
+        <p id="purge-count" class="hint" hidden></p>
+        <label class="check"><input type="checkbox" id="purge-sure"> Удалить эти строки</label>
+        <button type="button" id="purge-btn" class="wide danger" disabled>Стереть период</button>
+        <hr>
         <label class="check"><input type="checkbox" id="sure"> Я уверен, что хочу удалить всю базу данных</label>
         <button type="button" id="wipe" class="wide danger" disabled>🗑️ Очистить базу</button>
         <section id="owner-tools" class="owner-tools" hidden>

@@ -1,5 +1,25 @@
+let lastImport = null;
+
+function paintLastImport(item) {
+  lastImport = item || null;
+  const node = document.getElementById("import-last");
+  const box = document.getElementById("import-sure");
+  const button = document.getElementById("import-undo-btn");
+  if (!node || !button) return;
+  if (!lastImport) {
+    node.textContent = "Последней выгрузки ещё нет. Файл, загруженный до обновления, снимается периодом ниже.";
+  } else {
+    const kind = lastImport.kind === "twin" ? "Twin" : "Суперсет";
+    const period = lastImport.date_min ? `, ${fmtDate(lastImport.date_min)} — ${fmtDate(lastImport.date_max)}` : "";
+    node.textContent = `${kind}: ${lastImport.files}, ${fmtInt(lastImport.rows)} строк${period}. ${lastImport.when}.`;
+    if (!lastImport.undo) node.textContent += " Откат этой выгрузки уже недоступен.";
+  }
+  button.disabled = !(box && box.checked && lastImport && lastImport.undo);
+}
+
 function renderSummary(summary) {
   rememberYears(summary);
+  paintLastImport(summary && summary.last_import);
   const host = document.getElementById("db-summary");
   host.replaceChildren();
   if (!summary) {
@@ -300,7 +320,7 @@ function wireAdmin() {
         if (!data.mx_rows) {
           preview.append(el("p", { class: "hint" }, "В суперсете нет МХ пропуска. После сохранения загрузите Twin."));
         }
-        preview.append(el("p", { class: "hint" }, "Совпавшие ШК у тех же сотрудников обновятся, включая флаг оприходования и статус после списания. Новые потери добавятся, остальные сохранятся. Уже дописанное МХ по тому же ШК сохранится. Для обновления старых потерь включите их даты в выгрузку."));
+        preview.append(el("p", { class: "hint" }, "Совпавшие ШК у тех же сотрудников обновятся, включая флаг оприходования и статус после списания. Новые потери добавятся, остальные сохранятся. Уже дописанное МХ по тому же ШК сохранится. Для обновления старых потерь включите их даты в выгрузку. Последнюю выгрузку можно снять в «что в базе», пока поверх неё не загружен следующий файл."));
       }
       const button = el("button", { type: "button", class: "wide primary" }, saveLabel);
       button.addEventListener("click", async () => {
@@ -353,6 +373,107 @@ function wireAdmin() {
       loadReport();
     } catch (error) {
       setAdminStatus(error.message);
+    }
+  });
+  document.getElementById("import-sure")?.addEventListener("change", () => paintLastImport(lastImport));
+  document.getElementById("import-undo-btn")?.addEventListener("click", async () => {
+    const button = document.getElementById("import-undo-btn");
+    button.disabled = true;
+    try {
+      const data = await readJson(await fetch("/api/admin/import/undo", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirm: true }),
+      }));
+      setAdminStatus(data.message);
+      renderSummary(data.summary);
+      document.getElementById("import-sure").checked = false;
+      loadReport();
+    } catch (error) {
+      setAdminStatus(error.message);
+      paintLastImport(lastImport);
+    }
+  });
+  wirePurge();
+}
+
+let purgeKey = "";
+
+function purgeSelection() {
+  const start = document.getElementById("purge-start")?.value || "";
+  const end = document.getElementById("purge-end")?.value || "";
+  const blocks = [...document.querySelectorAll("#purge-blocks input:checked")].map((node) => node.value);
+  return { start, end, blocks };
+}
+
+function syncPurgeButton() {
+  const button = document.getElementById("purge-btn");
+  const sure = document.getElementById("purge-sure");
+  const count = document.getElementById("purge-count");
+  if (!button) return;
+  const same = purgeKey && purgeKey === JSON.stringify(purgeSelection());
+  button.disabled = !(sure && sure.checked && same && count && !count.hidden && !count.dataset.empty);
+}
+
+function wirePurge() {
+  const count = document.getElementById("purge-count");
+  const reset = () => {
+    purgeKey = "";
+    if (count) {
+      count.hidden = true;
+      delete count.dataset.empty;
+    }
+    const sure = document.getElementById("purge-sure");
+    if (sure) sure.checked = false;
+    syncPurgeButton();
+  };
+  document.getElementById("purge-start")?.addEventListener("change", reset);
+  document.getElementById("purge-end")?.addEventListener("change", reset);
+  document.getElementById("purge-blocks")?.addEventListener("change", reset);
+  document.getElementById("purge-sure")?.addEventListener("change", syncPurgeButton);
+  document.getElementById("purge-count-btn")?.addEventListener("click", async () => {
+    const body = purgeSelection();
+    if (!body.start || !body.end || !body.blocks.length) {
+      setAdminStatus("Укажите даты и хотя бы один блок");
+      return;
+    }
+    try {
+      const data = await readJson(await fetch("/api/admin/purge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, confirm: false }),
+      }));
+      purgeKey = JSON.stringify(body);
+      count.hidden = false;
+      if (data.rows) delete count.dataset.empty;
+      else count.dataset.empty = "1";
+      count.textContent = data.rows
+        ? `Будет удалено: ${fmtInt(data.rows)} строк, ${fmtRub(data.sum)}`
+        : "В этих днях и блоках строк нет";
+      syncPurgeButton();
+    } catch (error) {
+      setAdminStatus(error.message);
+    }
+  });
+  document.getElementById("purge-btn")?.addEventListener("click", async () => {
+    const button = document.getElementById("purge-btn");
+    button.disabled = true;
+    try {
+      const saved = JSON.parse(purgeKey);
+      const data = await readJson(await fetch("/api/admin/purge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...saved, confirm: true }),
+      }));
+      setAdminStatus(data.message);
+      renderSummary(data.summary);
+      document.getElementById("purge-sure").checked = false;
+      purgeKey = "";
+      count.hidden = true;
+      loadReport();
+    } catch (error) {
+      setAdminStatus(error.message);
+      syncPurgeButton();
     }
   });
 }

@@ -10,7 +10,8 @@ import secrets
 import threading
 import time
 from contextlib import contextmanager
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from cache_store import BoundedCache
@@ -300,6 +301,7 @@ def ensure_schema():
             "CREATE INDEX IF NOT EXISTS access_sessions_expiry_idx ON access_sessions (expires_at)"
         ))
         shared_cache.ensure(conn, engine.dialect.name)
+        _ensure_import_tables(conn)
         if not inspect(conn).has_table("losses"):
             return
         existing = {col["name"] for col in inspect(conn).get_columns("losses")}
@@ -854,7 +856,7 @@ def put_ready(key, payload, generation):
 
 
 def empty_summary():
-    return {"total_rows": 0, "min_date": None, "max_date": None, "months": []}
+    return {"total_rows": 0, "min_date": None, "max_date": None, "months": [], "last_import": None}
 
 
 def _as_date(value):
@@ -891,12 +893,16 @@ def _read_summary():
     try:
         with engine.connect() as conn:
             if not inspect(conn).has_table("losses"):
-                return empty_summary()
+                summary = empty_summary()
+                summary["last_import"] = _last_import(conn)
+                return summary
             total, min_date, max_date = conn.execute(
                 text("SELECT COUNT(*), MIN(loss_date), MAX(loss_date) FROM losses")
             ).one()
             if not total:
-                return empty_summary()
+                summary = empty_summary()
+                summary["last_import"] = _last_import(conn)
+                return summary
             if engine.dialect.name == "postgresql":
                 month_sql = (
                     "SELECT TO_CHAR(loss_date, 'YYYY-MM') AS month, COUNT(*) AS rows_count "
@@ -908,6 +914,7 @@ def _read_summary():
                     "FROM losses GROUP BY 1 ORDER BY 1 DESC"
                 )
             months = pd.read_sql(text(month_sql), conn)
+            last_import = _last_import(conn)
     except Exception as exc:
         if is_missing_table(exc):
             return empty_summary()
@@ -920,6 +927,7 @@ def _read_summary():
             {"month": str(row.month), "rows": int(row.rows_count)}
             for row in months.itertuples(index=False)
         ],
+        "last_import": last_import,
     }
 
 
@@ -1141,7 +1149,7 @@ def _patch_update_sql(count, assembly_sql, period_sql):
     )
 
 
-def apply_twin(frame):
+def apply_twin(frame, meta=None):
     """Пишет наименование МХ на каждую строку сборки с этим ШК.
 
     Сборщики не схлопываются: один ШК обновляет все такие потери.
@@ -1167,6 +1175,7 @@ def apply_twin(frame):
     engine = get_engine()
     updated = 0
     unknown = False
+    snaps = []
     with _write_lock:
         _ensure_barcode_index(engine)
         with engine.begin() as conn:
@@ -1186,6 +1195,8 @@ def apply_twin(frame):
                 for index, row in enumerate(batch):
                     bind[f"b{index}"] = row["barcode"]
                     bind[f"m{index}"] = row["mx"]
+                if meta is not None:
+                    snaps.extend(_twin_snap(conn, batch, assembly_sql, period_sql, params, names))
                 result = conn.execute(
                     text(_patch_update_sql(len(batch), assembly_sql, period_sql)),
                     bind,
@@ -1195,16 +1206,21 @@ def apply_twin(frame):
                     unknown = True
                 else:
                     updated += int(count)
+            if meta is not None and snaps:
+                _write_import(conn, meta, [("mx", _mx_payload(row)) for row in snaps], len(snaps), *(
+                    _frame_span(frame)
+                ))
         plan["updated"] = updated
         if updated or unknown:
             clear_cache()
     return plan
 
 
-def merge_losses(df):
+def merge_losses(df, meta=None):
     """Новая строка заменяет тот же ШК у тех же сотрудников, остальные остаются.
 
     Замена и добавление атомарны. Пустое МХ сохраняется из прежней строки по ШК.
+    meta запоминает выгрузку, чтобы её можно было снять, пока нет следующей.
     """
     if df is None or df.empty:
         return
@@ -1226,6 +1242,10 @@ def merge_losses(df):
         with engine.begin() as conn:
             if not inspect(conn).has_table("losses"):
                 frame.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
+                if meta is not None:
+                    ops = [("drop", _key_payload(dict(zip(keys, key)))) for key in _frame_key_tuples(frame, keys)]
+                    d_min, d_max = _frame_span(frame)
+                    _write_import(conn, meta, ops, len(frame), d_min, d_max)
             else:
                 existing = _add_missing_columns(conn, frame, engine.dialect.name)
                 cols = list(frame.columns)
@@ -1250,6 +1270,9 @@ def merge_losses(df):
                     f"COALESCE(CAST(losses.{col} AS TEXT), '') = "
                     f"COALESCE(CAST({stage}.{col} AS TEXT), '')" for col in keys[1:]
                 )
+                ops = []
+                if meta is not None:
+                    ops = _merge_ops(conn, stage, matches, cols, frame, keys)
                 conn.execute(text(
                     f"DELETE FROM losses WHERE barcode IN (SELECT barcode FROM {stage}) "
                     f"AND EXISTS (SELECT 1 FROM {stage} WHERE {matches})"
@@ -1258,6 +1281,9 @@ def merge_losses(df):
                     f"INSERT INTO losses ({columns_sql}) SELECT {columns_sql} FROM {stage}"
                 ))
                 conn.execute(text(f"DROP TABLE {stage}"))
+                if ops:
+                    d_min, d_max = _frame_span(frame)
+                    _write_import(conn, meta, ops, len(frame), d_min, d_max)
             _ensure_loss_index(conn)
         clear_cache()
 
@@ -1271,12 +1297,446 @@ def truncate_losses():
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
-            if not inspect(conn).has_table("losses"):
-                clear_cache()
-                return
-            if engine.dialect.name == "postgresql":
-                conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
-            else:
-                conn.execute(text("DELETE FROM losses"))
+            _clear_imports(conn)
+            if inspect(conn).has_table("losses"):
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("TRUNCATE TABLE losses RESTART IDENTITY"))
+                else:
+                    conn.execute(text("DELETE FROM losses"))
         clear_cache()
+
+
+_IMPORT_KEYS = ("barcode", "assembly_employee_id", "status_employee_id", "reason")
+_MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+def _ensure_import_tables(conn):
+    conn.execute(text(
+        "CREATE TABLE IF NOT EXISTS loss_imports ("
+        "id INTEGER PRIMARY KEY, kind TEXT NOT NULL, created_at BIGINT NOT NULL, "
+        "actor_id INTEGER, files TEXT NOT NULL, row_count INTEGER NOT NULL, "
+        "date_min TEXT, date_max TEXT)"
+    ))
+    conn.execute(text(
+        "CREATE TABLE IF NOT EXISTS loss_import_ops ("
+        "import_id INTEGER NOT NULL, op TEXT NOT NULL, payload TEXT NOT NULL)"
+    ))
+    conn.execute(text(
+        "CREATE INDEX IF NOT EXISTS loss_import_ops_import_idx ON loss_import_ops (import_id)"
+    ))
+
+
+def _clear_imports(conn):
+    if inspect(conn).has_table("loss_import_ops"):
+        conn.execute(text("DELETE FROM loss_import_ops"))
+    if inspect(conn).has_table("loss_imports"):
+        conn.execute(text("DELETE FROM loss_imports"))
+
+
+def _import_key_text(value):
+    if value is None:
+        return ""
+    try:
+        if pd.isna(value):
+            return ""
+    except TypeError:
+        pass
+    text_value = str(value).strip()
+    if text_value.lower() in {"nan", "none", "<na>", "nat", "null"}:
+        return ""
+    return text_value
+
+
+def _jsonable(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return None if pd.isna(value) else value.isoformat()
+    if isinstance(value, pd.Timestamp):
+        return None if pd.isna(value) else value.isoformat()
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    if hasattr(value, "item"):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    return value
+
+
+def _key_payload(record):
+    return {col: _import_key_text(record.get(col)) for col in _IMPORT_KEYS}
+
+
+def _row_payload(record):
+    payload = {}
+    for col in WRITE_COLUMNS:
+        if col in record:
+            payload[col] = _jsonable(record.get(col))
+    for col in _IMPORT_KEYS:
+        payload.setdefault(col, _import_key_text(record.get(col)))
+    return payload
+
+
+def _mx_payload(record):
+    payload = _key_payload(record)
+    payload["mx"] = _jsonable(record.get("mx"))
+    return payload
+
+
+def _frame_key_tuples(frame, keys):
+    columns = []
+    for col in keys:
+        if col in frame.columns:
+            columns.append(frame[col].tolist())
+        else:
+            columns.append([None] * len(frame))
+    return [tuple(_import_key_text(part) for part in parts) for parts in zip(*columns)]
+
+
+def _frame_span(frame):
+    if frame is None or "loss_date" not in getattr(frame, "columns", []):
+        return None, None
+    dates = pd.to_datetime(frame["loss_date"], errors="coerce").dropna()
+    if dates.empty:
+        return None, None
+    return dates.min().date().isoformat(), dates.max().date().isoformat()
+
+
+def _file_label(meta):
+    names = [str(name).strip() for name in (meta.get("files") or []) if str(name).strip()]
+    return (", ".join(names) if names else "файл")[:500]
+
+
+def _write_import(conn, meta, ops, row_count, date_min, date_max):
+    if not ops:
+        return
+    _ensure_import_tables(conn)
+    conn.execute(text("DELETE FROM loss_import_ops"))
+    import_id = int(conn.execute(text("SELECT COALESCE(MAX(id), 0) + 1 FROM loss_imports")).scalar() or 1)
+    conn.execute(text(
+        "INSERT INTO loss_imports (id, kind, created_at, actor_id, files, row_count, date_min, date_max) "
+        "VALUES (:id, :kind, :created_at, :actor_id, :files, :row_count, :date_min, :date_max)"
+    ), {
+        "id": import_id,
+        "kind": meta.get("kind") or "superset",
+        "created_at": int(time.time()),
+        "actor_id": meta.get("actor_id"),
+        "files": _file_label(meta),
+        "row_count": int(row_count),
+        "date_min": date_min,
+        "date_max": date_max,
+    })
+    statement = text(
+        "INSERT INTO loss_import_ops (import_id, op, payload) VALUES (:import_id, :op, :payload)"
+    )
+    rows = [
+        {"import_id": import_id, "op": op, "payload": json.dumps(payload, ensure_ascii=False)}
+        for op, payload in ops
+    ]
+    for offset in range(0, len(rows), 200):
+        conn.execute(statement, rows[offset:offset + 200])
+    keep = [item[0] for item in conn.execute(text(
+        "SELECT id FROM loss_imports ORDER BY id DESC LIMIT 30"
+    )).all()]
+    if keep:
+        marks = ", ".join(f":k{index}" for index in range(len(keep)))
+        params = {f"k{index}": value for index, value in enumerate(keep)}
+        conn.execute(text(f"DELETE FROM loss_imports WHERE id NOT IN ({marks})"), params)
+
+
+def _last_import(conn):
+    if not inspect(conn).has_table("loss_imports"):
+        return None
+    row = conn.execute(text(
+        "SELECT id, kind, created_at, files, row_count, date_min, date_max "
+        "FROM loss_imports ORDER BY id DESC LIMIT 1"
+    )).mappings().first()
+    if not row:
+        return None
+    undo = conn.execute(
+        text("SELECT 1 FROM loss_import_ops WHERE import_id = :id LIMIT 1"),
+        {"id": row["id"]},
+    ).first()
+    created = int(row["created_at"] or 0)
+    when = datetime.fromtimestamp(created, _MOSCOW).strftime("%d.%m.%Y %H:%M")
+    return {
+        "id": int(row["id"]),
+        "kind": row["kind"] or "superset",
+        "files": row["files"] or "файл",
+        "rows": int(row["row_count"] or 0),
+        "date_min": row["date_min"],
+        "date_max": row["date_max"],
+        "when": when,
+        "undo": undo is not None,
+    }
+
+
+def _merge_ops(conn, stage, matches, cols, frame, keys):
+    col_sql = ", ".join(f"losses.{col}" for col in cols)
+    found = pd.read_sql(text(
+        f"SELECT {col_sql} FROM losses WHERE barcode IN (SELECT barcode FROM {stage}) "
+        f"AND EXISTS (SELECT 1 FROM {stage} WHERE {matches})"
+    ), conn)
+    old_keys = set()
+    ops = []
+    if len(found):
+        for record in found.to_dict("records"):
+            payload = _row_payload(record)
+            ops.append(("put", payload))
+            old_keys.add(tuple(_import_key_text(payload.get(col)) for col in keys))
+    for key in _frame_key_tuples(frame, keys):
+        if key not in old_keys:
+            ops.append(("drop", _key_payload(dict(zip(keys, key)))))
+    return ops
+
+
+def _twin_snap(conn, batch, assembly_sql, period_sql, params, names):
+    binds = {}
+    marks = []
+    for index, row in enumerate(batch):
+        binds[f"snap{index}"] = row["barcode"]
+        marks.append(f":snap{index}")
+    cols = [col for col in ("barcode", "assembly_employee_id", "status_employee_id", "reason", "mx") if col in names]
+    found = pd.read_sql(text(
+        "SELECT " + ", ".join(cols) + " FROM losses WHERE barcode IN (" + ", ".join(marks) + ")"
+        + assembly_sql + period_sql
+    ), conn, params={**params, **binds})
+    wanted = {row["barcode"]: row["mx"] for row in batch}
+    snaps = []
+    if found.empty:
+        return snaps
+    for record in found.to_dict("records"):
+        barcode = record.get("barcode")
+        new_mx = wanted.get(barcode)
+        if new_mx is None:
+            new_mx = wanted.get(_import_key_text(barcode))
+        if new_mx is None:
+            continue
+        if analytics.sticker_text(record.get("mx")) == analytics.sticker_text(new_mx):
+            continue
+        snaps.append(record)
+    return snaps
+
+
+def _temp_keys(conn, name, rows, columns):
+    conn.execute(text(f"DROP TABLE IF EXISTS {name}"))
+    definitions = ", ".join(f"{col} TEXT" for col in columns)
+    conn.execute(text(f"CREATE TEMP TABLE {name} ({definitions})"))
+    if not rows:
+        return
+    statement = text(
+        f"INSERT INTO {name} (" + ", ".join(columns) + ") VALUES ("
+        + ", ".join(f":{col}" for col in columns) + ")"
+    )
+    for offset in range(0, len(rows), 200):
+        conn.execute(statement, rows[offset:offset + 200])
+
+
+def _drop_temp(conn, name):
+    conn.execute(text(f"DROP TABLE IF EXISTS {name}"))
+
+
+def _delete_keys(conn, keys):
+    unique = list(dict.fromkeys(keys))
+    if not unique:
+        return 0
+    columns = list(_IMPORT_KEYS)
+    rows = [dict(zip(columns, key)) for key in unique]
+    _temp_keys(conn, "loss_undo_keys", rows, columns)
+    result = conn.execute(text(
+        "DELETE FROM losses WHERE EXISTS ("
+        "SELECT 1 FROM loss_undo_keys k WHERE "
+        "COALESCE(CAST(losses.barcode AS TEXT), '') = k.barcode AND "
+        "COALESCE(CAST(losses.assembly_employee_id AS TEXT), '') = k.assembly_employee_id AND "
+        "COALESCE(CAST(losses.status_employee_id AS TEXT), '') = k.status_employee_id AND "
+        "COALESCE(CAST(losses.reason AS TEXT), '') = k.reason)"
+    ))
+    _drop_temp(conn, "loss_undo_keys")
+    return int(result.rowcount or 0)
+
+
+def _undo_superset(conn, dialect, ops):
+    puts = []
+    keys = []
+    for op, payload in ops:
+        data = json.loads(payload)
+        keys.append(tuple(_import_key_text(data.get(col)) for col in _IMPORT_KEYS))
+        if op == "put":
+            puts.append(data)
+    removed = _delete_keys(conn, keys) if inspect(conn).has_table("losses") else 0
+    if not puts:
+        return removed
+    frame = pd.DataFrame(puts)
+    for col in ("loss_date", "status_before_date"):
+        if col in frame.columns:
+            frame[col] = pd.to_datetime(frame[col], errors="coerce")
+    keep = [col for col in WRITE_COLUMNS if col in frame.columns]
+    frame = frame.loc[:, keep]
+    _add_missing_columns(conn, frame, dialect)
+    frame.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
+    return removed
+
+
+def _undo_mx(conn, ops):
+    rows = []
+    seen = set()
+    for _op, payload in ops:
+        data = json.loads(payload)
+        key = tuple(_import_key_text(data.get(col)) for col in _IMPORT_KEYS)
+        if key in seen:
+            continue
+        seen.add(key)
+        row = dict(zip(_IMPORT_KEYS, key))
+        row["mx"] = data.get("mx")
+        rows.append(row)
+    if not rows or not inspect(conn).has_table("losses"):
+        return 0
+    columns = list(_IMPORT_KEYS) + ["mx"]
+    _temp_keys(conn, "loss_undo_mx", rows, columns)
+    result = conn.execute(text(
+        "UPDATE losses SET mx = k.mx FROM loss_undo_mx AS k WHERE "
+        "COALESCE(CAST(losses.barcode AS TEXT), '') = k.barcode AND "
+        "COALESCE(CAST(losses.assembly_employee_id AS TEXT), '') = k.assembly_employee_id AND "
+        "COALESCE(CAST(losses.status_employee_id AS TEXT), '') = k.status_employee_id AND "
+        "COALESCE(CAST(losses.reason AS TEXT), '') = k.reason"
+    ))
+    _drop_temp(conn, "loss_undo_mx")
+    return int(result.rowcount or 0)
+
+
+def undo_last_import():
+    """Снимает последнюю выгрузку. Новые строки удаляются, заменённые возвращаются.
+
+    У Twin возвращается прежнее МХ. Следующая выгрузка стирает этот откат.
+    """
+    with _write_lock:
+        engine = get_engine()
+        with engine.begin() as conn:
+            _ensure_import_tables(conn)
+            row = conn.execute(text(
+                "SELECT id, kind, files FROM loss_imports ORDER BY id DESC LIMIT 1"
+            )).mappings().first()
+            if not row:
+                raise ValueError("Нет выгрузки, которую можно снять")
+            stored = conn.execute(
+                text("SELECT op, payload FROM loss_import_ops WHERE import_id = :id"),
+                {"id": row["id"]},
+            ).all()
+            if not stored:
+                raise ValueError("Эту выгрузку уже нельзя снять")
+            ops = [(item[0], item[1]) for item in stored]
+            if row["kind"] == "twin":
+                _undo_mx(conn, ops)
+                message = "МХ последней выгрузки Twin возвращены"
+            else:
+                _undo_superset(conn, engine.dialect.name, ops)
+                message = "Последняя выгрузка снята"
+            conn.execute(text("DELETE FROM loss_import_ops WHERE import_id = :id"), {"id": row["id"]})
+            conn.execute(text("DELETE FROM loss_imports WHERE id = :id"), {"id": row["id"]})
+        clear_cache()
+    return {"message": message, "files": row["files"], "kind": row["kind"]}
+
+
+def _purge_named():
+    named = {str(index): name for index, name in enumerate(analytics.BLOCK_RING_BLOCKS, start=1)}
+    named["out"] = analytics.OUTBOUND_BLOCK
+    return named
+
+
+def _parse_purge(start, end, blocks):
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(start or "")) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(end or "")):
+        raise ValueError("Некорректная дата")
+    d_min = datetime.strptime(start, "%Y-%m-%d").date()
+    d_max = datetime.strptime(end, "%Y-%m-%d").date()
+    if d_max < d_min:
+        raise ValueError("Дата «По» раньше даты «С»")
+    if (d_max - d_min).days + 1 > analytics.FREE_MAX_DAYS:
+        raise ValueError("Период длиннее 366 дней")
+    named = _purge_named()
+    chosen = []
+    for block in blocks or []:
+        token = str(block or "").strip()
+        if token not in named and token != "other":
+            raise ValueError("Неизвестный блок")
+        if token not in chosen:
+            chosen.append(token)
+    if not chosen:
+        raise ValueError("Выберите хотя бы один блок")
+    return d_min, d_max, chosen, named
+
+
+def _purge_frame(conn, dialect, d_min, d_max):
+    if not inspect(conn).has_table("losses"):
+        return pd.DataFrame()
+    names = {col["name"] for col in inspect(conn).get_columns("losses")}
+    if "loss_date" not in names:
+        raise DataError("В таблице losses нет колонки loss_date")
+    rid = "ctid::text" if dialect == "postgresql" else "rowid"
+    wanted = ["loss_date", "block_name", "loss_sum", "reason", "status_before", "block_id", "office_id"]
+    cols = [col for col in wanted if col in names]
+    sql = "SELECT " + rid + " AS _rid, " + ", ".join(cols) + " FROM losses WHERE " + _period_where()
+    return pd.read_sql(text(sql), conn, params=_period_params(d_min, d_max))
+
+
+def _purge_mask(frame, chosen, named):
+    groups = {named[block] for block in chosen if block in named}
+    other = "other" in chosen
+    prepared = analytics.prepare_losses(frame.drop(columns=["_rid"], errors="ignore"))
+    mask = prepared["block_group"].isin(groups) if groups else pd.Series(False, index=prepared.index)
+    if other:
+        mask = mask | ~prepared["block_group"].isin(set(named.values()))
+    return mask.fillna(False).to_numpy()
+
+
+def purge_period(start, end, blocks, confirm=False):
+    """Считает или удаляет строки дней в выбранных блоках. confirm пишет удаление."""
+    d_min, d_max, chosen, named = _parse_purge(start, end, blocks)
+    engine = get_engine()
+    if not confirm:
+        with engine.connect() as conn:
+            frame = _purge_frame(conn, engine.dialect.name, d_min, d_max)
+        if frame.empty:
+            return {"rows": 0, "sum": 0}
+        mask = _purge_mask(frame, chosen, named)
+        if len(mask) != len(frame):
+            raise DataError("Не удалось сопоставить блоки")
+        part = frame[mask]
+        total = float(pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0).sum()) if "loss_sum" in part.columns else 0.0
+        return {"rows": int(mask.sum()), "sum": total}
+    with _write_lock:
+        with engine.begin() as conn:
+            frame = _purge_frame(conn, engine.dialect.name, d_min, d_max)
+            if frame.empty:
+                removed = 0
+            else:
+                mask = _purge_mask(frame, chosen, named)
+                if len(mask) != len(frame):
+                    raise DataError("Не удалось сопоставить блоки")
+                rids = frame[mask]["_rid"].tolist()
+                removed = _delete_rids(conn, engine.dialect.name, rids)
+                if removed:
+                    if inspect(conn).has_table("loss_import_ops"):
+                        conn.execute(text("DELETE FROM loss_import_ops"))
+        clear_cache()
+    return {"rows": int(removed), "sum": None}
+
+
+def _delete_rids(conn, dialect, rids):
+    if not rids:
+        return 0
+    column = "ctid::text" if dialect == "postgresql" else "rowid"
+    removed = 0
+    for offset in range(0, len(rids), 400):
+        chunk = rids[offset:offset + 400]
+        clause = ", ".join(f":r{index}" for index in range(len(chunk)))
+        params = {}
+        for index, rid in enumerate(chunk):
+            params[f"r{index}"] = rid if dialect == "postgresql" else int(rid)
+        result = conn.execute(text(f"DELETE FROM losses WHERE {column} IN ({clause})"), params)
+        removed += int(result.rowcount or 0)
+    return removed
 

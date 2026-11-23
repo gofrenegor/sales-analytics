@@ -1775,6 +1775,24 @@ button.danger {
 }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
 .check { margin-top: 0.4rem; }
+.purge-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+.purge-dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+.purge-blocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.7rem;
+  margin: 0.35rem 0 0.15rem;
+}
 
 .hero {
   display: grid;

@@ -25,7 +25,7 @@ def _pending_path(token, suffix):
     return upload_root() / "pending" / f"{token}{suffix}"
 
 
-def save_pending(token, frame, kind, owner, size, ts):
+def save_pending(token, frame, kind, owner, size, ts, files=None):
     folder = upload_root() / "pending"
     folder.mkdir(parents=True, exist_ok=True)
     data_path = _pending_path(token, ".pkl")
@@ -37,6 +37,7 @@ def save_pending(token, frame, kind, owner, size, ts):
         "owner": owner,
         "size": int(size),
         "ts": float(ts),
+        "files": [str(name) for name in (files or [])],
     }, ensure_ascii=False), encoding="utf-8")
 
 
@@ -53,6 +54,7 @@ def load_pending(token):
         "owner": meta.get("owner"),
         "size": int(meta.get("size") or 0),
         "ts": float(meta.get("ts") or 0),
+        "files": [str(name) for name in (meta.get("files") or [])],
     }
 
 
