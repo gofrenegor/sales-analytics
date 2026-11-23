@@ -217,7 +217,7 @@ systemctl restart sales-analytics
 
 ## Снятие выгрузки
 
-- `db.py`: `loss_imports` и `loss_import_ops` — последняя выгрузка и откат. `merge_losses` / `apply_twin` пишут его, если передан `meta`. Суперсет: новые ключи удаляются, заменённые строки возвращаются. Twin: прежнее МХ. Следующая выгрузка стирает предыдущий откат. `undo_last_import`. `purge_period` удаляет строки периода по дням и блокам 1–4, `out` (Исход) и `other` (оперка, брак, вне маппинга); блок считается тем же `prepare_losses`, что отчёт. Стирание периода или всей базы гасит откат.
+- `db.py`: `loss_imports` и `loss_import_ops` — последняя выгрузка и откат. `merge_losses` / `apply_twin` пишут его, если передан `meta`. На Postgres снимок отката — один JOIN в базе (`_snapshot_superset_import`), строки в процесс не забираются; замок чужого запроса обрывается за 30 с, сам запрос — за 5 мин. Суперсет: новые ключи удаляются, заменённые строки возвращаются. Twin: прежнее МХ. Следующая выгрузка стирает предыдущий откат. `undo_last_import`. `purge_period` удаляет строки периода по дням и блокам 1–4, `out` (Исход) и `other` (оперка, брак, вне маппинга); блок считается тем же `prepare_losses`, что отчёт. Стирание периода или всей базы гасит откат.
 - `server.py`: `POST /api/admin/import/undo`, `POST /api/admin/purge` (`confirm` false — только счёт). Сводка отдаёт `last_import`.
 - `static/index.html`, `static/features/admin.js`, `static/styles.css`: в «что в базе» — «Стереть последнюю выгрузку» и «Стереть период» (`#import-undo-btn`, `#purge-start`, `#purge-end`, `#purge-blocks`, `#purge-count-btn`, `#purge-btn`).
 - `features/uploads.py`: у кадра предпросмотра хранятся имена файлов для подписи выгрузки.

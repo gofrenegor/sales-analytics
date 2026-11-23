@@ -1240,6 +1240,11 @@ def merge_losses(df, meta=None):
     with _write_lock:
         engine = get_engine()
         with engine.begin() as conn:
+            if engine.dialect.name == "postgresql":
+                # Чужой замок не держит кнопку «Загрузка...». Тяжёлый запрос
+                # обрывается, а не занимает единственный воркер до перезапуска.
+                conn.execute(text("SET LOCAL lock_timeout = '30s'"))
+                conn.execute(text("SET LOCAL statement_timeout = '300s'"))
             if not inspect(conn).has_table("losses"):
                 frame.to_sql("losses", conn, if_exists="append", index=False, chunksize=1000)
                 if meta is not None:
@@ -1260,31 +1265,41 @@ def merge_losses(df, meta=None):
                 frame.to_sql(stage, conn, if_exists="append", index=False, chunksize=1000)
                 conn.execute(text(f"CREATE INDEX {stage}_barcode_idx ON {stage} (barcode)"))
                 if "mx" in cols:
-                    conn.execute(text(
-                        f"UPDATE {stage} SET mx = COALESCE(("
-                        f"SELECT losses.mx FROM losses WHERE losses.barcode = {stage}.barcode "
-                        "AND COALESCE(losses.mx, '') <> '' ORDER BY loss_date DESC LIMIT 1), '') "
-                        "WHERE COALESCE(mx, '') = ''"
-                    ))
+                    _fill_stage_mx(conn, engine.dialect.name, stage)
                 matches = f"losses.barcode = {stage}.barcode AND " + " AND ".join(
                     f"COALESCE(CAST(losses.{col} AS TEXT), '') = "
                     f"COALESCE(CAST({stage}.{col} AS TEXT), '')" for col in keys[1:]
                 )
                 ops = []
-                if meta is not None:
+                snapshotted = False
+                if meta is not None and engine.dialect.name == "postgresql":
+                    d_min, d_max = _frame_span(frame)
+                    snapshotted = _snapshot_superset_import(
+                        conn, meta, stage, matches, cols, len(frame), d_min, d_max,
+                    )
+                elif meta is not None:
                     ops = _merge_ops(conn, stage, matches, cols, frame, keys)
-                conn.execute(text(
-                    f"DELETE FROM losses WHERE barcode IN (SELECT barcode FROM {stage}) "
-                    f"AND EXISTS (SELECT 1 FROM {stage} WHERE {matches})"
-                ))
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text(f"DELETE FROM losses USING {stage} WHERE {matches}"))
+                else:
+                    conn.execute(text(
+                        f"DELETE FROM losses WHERE barcode IN (SELECT barcode FROM {stage}) "
+                        f"AND EXISTS (SELECT 1 FROM {stage} WHERE {matches})"
+                    ))
                 conn.execute(text(
                     f"INSERT INTO losses ({columns_sql}) SELECT {columns_sql} FROM {stage}"
                 ))
                 conn.execute(text(f"DROP TABLE {stage}"))
-                if ops:
+                if ops and not snapshotted:
                     d_min, d_max = _frame_span(frame)
                     _write_import(conn, meta, ops, len(frame), d_min, d_max)
-            _ensure_loss_index(conn)
+        try:
+            with engine.begin() as conn:
+                if engine.dialect.name == "postgresql":
+                    conn.execute(text("SET LOCAL lock_timeout = '5s'"))
+                _ensure_loss_index(conn)
+        except Exception:
+            log.warning("loss indexes were not refreshed", exc_info=True)
         clear_cache()
 
 
@@ -1411,6 +1426,86 @@ def _file_label(meta):
     return (", ".join(names) if names else "файл")[:500]
 
 
+def _fill_stage_mx(conn, dialect, stage):
+    """Пустое МХ суперсета берётся из последней непустой записи того же ШК."""
+    if dialect == "postgresql":
+        conn.execute(text(
+            f"UPDATE {stage} AS s SET mx = src.mx FROM ("
+            "SELECT DISTINCT ON (barcode) barcode, mx FROM losses "
+            f"WHERE barcode IN (SELECT barcode FROM {stage}) "
+            "AND COALESCE(mx, '') <> '' "
+            "ORDER BY barcode, loss_date DESC"
+            f") AS src WHERE s.barcode = src.barcode AND COALESCE(s.mx, '') = ''"
+        ))
+        return
+    conn.execute(text(
+        f"UPDATE {stage} SET mx = COALESCE(("
+        f"SELECT losses.mx FROM losses WHERE losses.barcode = {stage}.barcode "
+        "AND COALESCE(losses.mx, '') <> '' ORDER BY loss_date DESC LIMIT 1), '') "
+        "WHERE COALESCE(mx, '') = ''"
+    ))
+
+
+def _trim_imports(conn):
+    keep = [item[0] for item in conn.execute(text(
+        "SELECT id FROM loss_imports ORDER BY id DESC LIMIT 30"
+    )).all()]
+    if not keep:
+        return
+    marks = ", ".join(f":k{index}" for index in range(len(keep)))
+    params = {f"k{index}": value for index, value in enumerate(keep)}
+    conn.execute(text(f"DELETE FROM loss_imports WHERE id NOT IN ({marks})"), params)
+
+
+def _snapshot_superset_import(conn, meta, stage, matches, cols, row_count, date_min, date_max):
+    """Откат пишется в Postgres одним JOIN. Строки losses в процесс не забираются.
+
+    Предыдущий откат стирается только если новый снимок не пуст, и только
+    в этой же транзакции: ошибка сохранения его не трогает.
+    """
+    _ensure_import_tables(conn)
+    import_id = int(conn.execute(text(
+        "SELECT COALESCE(MAX(id), 0) + 1 FROM loss_imports"
+    )).scalar() or 1)
+    col_sql = ", ".join(f"losses.{col}" for col in cols)
+    conn.execute(text(
+        "INSERT INTO loss_import_ops (import_id, op, payload) "
+        f"SELECT :id, 'put', row_to_json(old)::text FROM ("
+        f"SELECT {col_sql} FROM {stage} JOIN losses ON {matches}"
+        ") AS old"
+    ), {"id": import_id})
+    key_bits = ", ".join(
+        f"'{col}', COALESCE(CAST({stage}.{col} AS TEXT), '')" for col in _IMPORT_KEYS
+    )
+    conn.execute(text(
+        "INSERT INTO loss_import_ops (import_id, op, payload) "
+        f"SELECT :id, 'drop', json_build_object({key_bits})::text "
+        f"FROM {stage} WHERE NOT EXISTS (SELECT 1 FROM losses WHERE {matches})"
+    ), {"id": import_id})
+    count = int(conn.execute(
+        text("SELECT COUNT(*) FROM loss_import_ops WHERE import_id = :id"),
+        {"id": import_id},
+    ).scalar() or 0)
+    if not count:
+        return False
+    conn.execute(text("DELETE FROM loss_import_ops WHERE import_id <> :id"), {"id": import_id})
+    conn.execute(text(
+        "INSERT INTO loss_imports (id, kind, created_at, actor_id, files, row_count, date_min, date_max) "
+        "VALUES (:id, :kind, :created_at, :actor_id, :files, :row_count, :date_min, :date_max)"
+    ), {
+        "id": import_id,
+        "kind": meta.get("kind") or "superset",
+        "created_at": int(time.time()),
+        "actor_id": meta.get("actor_id"),
+        "files": _file_label(meta),
+        "row_count": int(row_count),
+        "date_min": date_min,
+        "date_max": date_max,
+    })
+    _trim_imports(conn)
+    return True
+
+
 def _write_import(conn, meta, ops, row_count, date_min, date_max):
     if not ops:
         return
@@ -1439,13 +1534,7 @@ def _write_import(conn, meta, ops, row_count, date_min, date_max):
     ]
     for offset in range(0, len(rows), 200):
         conn.execute(statement, rows[offset:offset + 200])
-    keep = [item[0] for item in conn.execute(text(
-        "SELECT id FROM loss_imports ORDER BY id DESC LIMIT 30"
-    )).all()]
-    if keep:
-        marks = ", ".join(f":k{index}" for index in range(len(keep)))
-        params = {f"k{index}": value for index, value in enumerate(keep)}
-        conn.execute(text(f"DELETE FROM loss_imports WHERE id NOT IN ({marks})"), params)
+    _trim_imports(conn)
 
 
 def _last_import(conn):

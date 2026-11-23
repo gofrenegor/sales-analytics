@@ -1221,6 +1221,17 @@ def preview_finish(body: BatchIn, user=Depends(actor)):
     return result
 
 
+def _commit_error(exc):
+    message = db.public_error(exc).lower()
+    if "lock timeout" in message or "lock not available" in message:
+        return "База занята другим запросом. Повторите через минуту."
+    if "statement timeout" in message:
+        return "Сохранение не успело завершиться: в базе очень много строк. Повторите ещё раз."
+    if "no space left" in message or "disk full" in message or "could not extend" in message:
+        return "На диске базы не осталось места. Выгрузка не записана."
+    return db.public_error(exc)
+
+
 @app.post("/api/admin/commit")
 def commit(body: TokenIn, user=Depends(actor)):
     blocked = denied(user, admin=True)
@@ -1247,7 +1258,7 @@ def commit(body: TokenIn, user=Depends(actor)):
     except Exception as exc:
         log.exception("commit")
         _restore_pending(body.token, item)
-        return fail(400, db.public_error(exc))
+        return fail(400, _commit_error(exc))
     upload_store.release_claim(body.token)
     return {"ok": True, "message": message, "summary": summary}
 

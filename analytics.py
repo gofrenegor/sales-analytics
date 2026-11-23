@@ -203,7 +203,12 @@ def validate_xlsx_payload(payload):
             for info in infos:
                 if not info.filename.startswith("xl/worksheets/") or not info.filename.endswith(".xml"):
                     continue
-                match = dimension.search(archive.read(info))
+                # Dimension sits in the sheet header. Reading the whole
+                # worksheet here decompresses a large Superset export twice
+                # and stalls the only worker on «Разбираем файлы…».
+                with archive.open(info, "r") as handle:
+                    head = handle.read(65536)
+                match = dimension.search(head)
                 if not match:
                     continue
                 letters, rows = match.groups()
