@@ -2499,6 +2499,22 @@ def _employee_badges(part):
     return rows
 
 
+def _employee_operation(reasons, statuses, keep_source=None):
+    """Раскладка — только исходный лост 27. Сборка — исходный 5 и ORS на остальных, кроме 27.
+
+    RNR чужой лост в раскладку не переносит. Окно LR 37 остаётся своим номером.
+    """
+    code = reasons.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    status = statuses.fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
+    ors = status.eq("ORS") & ~code.eq("27")
+    if keep_source is not None:
+        held = keep_source.reindex(code.index).fillna(False).astype(bool)
+        ors = ors & ~held
+    operation = pd.Series("", index=code.index, dtype="object")
+    operation = operation.mask(code.eq("5") | ors, "5")
+    return operation.mask(code.eq("27"), "27")
+
+
 def prepare_employee_losses(df):
     """Только поля списка сотрудников, без классификации склада и графиков."""
     if df is None or df.empty:
@@ -2507,19 +2523,19 @@ def prepare_employee_losses(df):
     if "assembly_employee_id" in part.columns:
         part["assembly_employee_id"] = part["assembly_employee_id"].map(_optional_badge)
     reason = part["reason"] if "reason" in part else pd.Series("", index=part.index)
-    part["reason"] = reason.astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
     status = part["status_before"] if "status_before" in part else pd.Series("", index=part.index)
     part["status_before"] = status.fillna("").astype(str).str.upper().str.replace(r"[^A-Z]", "", regex=True)
-    forced = part["status_before"].map(STATUS_FORCE_LR)
-    hit = forced.notna() & ~part["reason"].eq("5") & ~_lr37_place_inbound(part)
-    part.loc[hit, "reason"] = forced.loc[hit]
+    part["reason"] = _employee_operation(
+        reason, part["status_before"], _lr37_place_inbound(part),
+    )
     return part.loc[part["reason"].isin(EMPLOYEE_LRS)]
 
 
 def build_employees(df):
     """LR 5 и LR 27 по бейджику одним ответом. Сверху тот, у кого больше потерь. WMI — хоть одна потеря после этого статуса. found — сколько оприходовано. Без списка ШК.
 
-    Раскладка — сотрудник перед списанием. Сборка — сборщик из контрагентов.
+    Раскладка — исходный лост 27, бейдж сотрудника перед списанием (колонка AC).
+    Сборка — сборщик из контрагентов.
     """
     df = _visible_losses(df)
     empty = {lr: [] for lr in EMPLOYEE_LRS}
@@ -2580,7 +2596,11 @@ def build_employee_items(df, badge, lr):
         return []
     if df is None or len(df) == 0 or "reason" not in getattr(df, "columns", []):
         return []
-    part = df.loc[df["reason"].astype(str) == code]
+    reasons = df["source_reason"] if "source_reason" in df.columns else df["reason"]
+    statuses = df["status_before"] if "status_before" in df.columns else pd.Series("", index=df.index)
+    part = df.loc[_employee_operation(
+        reasons, statuses, _lr37_place_inbound(df),
+    ).eq(code)]
     if part.empty or "status_employee_id" not in part.columns:
         return []
     if code == "5":

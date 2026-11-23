@@ -915,9 +915,9 @@ def employees(
     if error is not None:
         return error
     if lr is None:
-        return _cached_json("employees-v4", period, _employees_payload)
+        return _cached_json("employees-v5", period, _employees_payload)
     return _cached_json(
-        "employee-page-v2", period,
+        "employee-page-v3", period,
         lambda window: _employees_page_payload(window, lr, page, sort, q),
         extra=(lr, page, sort, q),
     )
@@ -964,7 +964,7 @@ def employee_items(
     if error is not None:
         return error
     return _cached_json(
-        "employee-items-v4", period,
+        "employee-items-v5", period,
         lambda value: _employee_items_payload(value, badge, lr), (badge, lr),
     )
 

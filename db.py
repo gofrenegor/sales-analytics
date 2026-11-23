@@ -789,7 +789,7 @@ def load_cached(start, end, kind="report"):
 
 def load_employee_summary(start, end):
     """Общий компактный список для страниц, поиска и сортировки; кэш инвалидируется импортом."""
-    key = ("employee-summary-v2", start.isoformat(), end.isoformat())
+    key = ("employee-summary-v3", start.isoformat(), end.isoformat())
     with build_lock(("employees", key)):
         generation = cache_generation()
         with _cache_lock:
