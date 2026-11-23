@@ -908,13 +908,17 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     c2y = shelf_y
     # Снаружи дуги: сверху имя лежит на линии, снизу линия остаётся над именем.
     # Процент всегда дальше от кольца, чем имя.
+    # При наведении имя блока встаёт в пустой промежуток у полки, над рублями.
     gap = 3.0
     if shelf_y - cy > 0:
         y_name = shelf_y + gap + font * 0.75
         y_pct = y_name + pct_font + 2.0
+        # Пустое поле над полкой: имя сидит на линии и не пересекает штрих.
+        y_face = shelf_y - 4.0
     else:
         y_name = shelf_y - gap - font * 0.25
         y_pct = y_name - (pct_font + 2.0)
+        y_face = shelf_y + 3.0 + font * 0.75
     x = shelf_x
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
@@ -929,7 +933,9 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     quantity = f"{_f(qty):,.0f}".replace(",", " ") + " шт."
     detail = (
         f'<text class="loss-seg-detail" text-anchor="{anchor}" fill="{color}" font-size="{font}" '
-        f'aria-hidden="true"><tspan x="{x:.2f}" y="{y_name:.2f}">{escape(fmt_rub(amount))}</tspan>'
+        f'aria-hidden="true">'
+        f'<tspan class="loss-seg-face" x="{x:.2f}" y="{y_face:.2f}">{escape(face)}</tspan>'
+        f'<tspan x="{x:.2f}" y="{y_name:.2f}">{escape(fmt_rub(amount))}</tspan>'
         f'<tspan x="{x:.2f}" y="{y_pct:.2f}" font-size="{pct_font}">{escape(quantity)}</tspan></text>'
     )
     svg = path + _label_svg(x, y_name, y_pct, anchor, face, pct_text, color, font, pct_font) + detail
