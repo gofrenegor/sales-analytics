@@ -950,18 +950,31 @@ function renderBlockChart(lines, grain) {
   let platPinned = false;
   let pointerXY = null;
   const stroke = 2.25;
-  const lineEnterPx = 4;
-  const focusAwayPx = 22;
+  const lineEnterPx = 3;
+  const focusAwayPx = 8;
+  const switchGapPx = 2;
   const platAwayPx = 40;
 
-  function nearestLine(line, local) {
+  function px(screenPx, scale) {
+    return screenPx / (scale || 1);
+  }
+
+  // Расстояние до штриха, не до столбца: у пика столбец врёт.
+  // Плашка якорится в ближайшую точку линии, а не в дальнюю вершину дня.
+  function measureLine(line, local) {
     const pts = line.currentPts;
     if (!pts.length) return null;
     if (pts.length === 1) {
-      return { dist: Math.hypot(local.x - pts[0].x, local.y - pts[0].y), at: pts[0] };
+      const end = pts[0];
+      return {
+        dist: Math.hypot(local.x - end.x, local.y - end.y),
+        at: { x: end.x, y: end.y },
+        point: end,
+      };
     }
     let bestDist = Infinity;
-    let bestAt = pts[0];
+    let bestAt = null;
+    let bestPoint = pts[0];
     for (let i = 0; i < pts.length - 1; i += 1) {
       const a = pts[i];
       const b = pts[i + 1];
@@ -970,29 +983,31 @@ function renderBlockChart(lines, grain) {
       const len2 = dx * dx + dy * dy || 1;
       let t = ((local.x - a.x) * dx + (local.y - a.y) * dy) / len2;
       t = Math.max(0, Math.min(1, t));
-      const px = a.x + t * dx;
-      const py = a.y + t * dy;
-      const dist = Math.hypot(local.x - px, local.y - py);
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestAt = { x: px, y: py };
-      }
+      const x = a.x + t * dx;
+      const y = a.y + t * dy;
+      const dist = Math.hypot(local.x - x, local.y - y);
+      if (dist >= bestDist) continue;
+      bestDist = dist;
+      bestAt = { x, y };
+      bestPoint = t < 0.5 ? a : b;
     }
-    return { dist: bestDist, at: bestAt };
+    return { dist: bestDist, at: bestAt, point: bestPoint };
   }
 
   function nearest(local) {
     let best = null;
     let bestDist = Infinity;
     let bestAt = null;
+    let bestPoint = null;
     for (const line of shown) {
-      const hit = nearestLine(line, local);
+      const hit = measureLine(line, local);
       if (!hit || hit.dist >= bestDist) continue;
       best = line;
       bestDist = hit.dist;
       bestAt = hit.at;
+      bestPoint = hit.point;
     }
-    return { line: best, dist: bestDist, at: bestAt };
+    return { line: best, dist: bestDist, at: bestAt, point: bestPoint };
   }
 
   function syncWatch() {
@@ -1025,12 +1040,16 @@ function renderBlockChart(lines, grain) {
     const anchor = svg.createSVGPoint();
     anchor.x = tipAt.x;
     anchor.y = tipAt.y;
-    const screen = anchor.matrixTransform(svg.getScreenCTM());
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return;
+    const screen = anchor.matrixTransform(ctm);
     const width = tip.offsetWidth;
     const height = tip.offsetHeight;
-    let left = screen.x - host.left + 14;
-    if (left + width > host.width) left = Math.max(8, host.width - width - 8);
+    const anchorX = screen.x - host.left;
+    let left = anchorX + 14;
+    if (left + width > host.width - 8) left = anchorX - width - 14;
     if (left < 8) left = 8;
+    if (left + width > host.width - 8) left = Math.max(8, host.width - width - 8);
     const hero = wrap.closest(".hero");
     const donut = hero ? hero.querySelector(".loss-donut") : null;
     const donutBox = donut ? donut.getBoundingClientRect() : null;
@@ -1043,22 +1062,8 @@ function renderBlockChart(lines, grain) {
     tip.style.top = `${topAbs - host.top}px`;
   }
 
-  function nearestDate(line, local) {
-    const pts = line.currentPts;
-    let best = pts[0];
-    let bestDist = Math.abs(local.x - best.x);
-    for (let i = 1; i < pts.length; i += 1) {
-      const dist = Math.abs(local.x - pts[i].x);
-      if (dist < bestDist) {
-        best = pts[i];
-        bestDist = dist;
-      }
-    }
-    return best;
-  }
-
-  function showLine(line, local) {
-    const point = nearestDate(line, local);
+  function showLine(line, hit) {
+    const point = hit.point;
     const opening = !tip.classList.contains("is-in") || hotName !== line.name;
     tip._fill(line, point);
     tip.hidden = false;
@@ -1066,7 +1071,7 @@ function renderBlockChart(lines, grain) {
       tip.classList.remove("is-in");
       void tip.offsetWidth;
     }
-    placeTip(point);
+    placeTip(hit.at);
     tip.classList.add("is-in");
     if (hotName !== line.name) paint(line.name);
   }
@@ -1089,7 +1094,7 @@ function renderBlockChart(lines, grain) {
     const mapped = localOf(event);
     if (!mapped) return null;
     const found = nearest(mapped.local);
-    const enter = stroke / 2 + lineEnterPx / mapped.scale;
+    const enter = stroke / 2 + px(lineEnterPx, mapped.scale);
     if (!found.line || found.dist > enter) return null;
     return found.line;
   }
@@ -1196,8 +1201,8 @@ function renderBlockChart(lines, grain) {
     const mapped = localOf(event);
     if (!mapped) return;
     const hot = shown.find((line) => line.name === hotName);
-    const still = hot ? nearestLine(hot, mapped.local) : null;
-    const leave = stroke / 2 + focusAwayPx / mapped.scale;
+    const still = hot ? measureLine(hot, mapped.local) : null;
+    const leave = stroke / 2 + px(focusAwayPx, mapped.scale);
     if (still && still.dist <= leave) return;
     if (lineAt(event)) return;
     hideLine();
@@ -1209,30 +1214,38 @@ function renderBlockChart(lines, grain) {
     releaseFocus(event);
   }
 
+  function pickLine(local, scale) {
+    const found = nearest(local);
+    const enter = stroke / 2 + px(lineEnterPx, scale);
+    const leave = stroke / 2 + px(focusAwayPx, scale);
+    const gap = px(switchGapPx, scale);
+    let pick = found.line && found.dist <= enter ? found : null;
+    if (!hotName) return pick;
+    const hot = shown.find((line) => line.name === hotName);
+    const still = hot ? measureLine(hot, local) : null;
+    const hotClose = Boolean(still && still.dist <= leave);
+    const hotHit = hotClose ? { line: hot, dist: still.dist, at: still.at, point: still.point } : null;
+    if (pick && hotHit && still.dist <= enter && pick.line.name !== hotName && pick.dist + gap >= still.dist) {
+      return hotHit;
+    }
+    if (!pick && hotHit) return hotHit;
+    return pick;
+  }
+
   function onMove(event) {
     const mapped = localOf(event);
     if (!mapped) return;
     onChartPointer(event);
-    const found = nearest(mapped.local);
-    const enter = stroke / 2 + lineEnterPx / mapped.scale;
-    const leave = stroke / 2 + focusAwayPx / mapped.scale;
-    const inZone = Boolean(found.line && found.dist <= enter);
-    if (!inZone && !platOpen) platArm = true;
-    if (inZone) {
-      if (!platOpen && platArm) openPlats(found.line, event);
-      else if (platOpen && platOpen.name !== found.line.name) openPlats(found.line, event);
-      showLine(found.line, mapped.local);
+    const pick = pickLine(mapped.local, mapped.scale);
+    const enter = stroke / 2 + px(lineEnterPx, mapped.scale);
+    if (!(pick && pick.dist <= enter) && !platOpen) platArm = true;
+    if (!pick) {
+      if (hotName) hideLine();
       return;
     }
-    if (hotName) {
-      const hot = shown.find((line) => line.name === hotName);
-      const still = hot ? nearestLine(hot, mapped.local) : null;
-      if (still && still.dist <= leave) {
-        showLine(hot, mapped.local);
-        return;
-      }
-      hideLine();
-    }
+    if (!platOpen && platArm) openPlats(pick.line, event);
+    else if (platOpen && platOpen.name !== pick.line.name) openPlats(pick.line, event);
+    showLine(pick.line, pick);
   }
 
   const fine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
@@ -1243,7 +1256,7 @@ function renderBlockChart(lines, grain) {
       const mapped = localOf(event);
       if (!mapped) return;
       const found = nearest(mapped.local);
-      const reach = stroke / 2 + 24 / mapped.scale;
+      const reach = stroke / 2 + px(12, mapped.scale);
       if (!found.line || found.dist > reach || found.line.name === hotName) {
         hideLine();
         shutPlats(event);
@@ -1251,7 +1264,7 @@ function renderBlockChart(lines, grain) {
         return;
       }
       openPlats(found.line, event);
-      showLine(found.line, mapped.local);
+      showLine(found.line, found);
     });
   }
   setPlatKey(onPinKey);
