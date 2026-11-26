@@ -577,6 +577,11 @@ function renderEmployees(screen) {
     el("div", { class: "emp-toolbar" },
       el("p", { class: "hint" }, `${fmtInt(shownLosses)} ${lossLabel(shownLosses)}`),
       empSortControl(),
+      el("button", {
+        type: "button",
+        class: "quiet",
+        onclick: (event) => downloadEmployeesCsv(event.currentTarget),
+      }, "Скачать"),
     ),
   );
   if (!pack.operation_total) {
@@ -702,6 +707,87 @@ function empFoundNode(found) {
   return el("span", { class: "emp-found unknown" }, "нет флага");
 }
 
+function employeeExportStart() {
+  const period = state.report && state.report.period;
+  return (period && period.start) || state.anchor || state.rangeStart || "period";
+}
+
+async function downloadEmployeesCsv(button) {
+  const lr = state.empLr === "27" ? "27" : "5";
+  const params = periodParams();
+  params.set("lr", lr);
+  params.set("sort", state.empSort);
+  params.set("q", state.badgeQuery || "");
+  params.set("export", "1");
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = "Загрузка…";
+  try {
+    const response = await fetch(`/api/employees?${params.toString()}`);
+    if (response.status === 401) {
+      showGate();
+      return;
+    }
+    const data = await parseJson(response);
+    if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+    const rows = (data.rows || []).map((row) => [
+      row.badge ?? "",
+      row.losses ?? "",
+      row.found == null ? "" : row.found,
+      row.sum ?? "",
+    ]);
+    downloadCsv(
+      `sotrudniki-${lr}-${employeeExportStart()}.csv`,
+      ["Бейджик", "Потери", "Найдено", "Сумма"],
+      rows,
+    );
+  } catch {
+    // Выгрузка не заменяет список на экране.
+  } finally {
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  }
+}
+
+function empLossDateText(value) {
+  const text = String(value || "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) return "";
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function empStickerNode(item) {
+  const wrap = el("span", { class: "emp-sticker-wrap" },
+    el("span", { class: "emp-sticker" }, item.sticker || "—"),
+  );
+  const date = empLossDateText(item.loss_date);
+  if (date) wrap.append(el("span", { class: "emp-date" }, date));
+  return wrap;
+}
+
+function empStickersCsvButton(detail, lr) {
+  const showMx = String(lr) === "5";
+  const header = ["Стикер"];
+  if (showMx) header.push("МХ");
+  header.push("Статус", "Найдено", "Сумма", "Дата");
+  const rows = detail.items.map((item) => {
+    const status = item.found === true
+      ? (item.status_after || "")
+      : showMx ? (item.status_before || "") : "";
+    const found = item.found === true ? "найдено" : item.found === false ? "не найдено" : "";
+    const row = [item.sticker || ""];
+    if (showMx) row.push(item.mx || "");
+    row.push(status, found, item.sum ?? "", item.loss_date || "");
+    return row;
+  });
+  const key = String(detail.key || "");
+  const prefix = `${lr}|`;
+  const badge = key.startsWith(prefix) ? key.slice(prefix.length) : "";
+  return downloadButton(`stickery-${badge}-${lr}.csv`, header, rows);
+}
+
 function renderEmpDetail(detail, lr) {
   const showMx = String(lr) === "5";
   const box = el("div", { class: showMx ? "emp-detail has-mx" : "emp-detail" });
@@ -721,12 +807,13 @@ function renderEmpDetail(detail, lr) {
     box.append(el("p", { class: "hint" }, "Нет строк за этот период."));
     return box;
   }
+  box.append(empStickersCsvButton(detail, lr));
   const missingMx = showMx && detail.items.every((item) => !String(item.mx || "").trim());
   for (const item of detail.items.slice(0, state.empDetailLimit)) {
     const row = el(
       "div",
       { class: "emp-item" },
-      el("span", { class: "emp-sticker" }, item.sticker || "—"),
+      empStickerNode(item),
     );
     if (showMx) row.append(empMxNode(item.mx));
     row.append(item.found === true

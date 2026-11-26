@@ -199,6 +199,9 @@ async function loadReport(options = {}) {
     state.report = null;
     state.reportKey = "";
     state.reportDetail = "";
+    state.searchFlows = null;
+    state.searchFlowsKey = "";
+    state.otherOpen = false;
   }
   if (state.view === "employees") {
     setStatus("");
@@ -256,7 +259,8 @@ function renderNotes() {
     if (item.type === "day") {
       note.append("Выбран день: ", strong(item.current), " · сравнение: ", strong(item.previous));
     } else if (item.type === "free") {
-      note.append("Период: ", strong(item.current), ` (${item.days} дн.). Сравнение пока не считаем.`);
+      note.append("Период: ", strong(item.current), ` (${item.days} дн.)`);
+      if (item.previous) note.append(" · сравнение с теми же днями: ", strong(item.previous));
     } else {
       note.append(
         "Период: ", strong(item.current), ` (${item.days} дн.) · сравнение с теми же днями: `, strong(item.previous),

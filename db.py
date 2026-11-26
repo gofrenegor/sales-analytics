@@ -1353,6 +1353,64 @@ def _import_key_text(value):
     return text_value
 
 
+def count_older_replacements(frame):
+    """Сколько строк файла заменят ту же потерю с более поздней датой в базе.
+
+    Ключ тот же, что у сохранения: ШК, оба сотрудника и LR. День сравнивается
+    без времени. Одинаковый день предупреждения не даёт.
+    """
+    if frame is None or len(frame) == 0 or "barcode" not in getattr(frame, "columns", []):
+        return 0
+    if "loss_date" not in frame.columns:
+        return 0
+    keys = ("barcode", "assembly_employee_id", "status_employee_id", "reason")
+    work = frame.copy()
+    for col in keys:
+        if col not in work.columns:
+            work[col] = ""
+    parsed = pd.to_datetime(work["loss_date"], errors="coerce")
+    work = work.loc[parsed.notna()]
+    if work.empty:
+        return 0
+    seen = {}
+    for record, day in zip(work.to_dict("records"), parsed.loc[work.index].dt.strftime("%Y-%m-%d")):
+        item = {col: _import_key_text(record.get(col)) for col in keys}
+        item["loss_day"] = str(day)
+        seen[tuple(item[col] for col in keys)] = item
+    rows = list(seen.values())
+    engine = get_engine()
+    with engine.connect() as conn:
+        if not inspect(conn).has_table("losses"):
+            return 0
+        conn.execute(text("DROP TABLE IF EXISTS loss_age_keys"))
+        conn.execute(text(
+            "CREATE TEMP TABLE loss_age_keys ("
+            "barcode TEXT, assembly_employee_id TEXT, status_employee_id TEXT, "
+            "reason TEXT, loss_day TEXT)"
+        ))
+        statement = text(
+            "INSERT INTO loss_age_keys "
+            "(barcode, assembly_employee_id, status_employee_id, reason, loss_day) "
+            "VALUES (:barcode, :assembly_employee_id, :status_employee_id, :reason, :loss_day)"
+        )
+        for offset in range(0, len(rows), 200):
+            conn.execute(statement, rows[offset:offset + 200])
+        newer = (
+            "CAST(losses.loss_date AS date) > CAST(k.loss_day AS date)"
+            if engine.dialect.name == "postgresql"
+            else "date(losses.loss_date) > k.loss_day"
+        )
+        match = " AND ".join(
+            f"COALESCE(CAST(losses.{col} AS TEXT), '') = k.{col}" for col in keys
+        )
+        count = conn.execute(text(
+            "SELECT COUNT(*) FROM losses WHERE EXISTS ("
+            "SELECT 1 FROM loss_age_keys k WHERE " + match + " AND " + newer + ")"
+        )).scalar()
+        conn.execute(text("DROP TABLE IF EXISTS loss_age_keys"))
+    return int(count or 0)
+
+
 def _jsonable(value):
     if value is None:
         return None

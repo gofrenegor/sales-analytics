@@ -3008,3 +3008,21 @@ button.back:active { transform: translateX(-3px); }
   .writeoff-table th, .writeoff-table td { padding-inline: 8px; }
   .writeoff-card-note { padding: 12px 14px; }
 }
+
+.emp-item > .emp-sticker-wrap {
+  display: block;
+  min-width: 0;
+}
+.emp-sticker-wrap > .emp-sticker {
+  display: block;
+}
+.emp-date {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.emp-toolbar > button.quiet {
+  margin-top: 0;
+}

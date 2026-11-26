@@ -8,8 +8,10 @@ from analytics import (
     OUTBOUND_BLOCK,
     DEFECT_GROUP,
     DEFECT_STATUSES,
+    build_employee_items,
     build_loss_donut_svg,
     build_report,
+    compute_free_period,
     compute_period,
     daily_series,
     fmt_rub,
@@ -208,6 +210,43 @@ def test_periods():
     future = compute_period("Месяц", date(2026, 12, 1), today)
     assert future["start"] == future["end"] == "2026-12-01"
     assert future["days"] == 1
+
+
+def test_free_period_matches_previous_window():
+    period = compute_free_period(date(2026, 10, 10), date(2026, 10, 12))
+    assert period["compare"] is True
+    assert (period["start"], period["end"], period["prev_start"], period["prev_end"]) == (
+        "2026-10-10", "2026-10-12", "2026-10-07", "2026-10-09",
+    )
+    assert period["note"]["previous"] == "07.10.2026 — 09.10.2026"
+    one = compute_free_period(date(2026, 10, 10), date(2026, 10, 10))
+    assert (one["prev_start"], one["prev_end"]) == ("2026-10-09", "2026-10-09")
+
+
+def test_outbound_sum_stays_out_of_flow_cards():
+    period = compute_period("День", date(2026, 10, 10), date(2026, 10, 28))
+    current = prepare_losses(pd.DataFrame([
+        row(barcode="home", loss_sum=100, reason="5"),
+        row(barcode="out", block_name="Рязань Тюшевское", loss_sum=40, reason="5"),
+    ]))
+    report = build_report(current, prepare_losses(pd.DataFrame()), period)
+    flow = report["flows"]["out"]
+    assert OUTBOUND_BLOCK not in [card["name"] for card in flow["cards"]]
+    assert flow["outbound_sum"] == 40
+    assert flow["sum"] == 140
+
+
+def test_employee_item_keeps_loss_date():
+    frame = prepare_losses(pd.DataFrame([
+        row(
+            barcode="s", reason="5", assembly_employee_id="555",
+            loss_date=pd.Timestamp("2026-10-10 08:15"), last_sticker="ABC", posted="1",
+        ),
+    ]))
+    items = build_employee_items(frame, "555", "5")
+    assert len(items) == 1
+    assert items[0]["loss_date"] == "2026-10-10"
+    assert items[0]["sticker"] == "ABC"
 
 
 def test_delta_and_donut():

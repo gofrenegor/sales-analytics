@@ -109,6 +109,67 @@ def test_empty_then_upload_replace_and_wipe(client):
     assert client.get("/api/report", params={"mode": "День", "anchor": today.isoformat()}).json()["empty"] is True
 
 
+def test_older_upload_warns_and_employee_export_is_complete(client):
+    today = date.fromisoformat(client.get("/api/bootstrap").json()["today"])
+    older = today.fromordinal(today.toordinal() - 3)
+    newer = today.fromordinal(today.toordinal() + 1)
+    first = xlsx([loss_row(today, "same", 10)])
+    preview = client.post("/api/admin/preview", files=[("files", ("now.xlsx", first, MIME))])
+    assert preview.status_code == 200
+    assert preview.json()["older_rows"] == 0
+    assert client.post("/api/admin/commit", json={"token": preview.json()["token"]}).status_code == 200
+
+    stale = client.post(
+        "/api/admin/preview",
+        files=[("files", ("old.xlsx", xlsx([loss_row(older, "same", 4)]), MIME))],
+    )
+    assert stale.status_code == 200
+    assert stale.json()["older_rows"] == 1
+
+    fresh = client.post(
+        "/api/admin/preview",
+        files=[("files", ("new.xlsx", xlsx([loss_row(newer, "same", 6)]), MIME))],
+    )
+    assert fresh.status_code == 200
+    assert fresh.json()["older_rows"] == 0
+    yesterday = today.fromordinal(today.toordinal() - 1)
+    kept = client.post(
+        "/api/admin/preview",
+        files=[("files", ("kept.xlsx", xlsx([loss_row(yesterday, "kept", 2)]), MIME))],
+    )
+    assert client.post("/api/admin/commit", json={"token": kept.json()["token"]}).status_code == 200
+
+    rows = []
+    for index in range(26):
+        rows.append({
+            **loss_row(today, f"e{index}", 3),
+            "Лостризон первого списания": 5,
+            "Тип контрагента": "EMP",
+            "Контрагент ID": 3000 + index,
+        })
+    staff = client.post("/api/admin/preview", files=[("files", ("staff.xlsx", xlsx(rows), MIME))])
+    assert staff.status_code == 200
+    assert client.post("/api/admin/commit", json={"token": staff.json()["token"]}).status_code == 200
+    params = {"mode": "День", "anchor": today.isoformat(), "lr": "5", "sort": "qty"}
+    page = client.get("/api/employees", params={**params, "page": 0})
+    exported = client.get("/api/employees", params={**params, "export": 1})
+    assert page.status_code == 200
+    assert exported.status_code == 200
+    assert len(page.json()["rows"]) == 25
+    assert exported.json()["total"] == 26
+    assert len(exported.json()["rows"]) == 26
+    assert "page" not in exported.json()
+
+    free = client.get("/api/report", params={
+        "mode": "Свободный", "start": today.isoformat(), "end": today.isoformat(), "detail": "summary",
+    })
+    assert free.status_code == 200
+    body = free.json()
+    assert body["period"]["compare"] is True
+    assert body["period"]["prev_start"] == yesterday.isoformat()
+    assert body["has_prev"] is True
+
+
 def test_secrets_file_order(tmp_path, monkeypatch):
     import db
 

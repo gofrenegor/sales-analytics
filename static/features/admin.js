@@ -321,6 +321,13 @@ function wireAdmin() {
           preview.append(el("p", { class: "hint" }, "В суперсете нет МХ пропуска. После сохранения загрузите Twin."));
         }
         preview.append(el("p", { class: "hint" }, "Совпавшие ШК у тех же сотрудников обновятся, включая флаг оприходования и статус после списания. Новые потери добавятся, остальные сохранятся. Уже дописанное МХ по тому же ШК сохранится. Для обновления старых потерь включите их даты в выгрузку. Последнюю выгрузку можно снять в «что в базе», пока поверх неё не загружен следующий файл."));
+        if (data.older_rows) {
+          preview.append(el(
+            "p",
+            { class: "box warn" },
+            `Файл старше уже сохранённых потерь: ${fmtInt(data.older_rows)} строк заменят более новую дату того же ШК и LR. Сохранение не блокируется.`,
+          ));
+        }
       }
       const button = el("button", { type: "button", class: "wide primary" }, saveLabel);
       button.addEventListener("click", async () => {
@@ -680,13 +687,15 @@ function wireSearch() {
   const hits = document.getElementById("search-hits");
   if (!input || !hits) return;
   let items = [];
+  let searchSeq = 0;
   const hide = () => {
+    searchSeq += 1;
     hits.hidden = true;
     hits.replaceChildren();
     items = [];
   };
-  const paint = () => {
-    items = searchHits(input.value);
+  const paintHits = (report) => {
+    items = searchHits(input.value, report);
     hits.replaceChildren();
     if (!input.value.trim()) {
       hits.hidden = true;
@@ -715,6 +724,43 @@ function wireSearch() {
         el("span", { class: "search-sum" }, fmtRub(item.sum)),
       ));
     }
+  };
+  const paint = async () => {
+    const seq = ++searchSeq;
+    const query = input.value;
+    if (!query.trim()) {
+      hide();
+      return;
+    }
+    let report = searchSource();
+    if (!report && !freeRangePending()) {
+      hits.hidden = false;
+      hits.replaceChildren(el("p", { class: "search-empty" }, "Загрузка…"));
+      try {
+        const params = periodParams();
+        params.set("detail", "flows");
+        const response = await fetchLatest("search", `/api/report?${params.toString()}`);
+        const data = await parseJson(response);
+        if (seq !== searchSeq) return;
+        if (response.status === 401) {
+          hide();
+          showGate();
+          return;
+        }
+        if (!response.ok) throw new Error(data.error || "Ошибка загрузки");
+        state.searchFlows = data;
+        state.searchFlowsKey = periodKey();
+        report = data;
+      } catch (error) {
+        if (error && error.name === "AbortError") return;
+        if (seq !== searchSeq) return;
+        hits.hidden = false;
+        hits.replaceChildren(el("p", { class: "search-empty" }, "Не удалось загрузить поиск"));
+        return;
+      }
+    }
+    if (seq !== searchSeq || input.value !== query) return;
+    paintHits(report);
   };
   input.addEventListener("input", paint);
   input.addEventListener("keydown", (event) => {

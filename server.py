@@ -502,6 +502,12 @@ def _preview_superset(blobs, frames, owner):
         token = _put_pending(frame, "superset", owner, [name for name, _payload in blobs])
         if token is None:
             return fail(503, "Нет места для предпросмотра. Завершите другие загрузки.")
+    older_rows = 0
+    if len(frame):
+        try:
+            older_rows = db.count_older_replacements(frame)
+        except Exception:
+            log.exception("older upload count")
     return {
         "kind": "superset",
         "files": len(blobs),
@@ -509,6 +515,7 @@ def _preview_superset(blobs, frames, owner):
         "skipped_no_date": int(skipped),
         "duplicates": int(dups),
         "mx_rows": mx_rows,
+        "older_rows": older_rows,
         "start": start,
         "end": end,
         "token": token,
@@ -817,7 +824,7 @@ def _employees_payload(period):
     return {"employees": db.load_employee_summary(period["_start"], period["_end"])}
 
 
-def _employees_page_payload(period, lr, page, sort, query):
+def _employees_page_payload(period, lr, page, sort, query, export=False):
     all_rows = db.load_employee_summary(period["_start"], period["_end"])[lr]
     rows = [row for row in all_rows if query in row["badge"]] if query else list(all_rows)
 
@@ -837,6 +844,13 @@ def _employees_page_payload(period, lr, page, sort, query):
 
     rows.sort(key=sort_key)
     total = len(rows)
+    if export:
+        return {
+            "rows": rows, "total": total, "operation_total": len(all_rows),
+            "losses": sum(row["losses"] for row in rows),
+            "sum": analytics._f(sum(row["sum"] for row in rows)),
+            "badges_missing": bool(all_rows) and all(not row["badge"] for row in all_rows),
+        }
     pages = 1 if total <= 25 else 2 if total <= 75 else 2 + (total - 75 + 99) // 100
     page = min(page, pages - 1)
     offset = 0 if page == 0 else 25 if page == 1 else 75 + (page - 2) * 100
@@ -890,7 +904,7 @@ def report(
     if detail not in {"summary", "flows", "blocks", "writeoffs", "full"}:
         return fail(400, "Некорректный режим детализации отчёта")
     return _cached_json(
-        "report-v14", period,
+        "report-v15", period,
         lambda current_period: _report_payload(current_period, detail),
         extra=(detail,),
     )
@@ -906,6 +920,7 @@ def employees(
     page: int = Query(default=0, ge=0, le=1000000),
     sort: str = Query(default="qty", pattern="^(qty|sum|found|found_share)$"),
     q: str = Query(default="", max_length=64, pattern=r"^[0-9]*$"),
+    export: int = Query(default=0, ge=0, le=1),
     user=Depends(actor),
 ):
     blocked = denied(user)
@@ -916,6 +931,12 @@ def employees(
         return error
     if lr is None:
         return _cached_json("employees-v6", period, _employees_payload)
+    if export:
+        return _cached_json(
+            "employee-page-v4", period,
+            lambda window: _employees_page_payload(window, lr, 0, sort, q, export=True),
+            extra=(lr, "all", sort, q),
+        )
     return _cached_json(
         "employee-page-v4", period,
         lambda window: _employees_page_payload(window, lr, page, sort, q),
@@ -964,7 +985,7 @@ def employee_items(
     if error is not None:
         return error
     return _cached_json(
-        "employee-items-v6", period,
+        "employee-items-v7", period,
         lambda value: _employee_items_payload(value, badge, lr), (badge, lr),
     )
 
