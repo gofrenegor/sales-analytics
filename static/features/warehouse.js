@@ -72,16 +72,103 @@ function renderDashboard(screen) {
     hero.append(el("div", { class: "daily-board" }, chartCol));
   }
   screen.append(hero);
+  if (blocksMode) screen.append(renderBlockMovers());
   if (dash.other && dash.other.show) {
     const box = el("div", { class: "aside-metric" });
     const label = el("div", { class: "aside-label" }, "Вне потоков ", el("span", null, "· не входит в диаграмму"));
     box.append(label, el("div", { class: "aside-value" }, fmtRub(dash.other.sum)));
     if (dash.other.delta_text) box.append(el("div", { class: "aside-delta" }, dash.other.delta_text));
+    if (dash.other.has_rows) {
+      box.style.cursor = "pointer";
+      box.tabIndex = 0;
+      box.setAttribute("role", "button");
+      box.setAttribute("aria-expanded", state.otherOpen ? "true" : "false");
+      const toggle = () => {
+        state.otherOpen = !state.otherOpen;
+        render();
+      };
+      box.addEventListener("click", toggle);
+      box.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggle();
+        }
+      });
+    }
     screen.append(box);
   }
   if (dash.other && dash.other.has_rows) {
-    screen.append(el("p", { class: "hint" }, "Статусы вне потоков временно исключены из диаграммы и итогов — список в админке, вкладка «Инфо»."));
+    screen.append(el("p", { class: "hint" }, state.otherOpen
+      ? "Статусы вне потоков не входят в диаграмму и итоги."
+      : "Статусы вне потоков не входят в диаграмму и итоги. Нажмите плашку, чтобы открыть список."));
+    if (state.otherOpen) screen.append(renderOutsideFlows());
   }
+}
+
+function renderOutsideFlows() {
+  const rows = (state.report && state.report.quality && state.report.quality.other_rows) || [];
+  if (!rows.length) return el("p", { class: "hint" }, "Список статусов пуст.");
+  return moneyTable(
+    ["Статус", "LR", "Сумма"],
+    rows.map((row) => [row.status, row.reason, fmtRub(row.sum)]),
+  );
+}
+
+function blockSliceMoves() {
+  const lines = (state.report && state.report.dashboard && state.report.dashboard.blocks && state.report.dashboard.blocks.lines) || [];
+  const items = [];
+  for (const line of lines) {
+    let prev = 0;
+    for (const point of line.points || []) {
+      if (point.period === "Прошлый период") prev += Number(point.sum) || 0;
+    }
+    const diff = (Number(line.asm) || 0) + (Number(line.lay) || 0) - prev;
+    if (!diff) continue;
+    items.push({ name: line.face || line.name, block: line.name, diff });
+  }
+  return {
+    up: items.filter((item) => item.diff > 0).sort((a, b) => b.diff - a.diff)[0] || null,
+    down: items.filter((item) => item.diff < 0).sort((a, b) => a.diff - b.diff)[0] || null,
+  };
+}
+
+function blockMover(item, kind) {
+  const title = kind === "up" ? "Взлёт" : "Падение";
+  if (!item) {
+    return el(
+      "div",
+      { class: `mover ${kind} idle` },
+      el("span", { class: "mover-kicker" }, title),
+      el("span", { class: "mover-where" }, kind === "up" ? "Нет взлёта" : "Нет падения"),
+    );
+  }
+  const money = kind === "up" ? `+${fmtRub(item.diff)}` : fmtRub(item.diff);
+  return el(
+    "button",
+    {
+      type: "button",
+      class: `mover ${kind}`,
+      onclick: () => go({ view: "block_loss", block: item.block }),
+    },
+    el("span", { class: "mover-kicker" }, title),
+    el(
+      "span",
+      { class: "mover-line" },
+      el("span", { class: "mover-lr" }, item.name),
+      el("span", { class: "mover-delta" }, money),
+    ),
+  );
+}
+
+function renderBlockMovers() {
+  const panel = el("section", { class: "movers", "aria-label": "Взлёты и падения блоков" });
+  if (!state.report || !state.report.has_prev) {
+    panel.append(el("p", { class: "mover-empty" }, "Для этого разреза нет прошлого периода."));
+    return panel;
+  }
+  const moves = blockSliceMoves();
+  panel.append(blockMover(moves.up, "up"), blockMover(moves.down, "down"));
+  return panel;
 }
 
 function renderFlow(screen) {
@@ -109,6 +196,13 @@ function renderFlow(screen) {
     el("h3", null, "Выберите блок для детализации:"),
     renderCards(flow.cards, "от потока", (card) => go({ view: "group", group: card.name, block: "" })),
   );
+  if (flow.outbound_sum) {
+    screen.querySelector(".big-sum").after(el(
+      "p",
+      { class: "hint" },
+      `В том числе Исход: ${fmtRub(flow.outbound_sum)} · ${fmtInt(flow.outbound_qty)} шт. В карточки ниже не входит.`,
+    ));
+  }
 }
 
 function renderGroup(screen) {
@@ -191,8 +285,6 @@ function renderBlockLoss(screen) {
     screen.append(missing("dashboard"));
     return;
   }
-  const lr = state.blockLr === "27" ? "27" : "5";
-  const series = (page.series && page.series[lr]) || [];
   const ring = el("div", { class: "loss-col" });
   ring.replaceChildren(safeSvgFragment(page.donut_svg || ""));
   const hero = el("div", { class: "hero hero-block" });
@@ -200,20 +292,12 @@ function renderBlockLoss(screen) {
   const chartCol = el(
     "div",
     { class: "daily-chart" },
-    el(
+      el(
       "div",
       { class: "block-chart-head" },
       el("h3", null, "Динамика потерь"),
-      el("button", {
-        type: "button",
-        class: "block-lr",
-        onclick: () => {
-          state.blockLr = state.blockLr === "27" ? "5" : "27";
-          render();
-        },
-      }, lr === "27" ? "раскладка" : "сборка"),
     ),
-    renderChart(series, state.report.chart_grain),
+    renderBlockLrChart(page.series || {}, state.report.chart_grain),
   );
   hero.append(el("div", { class: "daily-board" }, chartCol));
   screen.append(

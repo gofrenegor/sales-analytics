@@ -280,8 +280,24 @@ function queryBare(query) {
 let searchIndexReport = null;
 let searchIndexRows = null;
 
-function searchIndex() {
-  const report = state.report;
+function reportHasGroupViews(report) {
+  const flows = report && report.flows;
+  if (!flows || !flows.in || !flows.out) return false;
+  const cards = [...(flows.in.cards || []), ...(flows.out.cards || [])];
+  if (!cards.length) return true;
+  return cards.every((card) => card.group_view);
+}
+
+function searchSource() {
+  if (reportHasGroupViews(state.report)) return state.report;
+  if (state.searchFlows && state.searchFlowsKey === periodKey() && reportHasGroupViews(state.searchFlows)) {
+    return state.searchFlows;
+  }
+  return null;
+}
+
+function searchIndex(report) {
+  report = report || state.report;
   if (searchIndexReport === report && searchIndexRows) return searchIndexRows;
   const rows = [];
   if (report && !report.empty && report.flows) {
@@ -328,12 +344,13 @@ function searchIndex() {
   return rows;
 }
 
-function searchHits(query) {
+function searchHits(query, report) {
   const bare = queryBare(query);
-  if (!bare || !state.report || state.report.empty || !state.report.flows) return [];
+  report = report || searchSource() || state.report;
+  if (!bare || !report || report.empty || !report.flows) return [];
   const numeric = /^\d+$/.test(bare);
   const hits = [];
-  for (const row of searchIndex()) {
+  for (const row of searchIndex(report)) {
     if (row.lr) {
       if (!(numeric ? row.name === bare : row.name.includes(bare))) continue;
     } else if (numeric || !row.name.includes(bare)) {

@@ -452,6 +452,161 @@ function renderChart(rows, grain) {
   return el("div", null, wrap, legend);
 }
 
+function renderBlockLrChart(series, grain) {
+  const pack = series || {};
+  const asm = Array.isArray(pack["5"]) ? pack["5"] : [];
+  const lay = Array.isArray(pack["27"]) ? pack["27"] : [];
+  const hourly = grain === "hour";
+  const colors = seriesColors();
+  const layColor = colors.current === "#0969da" ? "#1a7f37" : "#3fb950";
+  const height = 400;
+  const width = 1280;
+  const pad = { l: 96, r: 28, t: 18, b: 40 };
+  const innerW = width - pad.l - pad.r;
+  const innerH = height - pad.t - pad.b;
+  const rows = asm.concat(lay);
+  const maxDay = Math.max(1, ...rows.map((row) => row.day));
+  const ticks = chartTickDays(maxDay);
+  let minStep = ticks.length > 1 ? ticks[1] - ticks[0] : 1;
+  for (let i = 2; i < ticks.length; i += 1) minStep = Math.min(minStep, ticks[i] - ticks[i - 1]);
+  const span = Math.max(maxDay - 1, 1);
+  const spacing = (innerW / span) * minStep;
+  const digits = hourly ? 2 : String(maxDay).length;
+  const fontPx = Math.min(12, (spacing * 0.84) / (digits * 0.72));
+  const maxY = niceMax(Math.max(0, ...rows.map((row) => row.sum)));
+  const x = (day) => pad.l + (maxDay === 1 ? innerW / 2 : ((day - 1) / (maxDay - 1)) * innerW);
+  const y = (value) => pad.t + innerH - (value / maxY) * innerH;
+  const split = (list) => ({
+    current: list.filter((row) => row.period === "Текущий период").sort((a, b) => a.day - b.day),
+    previous: list.filter((row) => row.period === "Прошлый период").sort((a, b) => a.day - b.day),
+  });
+  const asmSplit = split(asm);
+  const laySplit = split(lay);
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "chart", role: "img" });
+  svg.setAttribute("aria-label", "Динамика сборки и раскладки");
+  drawLossAxis(svg, maxY, y, pad.l, width - pad.r, colors.grid, pad.l - 10, 12);
+  for (const day of ticks) {
+    const label = svgEl("text", { x: x(day), y: height - 12, "text-anchor": "middle", "font-size": fontPx.toFixed(2) });
+    label.textContent = hourly ? String(day - 1).padStart(2, "0") : String(day);
+    svg.append(label);
+  }
+  const points = (list) => list.map((row) => ({ x: x(row.day), y: y(row.sum), row }));
+  const pathOf = (pts) => pts.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)} ${point.y.toFixed(1)}`).join(" ");
+  const drawn = [];
+  function line(list, color, dashed) {
+    const pts = points(list);
+    if (!pts.length) return pts;
+    const attrs = {
+      d: pathOf(pts),
+      class: dashed ? "chart-line prev" : "chart-line cur",
+      fill: "none",
+      stroke: color,
+      "stroke-width": "2.25",
+      "stroke-linejoin": "round",
+      "stroke-linecap": "round",
+    };
+    if (dashed) attrs["stroke-dasharray"] = "5 4";
+    svg.append(svgEl("path", attrs));
+    drawn.push({ pts, color });
+    return pts;
+  }
+  line(asmSplit.previous, colors.current, true);
+  line(laySplit.previous, layColor, true);
+  line(asmSplit.current, colors.current, false);
+  line(laySplit.current, layColor, false);
+  for (const item of drawn) {
+    for (const point of item.pts) svg.append(svgEl("circle", { cx: point.x, cy: point.y, r: "3.2", fill: item.color }));
+  }
+  const guide = svgEl("line", {
+    class: "chart-guide", x1: pad.l, x2: pad.l, y1: 1, y2: height - 1, visibility: "hidden",
+  });
+  svg.append(guide);
+  const hit = svgEl("rect", { x: pad.l, y: pad.t, width: innerW, height: innerH, fill: "transparent" });
+  hit.style.cursor = "crosshair";
+  svg.append(hit);
+  const tip = el("div", { class: "chart-tip" });
+  tip.hidden = true;
+  const wrap = el("div", { class: "chart-wrap" });
+  wrap.append(svg, tip);
+  const at = (list, day) => list.find((row) => row.day === day);
+  let tipDay = null;
+  let tipFrame = 0;
+  let pointer = null;
+  function showTip(event) {
+    const point = svg.createSVGPoint();
+    point.x = event.clientX;
+    point.y = event.clientY;
+    const local = point.matrixTransform(svg.getScreenCTM().inverse());
+    let best = 1;
+    let bestDist = Infinity;
+    for (let day = 1; day <= maxDay; day += 1) {
+      const dist = Math.abs(x(day) - local.x);
+      if (dist < bestDist) {
+        best = day;
+        bestDist = dist;
+      }
+    }
+    const gx = x(best);
+    guide.setAttribute("x1", gx);
+    guide.setAttribute("x2", gx);
+    guide.setAttribute("visibility", "visible");
+    if (tipDay !== best) {
+      tipDay = best;
+      const curAsm = at(asmSplit.current, best);
+      const curLay = at(laySplit.current, best);
+      const prevAsm = at(asmSplit.previous, best);
+      const prevLay = at(laySplit.previous, best);
+      const when = (curAsm || curLay || prevAsm || prevLay || {}).date || "";
+      const row = (name, cur, prev) => el(
+        "div",
+        { class: "tip-compare-cell" },
+        el("div", { class: "tip-title" }, name),
+        el("div", null, fmtRub(cur ? cur.sum : 0)),
+        prev ? el("div", { class: "tip-title" }, `прошлый ${fmtRub(prev.sum)}`) : null,
+      );
+      tip.replaceChildren(
+        when ? el("div", { class: "tip-title" }, when) : null,
+        el("div", { class: "tip-compare" }, row("сборка", curAsm, prevAsm), row("раскладка", curLay, prevLay)),
+      );
+    }
+    tip.hidden = false;
+    const host = wrap.getBoundingClientRect();
+    const anchor = svg.createSVGPoint();
+    anchor.x = x(best);
+    anchor.y = y(((at(asmSplit.current, best) || {}).sum) || 0);
+    const screen = anchor.matrixTransform(svg.getScreenCTM());
+    let left = screen.x - host.left + 14;
+    let top = screen.y - host.top + 14;
+    tip.style.left = "0px";
+    tip.style.top = "0px";
+    if (left + tip.offsetWidth > host.width) left = Math.max(8, left - tip.offsetWidth - 28);
+    if (top + tip.offsetHeight > host.height) top = Math.max(8, top - tip.offsetHeight - 28);
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+  hit.addEventListener("pointermove", (event) => {
+    pointer = { clientX: event.clientX, clientY: event.clientY };
+    if (!tipFrame) tipFrame = requestAnimationFrame(() => {
+      tipFrame = 0;
+      if (svg.isConnected && pointer) showTip(pointer);
+    });
+  });
+  hit.addEventListener("pointerleave", () => {
+    cancelAnimationFrame(tipFrame);
+    tipFrame = 0;
+    tip.hidden = true;
+    tipDay = null;
+    guide.setAttribute("visibility", "hidden");
+  });
+  const layLegend = el("span", { class: "lg block" }, "раскладка");
+  layLegend.style.setProperty("--swatch", layColor);
+  const legend = el("div", { class: "legend" }, el("span", { class: "lg" }, "сборка"), layLegend);
+  if (asmSplit.previous.length || laySplit.previous.length) {
+    legend.append(el("span", { class: "lg prev" }, "прошлый период"));
+  }
+  return el("div", null, wrap, legend);
+}
+
 function blockTipNode() {
   const name = el("div", { class: "block-tip-name" });
   const when = el("div", { class: "block-tip-date" });

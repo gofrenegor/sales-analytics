@@ -1146,7 +1146,7 @@ def _parse_day(value):
 
 
 def compute_free_period(start, end):
-    """Свой интервал включительно. База сравнения не задаётся."""
+    """Свой интервал включительно. Сравнение — окно той же длины сразу перед началом."""
     start = _parse_day(start)
     end = _parse_day(end)
     if end < start:
@@ -1156,20 +1156,23 @@ def compute_free_period(start, end):
         raise ValueError(f"Свободный разрез длиннее {FREE_MAX_DAYS} дней")
     fmt = lambda d: d.strftime("%d.%m.%Y")
     current = fmt(start) if days == 1 else f"{fmt(start)} — {fmt(end)}"
+    p_end = start - timedelta(days=1)
+    p_start = p_end - timedelta(days=days - 1)
+    previous = fmt(p_start) if days == 1 else f"{fmt(p_start)} — {fmt(p_end)}"
     return {
         "mode": "Свободный",
         "anchor": start.isoformat(),
         "start": start.isoformat(),
         "end": end.isoformat(),
-        "prev_start": None,
-        "prev_end": None,
+        "prev_start": p_start.isoformat(),
+        "prev_end": p_end.isoformat(),
         "days": days,
-        "compare": False,
-        "note": {"type": "free", "current": current, "days": days},
+        "compare": True,
+        "note": {"type": "free", "current": current, "previous": previous, "days": days},
         "_start": start,
         "_end": end,
-        "_prev_start": start,
-        "_prev_end": start,
+        "_prev_start": p_start,
+        "_prev_end": p_end,
     }
 
 
@@ -2561,6 +2564,13 @@ def build_employees(df):
     return out
 
 
+def _item_day(value):
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.date().isoformat()
+
+
 def build_employee_items(df, badge, lr):
     """Стикеры одного бейджика и LR. Каждая потеря — строка. Без списка ШК.
 
@@ -2596,10 +2606,11 @@ def build_employee_items(df, badge, lr):
         sums = pd.to_numeric(part["loss_sum"], errors="coerce").fillna(0.0)
     else:
         sums = pd.Series(0.0, index=part.index)
+    when = part["loss_date"] if "loss_date" in part.columns else pd.Series(pd.NaT, index=part.index)
     items = []
-    for sticker, flag, amount, place, status, after_status in zip(
+    for sticker, flag, amount, place, status, after_status, day in zip(
         stickers.tolist(), flags.tolist(), sums.tolist(), places.tolist(), statuses.tolist(),
-        after_statuses.tolist(),
+        after_statuses.tolist(), when.tolist(),
     ):
         parsed = posted_flag(flag)
         if parsed == "1":
@@ -2613,6 +2624,7 @@ def build_employee_items(df, badge, lr):
             "found": found,
             "sum": _f(amount),
             "mx": sticker_text(place),
+            "loss_date": _item_day(day),
         }
         value = sticker_text(after_status).upper()
         item["status_after"] = "" if value == "НЕ УКАЗАНО" else value
@@ -3250,12 +3262,18 @@ def build_report(df_curr, df_prev, period, detail="full"):
                     series = sparks.get(card["name"])
                     if series and any(series):
                         card["spark"] = series
+            if "block_group" in getattr(dc, "columns", []):
+                outbound = dc[dc["block_group"] == OUTBOUND_BLOCK]
+            else:
+                outbound = dc.iloc[0:0]
             flows[code] = {
                 "title": title,
                 "sum": _sum(dc, "loss_sum"),
                 "qty": _sum(dc, "loss_qty"),
                 "prev_sum": _sum(dp, "loss_sum"),
                 "prev_qty": _sum(dp, "loss_qty"),
+                "outbound_sum": _sum(outbound, "loss_sum"),
+                "outbound_qty": _sum(outbound, "loss_qty"),
                 "cards": cards,
             }
         in_sum = flows["in"]["sum"]
