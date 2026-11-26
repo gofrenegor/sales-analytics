@@ -891,10 +891,9 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
     линия начинается в 2px от дуги, уходит по касательной и закругляется
     на стыке с полкой. Концы штриха круглые.
-    Отступ полки от дуги одинаковый для всех долей: 20 единиц по радиусу
-    от точки в 2 единицах от дуги. Имя, рубли и штуки стоят с внешней
-    стороны полки, не в зазоре к дуге. Текст начинается ещё на 16 единиц
-    вдоль полки: скруглённый угол иначе закрывает первые буквы.
+    Отступ полки от дуги одинаковый для всех долей: 8 единиц по радиусу
+    от точки в 2 единицах от дуги. Имя и процент сидят у полки с внешней
+    стороны. Текст начинается ещё на 4 единицы вдоль полки.
     direction задаёт сторону горизонтальной полки: соседние подписи у вершины
     можно развести в стороны. Буквы с внешней стороны штриха, линия их не режет.
     """
@@ -906,10 +905,10 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     outer = r + sw / 2
     text_w = max(len(face), 1) * font * 0.58
     tangent_x, tangent_y = -sin_m, cos_m
-    lead = 20.0
+    lead = 8.0
     side = 6.0 if tangent_x * run_x >= 0 else -6.0
     overhang = 8.0
-    text_clear = 16.0
+    text_clear = 4.0
     x0 = cx + (outer + 2.0) * cos_m
     y0 = cy + (outer + 2.0) * sin_m
     shelf_x = x0 + lead * cos_m + side * tangent_x
@@ -921,16 +920,16 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     c1y = y0 + (shelf_y - y0) * 0.55 + side * tangent_y
     c2x = shelf_x - run_x * turn
     c2y = shelf_y
-    # Все строки снаружи дуги. Имя у полки, рубли и штуки дальше от кольца.
+    # Имя и процент у полки, снаружи дуги. Имя наведения — ещё на строку дальше.
     gap = 3.0
     if shelf_y - cy > 0:
-        y_face = shelf_y + gap + font * 0.75
-        y_name = y_face + font + 2.0
+        y_name = shelf_y + gap + font * 0.75
         y_pct = y_name + pct_font + 2.0
+        y_face = y_pct + font + 2.0
     else:
-        y_face = shelf_y - gap - font * 0.2
-        y_name = y_face - font - 2.0
+        y_name = shelf_y - gap - font * 0.25
         y_pct = y_name - (pct_font + 2.0)
+        y_face = y_pct - font - 2.0
     x = shelf_x + text_clear * run_x
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
