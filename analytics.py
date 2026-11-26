@@ -891,9 +891,10 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     Полка горизонтальная и лишь на 8px длиннее имени. Подвод короткий:
     линия начинается в 2px от дуги, уходит по касательной и закругляется
     на стыке с полкой. Концы штриха круглые.
-    Отступ полки от дуги одинаковый для всех долей. direction задаёт сторону
-    горизонтальной полки: соседние подписи у вершины можно развести в стороны.
-    Буквы с внешней стороны штриха, линия их не режет.
+    Отступ полки от дуги одинаковый для всех долей. Текст начинается ещё
+    на 16 единиц вдоль полки: скруглённый угол дуги иначе закрывает первые буквы.
+    direction задаёт сторону горизонтальной полки: соседние подписи у вершины
+    можно развести в стороны. Буквы с внешней стороны штриха, линия их не режет.
     """
     font = 11 if len(face) > 12 else 13
     pct_font = 10 if font > 12 else 9
@@ -906,11 +907,12 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
     lead = 8.0
     side = 6.0 if tangent_x * run_x >= 0 else -6.0
     overhang = 8.0
+    text_clear = 16.0
     x0 = cx + (outer + 2.0) * cos_m
     y0 = cy + (outer + 2.0) * sin_m
     shelf_x = x0 + lead * cos_m + side * tangent_x
     shelf_y = y0 + lead * sin_m + side * tangent_y
-    end_x = shelf_x + (text_w + overhang) * run_x
+    end_x = shelf_x + (text_clear + text_w + overhang) * run_x
     end_y = shelf_y
     turn = 8.0
     c1x = x0 + (shelf_x - x0) * 0.55 + side * tangent_x
@@ -930,7 +932,7 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
         y_name = shelf_y - gap - font * 0.25
         y_pct = y_name - (pct_font + 2.0)
         y_face = shelf_y + 3.0 + font * 0.75
-    x = shelf_x
+    x = shelf_x + text_clear * run_x
     path = (
         f'<path class="loss-leader" fill="none" pointer-events="none" stroke="{_darken(color)}" '
         f'stroke-linecap="round" stroke-linejoin="round" '
@@ -938,7 +940,7 @@ def _leader_label(cx, cy, r, sw, mid, face, pct_text, color, direction, amount=0
         f'{shelf_x:.2f} {shelf_y:.2f}" />'
         f'<line class="loss-leader loss-leader-shelf" stroke="{_darken(color)}" '
         f'x1="{shelf_x:.2f}" y1="{shelf_y:.2f}" x2="{end_x:.2f}" y2="{end_y:.2f}" '
-        f'data-width="{text_w + overhang:.2f}" '
+        f'data-width="{text_clear + text_w + overhang:.2f}" data-clear="{text_clear:.2f}" '
         f'style="transform-origin: {shelf_x:.2f}px {shelf_y:.2f}px" />'
     )
     quantity = f"{_f(qty):,.0f}".replace(",", " ") + " шт."

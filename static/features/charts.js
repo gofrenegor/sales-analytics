@@ -141,7 +141,8 @@ function bindDonut(host) {
     if (!shelf) return;
     const widths = [...label.querySelectorAll(".loss-seg-detail tspan")].map((line) => line.getComputedTextLength());
     const width = Math.max(0, ...widths);
-    if (width > 0) label.style.setProperty("--shelf-scale", String(width / Number(shelf.dataset.width)));
+    const clear = Number(shelf.dataset.clear) || 0;
+    if (width > 0) label.style.setProperty("--shelf-scale", String((clear + width) / Number(shelf.dataset.width)));
   };
   blocks.filter((node) => node.matches(".loss-seg-label-link")).forEach(measureShelf);
   if (document.fonts) document.fonts.ready.then(() => {
