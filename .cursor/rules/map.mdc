@@ -33,11 +33,31 @@ systemctl restart sales-analytics
 
 Фронт (`static/`) читается с диска. `server.py` подставляет `?v=` из mtime `app.js` и `styles.css`. Для правки только фронта рестарт не нужен, хватит pull и обновления страницы.
 
+Актуальная база на сервере. В git её нет (`secrets.toml` в `.gitignore`). В команду для Termius подставляй только эту строку. Старое имя базы `losses` и плейсхолдер из `secrets.toml.example` не отправляй. `DATABASE_URL` в unit нет и не задавать: она перекрывает файл.
+
+```
+postgresql://analytic_user:G8fdsLwetP904g5E32k7dsvj2wrtH@127.0.0.1:5432/analytic_db
+```
+
+Пользователь `analytic_user`, пароль `G8fdsLwetP904g5E32k7dsvj2wrtH`, база `analytic_db`, хост `127.0.0.1:5432`. Файл на сервере: `/var/www/sales-analytics/secrets.toml`, ключ `[database].connection_string`.
+
+Обычное обновление сайта — `git pull` и рестарт по правилу выше. Смену базы слать, когда пользователь дал новую строку или просит переподключить. После записи файла рестарт обязателен: процесс держит старое подключение.
+
+```
+cat > /var/www/sales-analytics/secrets.toml << 'EOF'
+[database]
+connection_string = "postgresql://analytic_user:G8fdsLwetP904g5E32k7dsvj2wrtH@127.0.0.1:5432/analytic_db"
+EOF
+chown www-data:www-data /var/www/sales-analytics/secrets.toml
+chmod 640 /var/www/sales-analytics/secrets.toml
+systemctl restart sales-analytics
+```
+
 ## Сайт
 
 Аналитика списаний. FastAPI + статический фронт. Запуск локально: `sh run.sh` (uvicorn `server:app`, порт 8501). Прод: systemd `deploy/sales-analytics.service`, рабочая папка `/var/www/sales-analytics`, venv `venv/bin/python`, слушает `127.0.0.1:8501`.
 
-База: таблица `losses`. Доступ: `access_users` (`id`, `role` `view`|`admin`, `phone`, `email`, `password_hash`). При старте, если нет строки `id=1`, создаётся админ без контактов и без пароля. Телефон — 11 цифр с `7`. Почта — ник `@gmail.com` или `@mail.ru`. Выдача требует оба и пишет случайный пароль из 16 символов, открытый текст один раз в ответе. Вход: телефон или почта + пароль, ID находится сам. Несовпадение: `401` «некорректный логин или пароль». Строка подключения: `DATABASE_URL` или `secrets.toml` ключ `[database].connection_string`. Если своего `secrets.toml` нет, читается `.streamlit/secrets.toml`. Образец: `secrets.toml.example`. `APP_TODAY` подменяет «сегодня» (тесты). Кэш чтения: 1 час, сброс `POST /api/admin/cache/clear`. Сессия: случайная cookie `access_session` на 30 дней; в `access_sessions` хранится только SHA-256 токена и срок действия. Cookie `access_id` больше не принимается. Cookie `HttpOnly`, `Secure` и `SameSite=Strict`; Host ограничивается `ALLOWED_HOSTS`, OpenAPI выключен. Выход отзывает текущую сессию, смена пароля — все старые сессии с выдачей новой текущему браузеру. Гость: `401` «вы не зарегистрированы». Просмотр: отчёт и разрезы. Админка: все `POST/GET /api/admin/*`.
+База: таблица `losses`. Доступ: `access_users` (`id`, `role` `view`|`admin`, `phone`, `email`, `password_hash`). При старте, если нет строки `id=1`, создаётся админ без контактов и без пароля. Телефон — 11 цифр с `7`. Почта — ник `@gmail.com` или `@mail.ru`. Выдача требует оба и пишет случайный пароль из 16 символов, открытый текст один раз в ответе. Вход: телефон или почта + пароль, ID находится сам. Несовпадение: `401` «некорректный логин или пароль». Строка подключения на сервере — актуальная в разделе «Конец каждой задачи»: `/var/www/sales-analytics/secrets.toml`, ключ `[database].connection_string`, база `analytic_db`. `DATABASE_URL` перекрывает файл, в unit её нет. Если своего `secrets.toml` нет, читается `.streamlit/secrets.toml`. Образец без пароля: `secrets.toml.example`. `APP_TODAY` подменяет «сегодня» (тесты). Кэш чтения: 1 час, сброс `POST /api/admin/cache/clear`. Сессия: случайная cookie `access_session` на 30 дней; в `access_sessions` хранится только SHA-256 токена и срок действия. Cookie `access_id` больше не принимается. Cookie `HttpOnly`, `Secure` и `SameSite=Strict`; Host ограничивается `ALLOWED_HOSTS`, OpenAPI выключен. Выход отзывает текущую сессию, смена пароля — все старые сессии с выдачей новой текущему браузеру. Гость: `401` «вы не зарегистрированы». Просмотр: отчёт и разрезы. Админка: все `POST/GET /api/admin/*`.
 
 ## Файлы
 
